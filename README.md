@@ -100,6 +100,8 @@ D:\Capstone\CapstoneProject
 - [ ] Whisper API 연동 및 백엔드 파이프라인 구축 (진행 예정)
 - [ ] DB 설계 및 구축 (시작 전)
 
+---
+
 ## 🔎 프로젝트 다이어그램
 <img width="1600" height="2410" alt="20260402_083028" src="https://github.com/user-attachments/assets/c62dc136-8084-430f-a168-a72c179524ca" />
 
