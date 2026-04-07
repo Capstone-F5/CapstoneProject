@@ -40,7 +40,7 @@ D:\Capstone\CapstoneProject
 - **기간**: 2026.03.03 ~ 2026.09.xx
 - **조직**: 동양미래대학교 인공지능소프트웨어학과 3-QA (팀명: F5)
 - **GitHub**: [https://github.com/Capstone-F5](https://github.com/Capstone-F5)
-
+- **Notion**: [https://www.notion.so/e900f683ea6a83fab6b501875c1ff8e8]
 ---
 
 ## 👥 팀원 소개 및 역할
