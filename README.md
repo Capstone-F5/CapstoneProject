@@ -18,6 +18,7 @@ D:\Capstone\CapstoneProject
 ├── 📂 database/           # DB 스키마, 마이그레이션 및 커넥션 관리
 ├── 📂 frontend/           # 웹 프론트엔드 (React/HTML) 소스
 │   └── index.html         # 메인 진입 페이지 (터치/음성 모드)
+├── 📂 docs/              # 개발/프로젝트 문서 폴더
 └── README.md              # 프로젝트 가이드 및 문서
 ```
 
