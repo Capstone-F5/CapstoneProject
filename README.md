@@ -6,20 +6,20 @@
 ## 📂 프로젝트 구조 (Project Structure)
 
 ```text
-D:\Capstone\CapstoneProject
-├── 📂 ai_modules/         # AI 핵심 기능 (STT, CV, LLM) 처리 모듈
-│   ├── 📂 cv/             # 컴퓨터 비전 (제스쳐 인식) 관련 로직
-│   ├── 📂 llm/            # LangChain 및 Gemini 연동/문맥 관리
-│   └── 📂 stt/            # Whisper API 연동 및 음성 전처리
-├── 📂 assets/             # 이미지, 아이콘 및 디자인 에셋
-├── 📂 backend/            # FastAPI 기반 서버 사이드 소스
-│   ├── 📂 api/            # API 엔드포인트 정의 (RESTful)
-│   └── 📂 core/           # 서버 설정, 공통 유틸리티
-├── 📂 database/           # DB 스키마, 마이그레이션 및 커넥션 관리
-├── 📂 frontend/           # 웹 프론트엔드 (React/HTML) 소스
-│   └── index.html         # 메인 진입 페이지 (터치/음성 모드)
-├── 📂 docs/              # 개발/프로젝트 문서 폴더
-└── README.md              # 프로젝트 가이드 및 문서
+Capstone-F5\CapstoneProject
+├── 📂 ai_modules/          # AI 핵심 기능 (STT, CV, LLM) 처리 모듈
+│   ├── 📂 cv/              # 컴퓨터 비전 (제스쳐 인식) 관련 로직
+│   ├── 📂 llm/             # LangChain 및 Gemini 연동/문맥 관리
+│   └── 📂 stt/             # Whisper API 연동 및 음성 전처리
+├── 📂 assets/              # 이미지, 아이콘 및 디자인 에셋
+├── 📂 backend/             # FastAPI 기반 서버 사이드 소스
+│   ├── 📂 api/             # API 엔드포인트 정의 (RESTful)
+│   └── 📂 core/            # 서버 설정, 공통 유틸리티
+├── 📂 database/            # DB 스키마, 마이그레이션 및 커넥션 관리
+├── 📂 frontend/            # 웹 프론트엔드 (React/HTML) 소스
+│   └── index.html           # 메인 진입 페이지 (터치/음성 모드)
+├── 📂 docs/                # 개발/프로젝트 문서 폴더
+└── README.md                # 프로젝트 가이드 및 문서
 ```
 
 ---
