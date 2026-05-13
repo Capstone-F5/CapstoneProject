@@ -97,9 +97,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
         borderBottom: '2px solid #eee',
         flexShrink: 0,
       }}>
-        <span style={{ gridColumn: '1 / 3' }}>메뉴</span>
-        <span style={{ textAlign: 'center' }}>수량</span>
-        <span style={{ textAlign: 'right', paddingRight: 26 }}>금액</span>
+        <span style={{ gridColumn: 1, textAlign: 'center' }}>메뉴</span>
+        <span style={{ gridColumn: 3, textAlign: 'center' }}>수량</span>
+        <span style={{ gridColumn: 4, textAlign: 'center' }}>금액</span>
       </div>
 
       {/* ── 아이템 목록 ── */}
