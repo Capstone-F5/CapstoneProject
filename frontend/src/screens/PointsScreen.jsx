@@ -43,7 +43,7 @@ export default function PointsScreen({ nav }) {
       }}>
         {KEYS.map(k => (
           <button key={k} onClick={() => handleKey(k)} style={{
-            padding: 'clamp(14px, 4vw, 19px) 0',
+            padding: 'clamp(17px, 4.8vw, 23px) 0',
             background: '#9E9E9E', color: '#fff',
             border: 'none', borderRadius: 8,
             fontSize: 'clamp(16px, 5vw, 20px)', fontWeight: 700, cursor: 'pointer',
