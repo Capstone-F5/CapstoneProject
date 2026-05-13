@@ -169,11 +169,12 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       </div>
 
       {/* ── Menu Grid ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 6px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: GRID_GAP,
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gap: 'clamp(10px, 2.6vw, 14px)',
+          alignItems: 'stretch',
         }}>
           {pageItems.map(item => (
             <div key={item.id + '-' + catId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -337,18 +338,20 @@ function MiniCartItem({ item, updateQty }) {
 function FoodCard({ item, onClick }) {
   return (
     <button onClick={onClick} style={{
-      background: '#fff', border: 'none', borderRadius: 12,
+      background: 'linear-gradient(180deg, #ffffff 0%, #fffaf2 100%)',
+      border: '1px solid #f1f1f1', borderRadius: 16,
       padding: 0, overflow: 'hidden', cursor: 'pointer',
-      boxShadow: '0 1px 5px rgba(0,0,0,0.09)',
+      boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
       display: 'flex', flexDirection: 'column',
       textAlign: 'center',
-      width: '70%',
+      width: '100%',
     }}>
       <div style={{
-        width: '100%', aspectRatio: '1 / 0.8',
-        background: '#f8f8f8',
-        padding: 6,
+        width: '100%', aspectRatio: '1 / 0.85',
+        background: 'radial-gradient(circle at 50% 30%, #fff3c9 0%, #f8f8f8 60%, #f1f1f1 100%)',
+        padding: 10,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        borderBottom: '1px solid #f2f2f2',
       }}>
         {item.image ? (
           <img
@@ -357,7 +360,7 @@ function FoodCard({ item, onClick }) {
             style={{
               width: '100%', height: '100%',
               objectFit: 'contain',
-              borderRadius: 6,
+              borderRadius: 10,
             }}
           />
         ) : (
@@ -366,18 +369,19 @@ function FoodCard({ item, onClick }) {
           </span>
         )}
       </div>
-      <div style={{ padding: '5px 6px 7px', flexShrink: 0 }}>
+      <div style={{ padding: '8px 8px 10px', flexShrink: 0 }}>
         <div style={{
           fontSize: 'clamp(13px, 3.6vw, 16px)',
-          fontWeight: 700, color: '#1a1a1a',
-          lineHeight: 1.3, marginBottom: 2,
+          fontWeight: 800, color: '#1a1a1a',
+          lineHeight: 1.25, marginBottom: 4,
           wordBreak: 'keep-all', textAlign: 'center',
         }}>
           {item.name}
         </div>
-        <div style={{ fontSize: 'clamp(12px, 3.2vw, 14px)', color: '#888', textAlign: 'center' }}>
-          {item.price.toLocaleString()}~
-        </div>
+        <div style={{
+          fontSize: 'clamp(12px, 3.2vw, 14px)',
+          color: '#744032', textAlign: 'center', fontWeight: 700,
+        }}>{item.price.toLocaleString()}~</div>
       </div>
     </button>
   )
