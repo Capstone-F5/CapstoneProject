@@ -13,7 +13,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      minHeight: '100dvh', minHeight: '100vh',
+      height: '100%',
       background: '#f5f5f5',
       alignItems: 'center',
       justifyContent: 'flex-start',

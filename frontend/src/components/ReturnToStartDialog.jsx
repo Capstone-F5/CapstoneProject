@@ -1,6 +1,8 @@
 import Logo from './Logo'
+import useT from '../i18n/useT'
 
 export default function ReturnToStartDialog({ onConfirm, onCancel }) {
+  const t = useT()
   return (
     <div
       onClick={onCancel}
@@ -35,7 +37,7 @@ export default function ReturnToStartDialog({ onConfirm, onCancel }) {
             fontSize: 'clamp(16px, 5vw, 20px)', fontWeight: 700,
             color: '#1a1a1a', textAlign: 'center',
           }}>
-            첫 화면으로 돌아가시겠습니까?
+            {t('returnToStartMsg')}
           </div>
         </div>
 
@@ -51,7 +53,7 @@ export default function ReturnToStartDialog({ onConfirm, onCancel }) {
               borderRight: '1px solid #eee',
             }}
           >
-            예
+            {t('yes')}
           </button>
           <button
             onClick={onCancel}
@@ -62,7 +64,7 @@ export default function ReturnToStartDialog({ onConfirm, onCancel }) {
               color: '#fff', cursor: 'pointer',
             }}
           >
-            아니요
+            {t('no')}
           </button>
         </div>
       </div>

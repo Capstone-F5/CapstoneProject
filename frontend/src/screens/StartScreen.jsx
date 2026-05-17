@@ -13,54 +13,53 @@ export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
 
-  // 메인 화면으로 돌아올 때마다 한국어로 초기화
   useEffect(() => { setLocale('ko') }, [])
 
   return (
     <div
       onClick={() => nav('orderType')}
       style={{
-        flex: 1,
-        minHeight: '100dvh',
-        minHeight: '100vh',
+        height: '100%',
         backgroundImage: "url('/bg.png')",
         backgroundSize: 'cover',
         backgroundPosition: 'center center',
         backgroundRepeat: 'no-repeat',
+        overflow: 'hidden',
+        userSelect: 'none',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'flex-end',
         padding: '0 36px 78px',
-        cursor: 'pointer',
-        userSelect: 'none',
-        position: 'relative',
       }}
     >
+      {/* 주문 시작 버튼 */}
       <button
-        onClick={(e) => { e.stopPropagation(); nav('orderType') }}
+        onClick={e => { e.stopPropagation(); nav('orderType') }}
         style={{
           width: '100%',
           maxWidth: 480,
-          padding: '27px 0',
+          padding: '19px 0',
           background: '#fff',
-          color: '#744032',
+          color: '#1a1a1a',
           border: 'none',
           borderRadius: 50,
-          fontSize: 30,
+          fontSize: 39,
           fontWeight: 900,
-          boxShadow: '0 4px 24px rgba(0,0,0,0.22)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.20)',
           marginBottom: 42,
+          cursor: 'pointer',
         }}
       >
         {t('startOrder')}
       </button>
 
+      {/* 언어 선택 */}
       <div style={{ display: 'flex', gap: 36 }}>
         {LANGS.map(({ code, label }) => (
           <button
             key={code}
-            onClick={(e) => { e.stopPropagation(); setLocale(code) }}
+            onClick={e => { e.stopPropagation(); setLocale(code) }}
             style={{
               background: 'none',
               border: 'none',

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Logo from '../components/Logo'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
@@ -17,7 +17,7 @@ const CAT_IMAGE = {
   drink:       '/images/drinks/콜라.png',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
@@ -27,6 +27,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   const [modalItem, setModalItem] = useState(null)
   const [modalStep, setModalStep] = useState(null)   // 'singleSet' | 'detail'
   const [modalType, setModalType] = useState('single')
+  const swipeStartX = useRef(null)
 
   const handleItemTap = (item) => {
     setModalItem(item)
@@ -51,7 +52,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
   const closeModal = () => { setModalItem(null); setModalStep(null) }
 
-  const itemsPerPage = 3 * COLS
+  const itemsPerPage = chatOpen ? COLS : 2 * COLS
   const items        = menuData ? (menuData.menuItems?.[catId] ?? []) : []
   const totalPages   = Math.max(1, Math.ceil(items.length / itemsPerPage))
 
@@ -105,7 +106,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
-      height: '100dvh', height: '100vh',
+      height: '100%',
       overflow: 'hidden',
       background: '#f2f2f2',
     }}>
@@ -172,7 +173,18 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       </div>
 
       {/* ── Menu Grid ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}>
+      <div
+        style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}
+        onTouchStart={e => { swipeStartX.current = e.touches[0].clientX }}
+        onTouchEnd={e => {
+          if (swipeStartX.current === null) return
+          const dx = e.changedTouches[0].clientX - swipeStartX.current
+          swipeStartX.current = null
+          if (Math.abs(dx) < 50) return
+          if (dx < 0) setPage(p => Math.min(totalPages - 1, p + 1))
+          else        setPage(p => Math.max(0, p - 1))
+        }}
+      >
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
@@ -181,7 +193,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
         }}>
           {pageItems.map(item => (
             <div key={item.id + '-' + catId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <FoodCard item={item} onClick={() => handleItemTap(item)} />
+              <FoodCard item={item} onClick={() => handleItemTap(item)} chatOpen={chatOpen} />
             </div>
           ))}
         </div>
@@ -222,10 +234,14 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             borderTop: '1px solid #e8e8e8',
             boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
           }}>
-            {/* 항목 목록 — 고정 높이 (3개 기준), 초과 시 스크롤 */}
-            <div>
+            {/* 항목 목록 — 채팅 열림: 2개 높이, 기본: 3개 높이 스크롤 */}
+            <div style={{
+              maxHeight: chatOpen ? 172 : 324,
+              overflowY: 'auto',
+              transition: 'max-height 0.35s ease',
+            }}>
               {cart.map(item => (
-                <MiniCartItem key={item.cartId} item={item} updateQty={updateQty} />
+                <MiniCartItem key={item.cartId} item={item} updateQty={updateQty} chatOpen={chatOpen} />
               ))}
             </div>
 
@@ -286,8 +302,11 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   )
 }
 
-function MiniCartItem({ item, updateQty }) {
+function MiniCartItem({ item, updateQty, chatOpen }) {
   const t = useT()
+  const compact = !!chatOpen
+  const btnSize  = compact ? 36 : 44
+  const btnFs    = compact ? 22 : 27
   const options = [
     item.exclusion && item.exclusion !== '없음' ? item.exclusion : null,
     item.side  ?? null,
@@ -297,29 +316,31 @@ function MiniCartItem({ item, updateQty }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center',
-      padding: '15px 24px', gap: 17,
+      padding: compact ? '10px 18px' : '15px 24px',
+      gap: compact ? 12 : 17,
       borderBottom: '1px solid #f5f5f5',
-      minHeight: 108,
+      minHeight: compact ? 86 : 108,
     }}>
       {item.image ? (
         <img src={item.image} alt={item.name} style={{
-          width: 66, height: 66, borderRadius: 9, objectFit: 'cover', flexShrink: 0,
+          width: compact ? 52 : 66, height: compact ? 52 : 66,
+          borderRadius: 9, objectFit: 'cover', flexShrink: 0,
         }} />
       ) : (
-        <span style={{ fontSize: 39, flexShrink: 0 }}>🍔</span>
+        <span style={{ fontSize: compact ? 30 : 39, flexShrink: 0 }}>🍔</span>
       )}
 
       {/* 이름 + 옵션 */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 24, fontWeight: 700, color: '#1a1a1a',
+          fontSize: compact ? 19 : 24, fontWeight: 700, color: '#1a1a1a',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
           {item.name}{item.type === 'set' ? ` ${t('set')}` : ''}
         </div>
         {options.length > 0 && (
           <div style={{
-            fontSize: 20, color: '#aaa', marginTop: 3,
+            fontSize: compact ? 16 : 20, color: '#aaa', marginTop: 3,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
             {options.join(' · ')}
@@ -327,24 +348,61 @@ function MiniCartItem({ item, updateQty }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
-        <QtyBtn label="−" onClick={() => updateQty(item.cartId, item.qty - 1)} />
-        <span style={{ fontSize: 26, fontWeight: 700, minWidth: 33, textAlign: 'center' }}>{item.qty}</span>
-        <QtyBtn label="+" onClick={() => updateQty(item.cartId, item.qty + 1)} />
+      {/* 수량 조절 — 고정 너비로 금액에 의한 밀림 방지 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 6 : 9, flexShrink: 0 }}>
+        {item.qty === 1 ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); updateQty(item.cartId, 0) }}
+            style={{
+              width: btnSize, height: btnSize, borderRadius: 6,
+              border: '1px solid #ffb3b3', background: '#fff5f5',
+              fontSize: btnFs - 6, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', cursor: 'pointer', padding: 0, lineHeight: 1,
+            }}
+          >🗑</button>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); updateQty(item.cartId, item.qty - 1) }}
+            style={{
+              width: btnSize, height: btnSize, borderRadius: 6,
+              border: '1px solid #ccc', background: '#fff',
+              fontSize: btnFs, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', cursor: 'pointer', padding: 0, lineHeight: 1,
+            }}
+          >−</button>
+        )}
+        <span style={{ fontSize: compact ? 21 : 26, fontWeight: 700, minWidth: compact ? 26 : 33, textAlign: 'center' }}>
+          {item.qty}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); updateQty(item.cartId, item.qty + 1) }}
+          style={{
+            width: btnSize, height: btnSize, borderRadius: 6,
+            border: '1px solid #ccc', background: '#fff',
+            fontSize: btnFs, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', padding: 0, lineHeight: 1,
+          }}
+        >+</button>
       </div>
-      <span style={{ fontSize: 24, fontWeight: 700, color: '#222', flexShrink: 0, minWidth: 102, textAlign: 'right' }}>
+
+      <span style={{
+        fontSize: compact ? 19 : 24, fontWeight: 700, color: '#222',
+        flexShrink: 0, minWidth: compact ? 90 : 120, textAlign: 'right',
+      }}>
         {(item.unitPrice * item.qty).toLocaleString()}{t('won')}
       </span>
+
       <button onClick={() => updateQty(item.cartId, 0)} style={{
         background: 'none', border: 'none',
-        color: '#ccc', fontSize: 27, lineHeight: 1,
+        color: '#ccc', fontSize: compact ? 22 : 27, lineHeight: 1,
         padding: 2, flexShrink: 0, cursor: 'pointer',
       }}>✕</button>
     </div>
   )
 }
 
-function FoodCard({ item, onClick }) {
+function FoodCard({ item, onClick, chatOpen }) {
+  const compact = !!chatOpen
   return (
     <button onClick={onClick} style={{
       background: '#ffffff',
@@ -356,9 +414,9 @@ function FoodCard({ item, onClick }) {
       width: '91%',
     }}>
       <div style={{
-        width: '100%', aspectRatio: '1 / 0.46',
+        width: '100%', aspectRatio: compact ? '1 / 0.30' : '1 / 0.37',
         background: '#ffffff',
-        padding: 8,
+        padding: compact ? 4 : 6,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',
       }}>
@@ -366,29 +424,25 @@ function FoodCard({ item, onClick }) {
           <img
             src={item.image}
             alt={item.name}
-            style={{
-              width: '100%', height: '100%',
-              objectFit: 'contain',
-              borderRadius: 10,
-            }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 10 }}
           />
         ) : (
-          <span style={{ fontSize: 'clamp(21px, 5.6vw, 31px)' }}>
+          <span style={{ fontSize: compact ? 'clamp(17px, 4.5vw, 25px)' : 'clamp(21px, 5.6vw, 31px)' }}>
             {item.emoji ?? '🍔'}
           </span>
         )}
       </div>
-      <div style={{ padding: '10px 8px 12px', flexShrink: 0 }}>
+      <div style={{ padding: compact ? '6px 8px 7px' : '8px 8px 9px', flexShrink: 0 }}>
         <div style={{
-          fontSize: 'clamp(17px, 4.7vw, 21px)',
+          fontSize: compact ? 'clamp(12px, 3.4vw, 15px)' : 'clamp(15px, 4.2vw, 19px)',
           fontWeight: 800, color: '#1a1a1a',
-          lineHeight: 1.25, marginBottom: 5,
+          lineHeight: 1.25, marginBottom: compact ? 2 : 3,
           wordBreak: 'keep-all', textAlign: 'center',
         }}>
           {item.name}
         </div>
         <div style={{
-          fontSize: 'clamp(16px, 4.2vw, 18px)',
+          fontSize: compact ? 'clamp(11px, 3.0vw, 14px)' : 'clamp(14px, 3.8vw, 17px)',
           color: '#744032', textAlign: 'center', fontWeight: 700,
         }}>{item.price.toLocaleString()}~</div>
       </div>

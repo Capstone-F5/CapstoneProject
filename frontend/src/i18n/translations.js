@@ -3,6 +3,14 @@ const translations = {
     // StartScreen
     startOrder: '주문 시작하기',
 
+    // ReturnToStartDialog
+    returnToStartMsg: '첫 화면으로 돌아가시겠습니까?',
+
+    // CartScreen columns
+    colMenu: '메뉴',
+    colQty: '수량',
+    colPrice: '금액',
+
     // OrderTypeScreen
     selectLocation: '식사하실 장소를 선택해 주세요',
     dineIn: '매장에서 식사',
@@ -69,6 +77,10 @@ const translations = {
 
   en: {
     startOrder: 'Start Order',
+    returnToStartMsg: 'Return to the home screen?',
+    colMenu: 'Item',
+    colQty: 'Qty',
+    colPrice: 'Price',
     selectLocation: 'Please select dining location',
     dineIn: 'Dine In',
     takeout: 'Takeout',
@@ -124,6 +136,10 @@ const translations = {
 
   zh: {
     startOrder: '开始点餐',
+    returnToStartMsg: '是否返回首页？',
+    colMenu: '菜品',
+    colQty: '数量',
+    colPrice: '金额',
     selectLocation: '请选择用餐地点',
     dineIn: '堂食',
     takeout: '外带',
@@ -179,6 +195,10 @@ const translations = {
 
   ja: {
     startOrder: '注文を始める',
+    returnToStartMsg: 'ホーム画面に戻りますか？',
+    colMenu: '商品',
+    colQty: '数量',
+    colPrice: '金額',
     selectLocation: 'お食事場所をお選びください',
     dineIn: '店内飲食',
     takeout: 'お持ち帰り',

@@ -120,7 +120,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      height: '100dvh', height: '100vh',
+      height: '100%',
       overflow: 'hidden', background: '#f2f2f2',
     }}>
 
@@ -164,9 +164,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         fontSize: 16, fontWeight: 700, color: '#aaa',
         borderBottom: '2px solid #eee', flexShrink: 0,
       }}>
-        <span style={{ gridColumn: 1, textAlign: 'center' }}>메뉴</span>
-        <span style={{ gridColumn: 3, textAlign: 'center' }}>수량</span>
-        <span style={{ gridColumn: 4, textAlign: 'center' }}>금액</span>
+        <span style={{ gridColumn: 1, textAlign: 'center' }}>{t('colMenu')}</span>
+        <span style={{ gridColumn: 3, textAlign: 'center' }}>{t('colQty')}</span>
+        <span style={{ gridColumn: 4, textAlign: 'center' }}>{t('colPrice')}</span>
       </div>
 
       {/* ── 아이템 목록 ── */}
