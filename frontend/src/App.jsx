@@ -81,28 +81,30 @@ export default function App() {
         </div>
 
         {/* ── 채팅 FAB — 항상 최상단에 고정 ── */}
-        <button
-          onClick={() => setChatOpen(o => !o)}
-          style={{
-            position: 'fixed',
-            bottom: chatOpen ? 'calc(33vh + 20px)' : 20,
-            right: 20,
-            zIndex: 500,
-            width: 60, height: 60,
-            borderRadius: '50%',
-            border: '2px solid rgba(255,255,255,0.65)',
-            background: chatOpen ? 'rgba(50,50,50,0.92)' : 'rgba(116,64,50,0.92)',
-            color: '#fff',
-            fontSize: chatOpen ? 20 : 24,
-            cursor: 'pointer',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.38)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'bottom 0.35s ease, background 0.2s',
-          }}
-          title={chatOpen ? '채팅 닫기' : '대화형 주문 도우미'}
-        >
-          {chatOpen ? '✕' : '💬'}
-        </button>
+        {screen === 'start' && (
+          <button
+            onClick={() => setChatOpen(o => !o)}
+            style={{
+              position: 'fixed',
+              bottom: chatOpen ? 'calc(33vh + 20px)' : 20,
+              right: 20,
+              zIndex: 500,
+              width: 60, height: 60,
+              borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.65)',
+              background: chatOpen ? 'rgba(50,50,50,0.92)' : 'rgba(116,64,50,0.92)',
+              color: '#fff',
+              fontSize: chatOpen ? 20 : 24,
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.38)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'bottom 0.35s ease, background 0.2s',
+            }}
+            title={chatOpen ? '채팅 닫기' : '대화형 주문 도우미'}
+          >
+            {chatOpen ? '✕' : '💬'}
+          </button>
+        )}
       </>
     </LocaleProvider>
   )

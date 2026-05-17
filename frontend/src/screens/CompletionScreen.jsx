@@ -12,132 +12,108 @@ export default function CompletionScreen({ orderNum, nav }) {
   useEffect(() => {
     const interval = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          nav('start')
-          return 0
-        }
+        if (prev <= 1) { clearInterval(interval); nav('start'); return 0 }
         return prev - 1
       })
     }, 1000)
     return () => clearInterval(interval)
   }, [])
 
-  const progress = timeLeft / TOTAL_SECONDS // 1.0 → 0.0
-  const circumference = 2 * Math.PI * 24   // r=24
-  const dashOffset = circumference * (1 - progress)
+  const r = 20
+  const circumference = 2 * Math.PI * r
+  const dashOffset = circumference * (1 - timeLeft / TOTAL_SECONDS)
 
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      height: '100%',
-      background: '#f5f5f5',
+      height: '100%', background: '#f5f5f5',
     }}>
       {/* 헤더 */}
       <div style={{
-        background: '#744032', padding: '20px 32px', flexShrink: 0,
+        background: '#744032', padding: '16px 32px', flexShrink: 0,
         display: 'flex', justifyContent: 'center', alignItems: 'center',
       }}>
-        <Logo height={76} />
+        <Logo height={64} />
       </div>
 
-      {/* 본문 + 버튼 */}
-      <div style={{ flex: 1, position: 'relative' }}>
-
-        {/* 중앙 콘텐츠 */}
+      {/* justify-content:center + overflow:auto 조합은 상단 클리핑 버그 발생
+           → 스크롤 컨테이너와 margin:auto 내부 div로 분리하여 해결 */}
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
-          position: 'absolute', inset: 0,
-          bottom: '30%',
+          margin: 'auto',
           display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          gap: 'clamp(24px,6vw,36px)',
-          padding: '0 clamp(30px,9vw,48px)',
+          alignItems: 'center',
+          gap: 'clamp(14px, 3.5vw, 24px)',
+          padding: 'clamp(16px, 4vw, 32px) clamp(24px, 8vw, 48px)',
+          width: '100%', boxSizing: 'border-box',
         }}>
-          <div style={{ fontSize: 'clamp(33px,9vw,42px)', fontWeight: 900, color: '#1a1a1a' }}>
+          <div style={{ fontSize: 'clamp(24px, 7vw, 38px)', fontWeight: 900, color: '#1a1a1a', textAlign: 'center' }}>
             {t('paymentComplete')}
           </div>
 
           {/* 주문번호 카드 */}
           <div style={{
-            border: '4px solid #e00', borderRadius: 30,
+            border: '4px solid #e00', borderRadius: 24,
             background: '#fff', textAlign: 'center',
-            padding: 'clamp(28px,7vw,44px) clamp(56px,14vw,100px)',
+            padding: 'clamp(16px, 5vw, 36px) clamp(32px, 10vw, 80px)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
           }}>
-            <div style={{ fontSize: 'clamp(22px,6vw,27px)', fontWeight: 600, color: '#555', marginBottom: 16 }}>
+            <div style={{ fontSize: 'clamp(16px, 4.5vw, 24px)', fontWeight: 600, color: '#555', marginBottom: 10 }}>
               {t('orderNumber')}
             </div>
             <div style={{ lineHeight: 1 }}>
-              <span style={{ fontSize: 'clamp(84px,22vw,120px)', fontWeight: 900, color: '#e00' }}>
+              <span style={{ fontSize: 'clamp(56px, 16vw, 100px)', fontWeight: 900, color: '#e00' }}>
                 {numStr}
               </span>
-              <span style={{ fontSize: 'clamp(36px,9vw,48px)', fontWeight: 700, color: '#e00', marginLeft: 6 }}>
+              <span style={{ fontSize: 'clamp(24px, 7vw, 40px)', fontWeight: 700, color: '#e00', marginLeft: 6 }}>
                 {t('orderUnit')}
               </span>
             </div>
           </div>
 
-          <div style={{ fontSize: 'clamp(22px,6vw,27px)', color: '#666', fontWeight: 500 }}>
+          <div style={{ fontSize: 'clamp(16px, 4.5vw, 24px)', color: '#666', fontWeight: 500, textAlign: 'center' }}>
             {t('thankYou')}
           </div>
-        </div>
 
-        {/* 버튼 영역 */}
-        <div style={{
-          position: 'absolute',
-          bottom: '30%',
-          left: 0, right: 0,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', gap: 20,
-          padding: '0 clamp(30px,9vw,48px)',
-        }}>
-          <div style={{ display: 'flex', gap: 20 }}>
+          {/* 버튼 */}
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
             <button onClick={() => nav('start')} style={{
-              width: 'clamp(160px,36vw,240px)',
-              padding: 'clamp(20px,5vw,28px) 0',
-              border: '2px solid #744032', borderRadius: 24,
+              width: 'clamp(130px, 28vw, 200px)',
+              padding: 'clamp(14px, 3.5vw, 22px) 0',
+              border: '2px solid #744032', borderRadius: 20,
               background: '#fff', color: '#744032',
-              fontSize: 'clamp(20px,5.5vw,26px)', fontWeight: 700, cursor: 'pointer',
+              fontSize: 'clamp(15px, 4vw, 22px)', fontWeight: 700, cursor: 'pointer',
               boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
             }}>{t('getReceipt')}</button>
             <button onClick={() => nav('start')} style={{
-              width: 'clamp(160px,36vw,240px)',
-              padding: 'clamp(20px,5vw,28px) 0',
-              border: 'none', borderRadius: 24,
+              width: 'clamp(130px, 28vw, 200px)',
+              padding: 'clamp(14px, 3.5vw, 22px) 0',
+              border: 'none', borderRadius: 20,
               background: '#F5B800', color: '#1a1a1a',
-              fontSize: 'clamp(20px,5.5vw,26px)', fontWeight: 700, cursor: 'pointer',
+              fontSize: 'clamp(15px, 4vw, 22px)', fontWeight: 700, cursor: 'pointer',
               boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
             }}>{t('getNumber')}</button>
           </div>
 
           {/* 자동 복귀 카운트다운 */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            color: '#999', fontSize: 'clamp(14px,3.8vw,17px)',
-          }}>
-            {/* SVG 원형 진행바 */}
-            <svg width={56} height={56} style={{ flexShrink: 0 }}>
-              {/* 배경 원 */}
-              <circle cx={28} cy={28} r={24}
-                fill="none" stroke="#e0e0e0" strokeWidth={4} />
-              {/* 진행 원 */}
-              <circle cx={28} cy={28} r={24}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#999', fontSize: 'clamp(12px, 3vw, 16px)' }}>
+            <svg width={48} height={48} style={{ flexShrink: 0 }}>
+              <circle cx={24} cy={24} r={r} fill="none" stroke="#e0e0e0" strokeWidth={4} />
+              <circle cx={24} cy={24} r={r}
                 fill="none" stroke="#744032" strokeWidth={4}
                 strokeDasharray={circumference}
                 strokeDashoffset={dashOffset}
                 strokeLinecap="round"
-                transform="rotate(-90 28 28)"
+                transform="rotate(-90 24 24)"
                 style={{ transition: 'stroke-dashoffset 0.9s linear' }}
               />
-              <text x={28} y={33} textAnchor="middle"
-                fontSize={16} fontWeight={900} fill="#744032">
+              <text x={24} y={29} textAnchor="middle" fontSize={14} fontWeight={900} fill="#744032">
                 {timeLeft}
               </text>
             </svg>
             <span>{t('autoReturn', timeLeft)}</span>
           </div>
         </div>
-
       </div>
     </div>
   )

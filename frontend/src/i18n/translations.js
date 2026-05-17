@@ -6,6 +6,12 @@ const translations = {
     // ReturnToStartDialog
     returnToStartMsg: '첫 화면으로 돌아가시겠습니까?',
 
+    // Category tabs
+    cat_recommended: '추천메뉴',
+    cat_burger: '버거',
+    cat_side: '사이드',
+    cat_drink: '음료',
+
     // CartScreen columns
     colMenu: '메뉴',
     colQty: '수량',
@@ -78,6 +84,10 @@ const translations = {
   en: {
     startOrder: 'Start Order',
     returnToStartMsg: 'Return to the home screen?',
+    cat_recommended: 'Recommended',
+    cat_burger: 'Burger',
+    cat_side: 'Side',
+    cat_drink: 'Drink',
     colMenu: 'Item',
     colQty: 'Qty',
     colPrice: 'Price',
@@ -137,6 +147,10 @@ const translations = {
   zh: {
     startOrder: '开始点餐',
     returnToStartMsg: '是否返回首页？',
+    cat_recommended: '推荐菜单',
+    cat_burger: '汉堡',
+    cat_side: '小食',
+    cat_drink: '饮料',
     colMenu: '菜品',
     colQty: '数量',
     colPrice: '金额',
@@ -196,6 +210,10 @@ const translations = {
   ja: {
     startOrder: '注文を始める',
     returnToStartMsg: 'ホーム画面に戻りますか？',
+    cat_recommended: 'おすすめ',
+    cat_burger: 'バーガー',
+    cat_side: 'サイド',
+    cat_drink: 'ドリンク',
     colMenu: '商品',
     colQty: '数量',
     colPrice: '金額',

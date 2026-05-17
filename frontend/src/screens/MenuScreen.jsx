@@ -17,6 +17,13 @@ const CAT_IMAGE = {
   drink:       '/images/drinks/콜라.png',
 }
 
+const CAT_I18N_KEY = {
+  recommended: 'cat_recommended',
+  burger:      'cat_burger',
+  side:        'cat_side',
+  drink:       'cat_drink',
+}
+
 export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
@@ -166,7 +173,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 fontSize: 'clamp(18px, 4.8vw, 22px)',
                 fontWeight: active ? 700 : 400,
                 color: active ? '#1a1a1a' : '#aaa',
-              }}>{cat.name}</span>
+              }}>{t(CAT_I18N_KEY[cat.id] ?? cat.id)}</span>
             </button>
           )
         })}
