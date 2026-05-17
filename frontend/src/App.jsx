@@ -4,7 +4,7 @@ import OrderTypeScreen from './screens/OrderTypeScreen'
 import MenuScreen from './screens/MenuScreen'
 import CartScreen from './screens/CartScreen'
 import PaymentScreen from './screens/PaymentScreen'
-import PointsScreen from './screens/PointsScreen'
+import CompletionScreen from './screens/CompletionScreen'
 import CardPaymentScreen from './screens/CardPaymentScreen'
 import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
@@ -13,6 +13,7 @@ export default function App() {
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
   const [orderType, setOrderType] = useState(null)
+  const [orderNum,  setOrderNum]  = useState(null)
 
   const nav = (s) => setScreen(s)
 
@@ -35,7 +36,7 @@ export default function App() {
   const clearCart = () => setCart([])
 
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
-  const props = { cart, total, addToCart, updateQty, clearCart, nav }
+  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType }
 
   const screens = {
     start:       <StartScreen {...props} />,
@@ -43,7 +44,7 @@ export default function App() {
     menu:        <MenuScreen {...props} />,
     cart:        <CartScreen {...props} />,
     payment:     <PaymentScreen {...props} />,
-    points:      <PointsScreen {...props} />,
+    complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
     cardPayment: <CardPaymentScreen {...props} />,
     payPayment:  <PayPaymentScreen {...props} />,
     cashPayment: <CashPaymentScreen {...props} />,

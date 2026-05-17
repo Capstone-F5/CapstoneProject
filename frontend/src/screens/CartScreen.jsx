@@ -1,7 +1,24 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Logo from '../components/Logo'
+import { lookupCustomer, addPoints } from '../services/pointsService'
+import { createOrder }   from '../services/orderService'
+import { processPayment } from '../services/paymentService'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
+
+// 결제 수단 이미지 경로 — null 이면 기존 이모티콘/텍스트 폴백 표시
+// 예: card: '/assets/payment/card.png'
+const PAYMENT_IMAGES = {
+  card:     null, // 신용카드 / 삼성페이
+  cash:     null, // 현금
+  naver:    null, // 네이버페이
+  kakao:    null, // 카카오페이
+  zero:     null, // 제로페이
+  payco:    null, // 페이코
+  cardWait: null, // 카드 결제 대기 화면
+  cashWait: null, // 현금 결제 대기 화면
+  payWait:  null, // 간편결제 대기 화면
+}
 
 const LIST_PX   = 16
 const CARD_PX   = 16
@@ -10,14 +27,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-/* 실제 API 연동 시 이 함수만 교체하면 됩니다 */
-async function fetchCustomerName(phoneDigits) {
-  // TODO: const res = await fetch(`/api/points/lookup?phone=${phoneDigits}`)
-  //       return (await res.json()).name
-  return '고객'
-}
-
-export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType }) {
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
   const [showPointsPopup,  setShowPointsPopup]  = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
@@ -28,6 +38,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
   const [pointsError,      setPointsError]      = useState('')
   const [confirmedPhone,   setConfirmedPhone]   = useState('')
   const [confirmedName,    setConfirmedName]    = useState('')
+  const [paymentMethod,    setPaymentMethod]    = useState(null)
+
+  const isCompletingRef = useRef(false)
 
   const handlePayClick = () => {
     if (cart.length === 0) return
@@ -65,23 +78,40 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
     const d = pointsInput.replace(/\D/g, '')
     if (!d.length)       { setPointsError('전화번호를 입력해 주세요'); return }
     if (d.length !== 11) { setPointsError('11자리 번호를 입력해 주세요'); return }
-    const name = await fetchCustomerName(d)
+    const { name } = await lookupCustomer(d)
     openPayment(formatPhone(pointsInput), name)
   }
 
   const goPayment = (dest) => {
     setShowPaymentPopup(false)
+    const methodMap = { cardPayment: 'card', cashPayment: 'cash', payPayment: 'pay' }
+    setPaymentMethod(methodMap[dest] ?? 'card')
     if (dest === 'cardPayment') setShowCardPayment(true)
     else if (dest === 'cashPayment') setShowCashPayment(true)
     else if (dest === 'payPayment')  setShowPayPayment(true)
   }
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
+    if (isCompletingRef.current) return
+    isCompletingRef.current = true
     setShowCardPayment(false)
     setShowCashPayment(false)
     setShowPayPayment(false)
-    clearCart()
-    nav('start')
+    try {
+      const { orderNum, orderId } = await createOrder({
+        items: cart, total, orderType, phone: confirmedPhone,
+      })
+      await processPayment({ method: paymentMethod, amount: total, orderId, phone: confirmedPhone })
+      if (confirmedPhone) {
+        await addPoints({ phone: confirmedPhone, amount: total, orderId }).catch(() => {})
+      }
+      setOrderNum(orderNum)
+      clearCart()
+      nav('complete')
+    } catch (err) {
+      console.error('결제 중 오류:', err)
+      isCompletingRef.current = false
+    }
   }
 
   return (
@@ -217,7 +247,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
             {POINT_KEYS.map(k => (
               <button key={k} onClick={() => handlePointKey(k)} style={{
-                padding: '19px 0', background: '#9e9e9e', color: '#fff',
+                padding: '25px 0', background: '#9e9e9e', color: '#fff',
                 border: 'none', borderRadius: 8, fontSize: 20, fontWeight: 700, cursor: 'pointer',
               }}>{k}</button>
             ))}
@@ -231,9 +261,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
 
       {/* ── 결제 수단 선택 팝업 ── */}
       {showPaymentPopup && (
-        <ModalBase onClose={() => setShowPaymentPopup(false)}>
+        <ModalBase onClose={() => setShowPaymentPopup(false)} minHeight="clamp(500px,76vh,700px)">
           {/* 인사말 + 금액 */}
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: 28 }}>
             {confirmedName && (
               <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
                 안녕하세요,{' '}
@@ -249,46 +279,54 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
           </div>
 
           {/* 신용카드+삼성페이 | 현금 — 2×1 */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
             <button onClick={() => goPayment('cardPayment')} style={{
-              padding: '18px 12px', border: '1.5px solid #e8e8e8', borderRadius: 14, background: '#fff',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, cursor: 'pointer',
+              padding: '32px 12px', border: '1.5px solid #e8e8e8', borderRadius: 14, background: '#fff',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, cursor: 'pointer',
             }}>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff">💳</PayBadge>
-                <PayBadge bg="#1428A0" color="#fff" small>
-                  <span style={{ fontSize: 8, fontWeight: 900, display: 'block', lineHeight: 1 }}>SAMSUNG</span>
-                  <span style={{ fontSize: 11, fontWeight: 900 }}>Pay</span>
-                </PayBadge>
-              </div>
+              {PAYMENT_IMAGES.card
+                ? <img src={PAYMENT_IMAGES.card} alt="신용카드 / 삼성페이"
+                    style={{ width: 96, height: 60, objectFit: 'contain' }} />
+                : <div style={{ display: 'flex', gap: 6 }}>
+                    <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff">💳</PayBadge>
+                    <PayBadge bg="#1428A0" color="#fff" small>
+                      <span style={{ fontSize: 8, fontWeight: 900, display: 'block', lineHeight: 1 }}>SAMSUNG</span>
+                      <span style={{ fontSize: 11, fontWeight: 900 }}>Pay</span>
+                    </PayBadge>
+                  </div>
+              }
               <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>신용카드 / 삼성페이</span>
             </button>
 
             <button onClick={() => goPayment('cashPayment')} style={{
-              padding: '18px 12px', border: '1.5px solid #e8e8e8', borderRadius: 14, background: '#fff',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, cursor: 'pointer',
+              padding: '32px 12px', border: '1.5px solid #e8e8e8', borderRadius: 14, background: '#fff',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, cursor: 'pointer',
             }}>
-              <PayBadge bg="#E8F5E9" color="#2e7d32">💵</PayBadge>
+              {PAYMENT_IMAGES.cash
+                ? <img src={PAYMENT_IMAGES.cash} alt="현금"
+                    style={{ width: 96, height: 60, objectFit: 'contain' }} />
+                : <PayBadge bg="#E8F5E9" color="#2e7d32">💵</PayBadge>
+              }
               <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>현금</span>
             </button>
           </div>
 
           {/* 간편결제 */}
-          <div style={{ fontSize: 12, color: '#888', fontWeight: 600, marginBottom: 10 }}>간편결제</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
+          <div style={{ fontSize: 12, color: '#888', fontWeight: 600, marginBottom: 14 }}>간편결제</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 26 }}>
             {[
-              { logo: null, fallbackLabel: 'N Pay',  fallbackColor: '#03C75A', sub: '네이버페이' },
-              { logo: null, fallbackLabel: '·pay',   fallbackColor: '#b8860b', sub: '카카오페이' },
-              { logo: null, fallbackLabel: '0 pay',  fallbackColor: '#333',    sub: '제로페이'  },
-              { logo: null, fallbackLabel: 'PAYCO',  fallbackColor: '#E2231A', sub: '페이코'    },
+              { logo: PAYMENT_IMAGES.naver,  fallbackLabel: 'N Pay',  fallbackColor: '#03C75A', sub: '네이버페이' },
+              { logo: PAYMENT_IMAGES.kakao,  fallbackLabel: '·pay',   fallbackColor: '#b8860b', sub: '카카오페이' },
+              { logo: PAYMENT_IMAGES.zero,   fallbackLabel: '0 pay',  fallbackColor: '#333',    sub: '제로페이'  },
+              { logo: PAYMENT_IMAGES.payco,  fallbackLabel: 'PAYCO',  fallbackColor: '#E2231A', sub: '페이코'    },
             ].map(p => (
               <button key={p.sub} onClick={() => goPayment('payPayment')} style={{
-                padding: '16px 12px', border: '1.5px solid #e8e8e8', borderRadius: 12, background: '#fff',
+                padding: '26px 12px', border: '1.5px solid #e8e8e8', borderRadius: 12, background: '#fff',
                 display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
               }}>
                 {p.logo
-                  ? <img src={p.logo} alt={p.sub} style={{ width: 36, height: 24, objectFit: 'contain', flexShrink: 0 }} />
-                  : <span style={{ fontSize: 15, fontWeight: 900, color: p.fallbackColor, minWidth: 36, textAlign: 'center' }}>{p.fallbackLabel}</span>
+                  ? <img src={p.logo} alt={p.sub} style={{ width: 52, height: 34, objectFit: 'contain', flexShrink: 0 }} />
+                  : <span style={{ fontSize: 15, fontWeight: 900, color: p.fallbackColor, minWidth: 52, textAlign: 'center' }}>{p.fallbackLabel}</span>
                 }
                 <span style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>{p.sub}</span>
               </button>
@@ -296,7 +334,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
           </div>
 
           <button onClick={() => setShowPaymentPopup(false)} style={{
-            width: '100%', padding: '15px 0', border: 'none', borderRadius: 12,
+            width: '100%', padding: '20px 0', border: 'none', borderRadius: 12,
             background: '#e8e8e8', color: '#666', fontSize: 16, fontWeight: 700, cursor: 'pointer',
           }}>취소</button>
         </ModalBase>
@@ -307,6 +345,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
         <PayWaitPopup
           title="카드를 리더기에 읽혀주세요"
           total={total}
+          image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
         >
@@ -319,7 +358,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
         <PayWaitPopup
           title="현금을 투입해주세요"
           total={total}
+          image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
+          onComplete={handleComplete}
         >
           <CashIllustration />
         </PayWaitPopup>
@@ -330,7 +371,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
         <PayWaitPopup
           title="바코드를 스캔해 주세요"
           total={total}
+          image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
+          onComplete={handleComplete}
         >
           <BarcodeIllustration />
         </PayWaitPopup>
@@ -340,11 +383,16 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav }) {
 }
 
 /* ── 결제 대기 팝업 ── */
-function PayWaitPopup({ title, total, onCancel, onComplete, children }) {
+function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
+  useEffect(() => {
+    const t = setTimeout(() => onComplete?.(), 5000)
+    return () => clearTimeout(t)
+  }, [])
+
   return (
-    <ModalBase onClose={onCancel}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 20, lineHeight: 1.4 }}>
+    <ModalBase onClose={onCancel} minHeight="clamp(440px,66vh,600px)">
+      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.4 }}>
           {title}
         </div>
 
@@ -352,7 +400,6 @@ function PayWaitPopup({ title, total, onCancel, onComplete, children }) {
           background: '#616161', borderRadius: 8,
           padding: '14px 20px',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          marginBottom: 28,
         }}>
           <span style={{ color: '#ccc', fontSize: 14 }}>결제할 금액</span>
           <span style={{ color: '#F5B800', fontSize: 22, fontWeight: 900 }}>
@@ -360,7 +407,12 @@ function PayWaitPopup({ title, total, onCancel, onComplete, children }) {
           </span>
         </div>
 
-        <div style={{ marginBottom: 28 }}>{children}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {image
+            ? <img src={image} alt="" style={{ width: '100%', maxWidth: 240, height: 'auto', objectFit: 'contain' }} />
+            : children
+          }
+        </div>
 
         <div style={{ display: 'flex', gap: 12 }}>
           <button onClick={onCancel} style={{
@@ -588,7 +640,7 @@ function ModalBtn({ label, color, textColor, onClick }) {
   )
 }
 
-function ModalBase({ onClose, children }) {
+function ModalBase({ onClose, children, minHeight }) {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 120,
@@ -601,6 +653,8 @@ function ModalBase({ onClose, children }) {
         background: '#fff', borderRadius: 18,
         padding: 'clamp(22px,5vw,28px)',
         boxShadow: '0 8px 40px rgba(0,0,0,0.25)',
+        display: 'flex', flexDirection: 'column',
+        ...(minHeight && { minHeight }),
       }}>
         {children}
       </div>

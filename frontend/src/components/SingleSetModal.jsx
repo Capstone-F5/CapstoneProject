@@ -107,9 +107,9 @@ function ChoiceCard({ image, alt, price, kcal, label, onClick }) {
         }}>
           {price.toLocaleString()} 원
         </div>
-        {kcal && (
-          <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>{kcal} kcal</div>
-        )}
+        <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
+          {kcal != null ? `${kcal} kcal` : '- kcal'}
+        </div>
         <div style={{
           fontSize: 'clamp(12px, 3.5vw, 14px)', fontWeight: 700, color: '#555',
         }}>

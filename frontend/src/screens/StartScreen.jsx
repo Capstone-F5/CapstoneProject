@@ -6,7 +6,7 @@ export default function StartScreen({ nav }) {
         flex: 1,
         minHeight: '100dvh',
         minHeight: '100vh',
-        backgroundImage: "url('/bg.jpg')",
+        backgroundImage: "url('/bg.png')",
         backgroundSize: 'cover',
         backgroundPosition: 'center center',
         backgroundRepeat: 'no-repeat',
