@@ -1,8 +1,10 @@
 import Logo from '../components/Logo'
+import useT from '../i18n/useT'
 
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
 
 export default function OrderTypeScreen({ nav, setOrderType }) {
+  const t = useT()
   const select = (type) => {
     setOrderType(type)
     nav('menu')
@@ -27,14 +29,14 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
         flexDirection: 'column',
         alignItems: 'center',
       }}>
-        <Logo height={48} />
+        <Logo height={72} />
 
         <div style={{
-          fontSize: 'clamp(13px, 3.5vw, 15px)', fontWeight: 700,
+          fontSize: 'clamp(20px, 5.3vw, 23px)', fontWeight: 700,
           color: '#1a1a1a', textAlign: 'center',
-          margin: 'clamp(20px, 5vw, 28px) 0',
+          margin: 'clamp(30px, 7.5vw, 42px) 0',
         }}>
-          식사하실 장소를 선택해 주세요
+          {t('selectLocation')}
         </div>
 
         <div style={{
@@ -43,18 +45,18 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           width: '70%',
         }}>
           <TypeCard
-            label="매장에서 식사"
+            label={t('dineIn')}
             onClick={() => select('dine-in')}
           >
             <img
               src="/images/sets/F버거 세트.png"
-              alt="매장에서 식사"
+              alt="dine-in"
               style={{ width: '70%', aspectRatio: '1 / 1', objectFit: 'scale-down' }}
             />
           </TypeCard>
 
           <TypeCard
-            label="포장"
+            label={t('takeout')}
             onClick={() => select('takeout')}
           >
             <img
@@ -93,8 +95,8 @@ function TypeCard({ label, onClick, children }) {
         {children}
       </div>
       <div style={{
-        padding: 'clamp(7px, 2vw, 11px) 8px',
-        fontSize: 'clamp(13px, 3.64vw, 15.6px)', fontWeight: 700,
+        padding: 'clamp(11px, 3vw, 17px) 8px',
+        fontSize: 'clamp(20px, 5.5vw, 23px)', fontWeight: 700,
         color: '#1a1a1a',
       }}>
         {label}

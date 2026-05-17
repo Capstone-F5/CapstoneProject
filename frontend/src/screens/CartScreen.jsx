@@ -3,6 +3,7 @@ import Logo from '../components/Logo'
 import { lookupCustomer, addPoints } from '../services/pointsService'
 import { createOrder }   from '../services/orderService'
 import { processPayment } from '../services/paymentService'
+import useT from '../i18n/useT'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
 
@@ -28,6 +29,7 @@ const COL_PRICE = 140
 const IMG_SIZE  = 90
 
 export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType }) {
+  const t = useT()
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
   const [showPointsPopup,  setShowPointsPopup]  = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
@@ -76,8 +78,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
   const handlePointsConfirm = async () => {
     const d = pointsInput.replace(/\D/g, '')
-    if (!d.length)       { setPointsError('전화번호를 입력해 주세요'); return }
-    if (d.length !== 11) { setPointsError('11자리 번호를 입력해 주세요'); return }
+    if (!d.length)       { setPointsError(t('phoneError1')); return }
+    if (d.length !== 11) { setPointsError(t('phoneError2')); return }
     const { name } = await lookupCustomer(d)
     openPayment(formatPhone(pointsInput), name)
   }
@@ -123,18 +125,18 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
       {/* ── 헤더 ── */}
       <div style={{
-        background: '#744032', padding: '10px 16px',
+        background: '#744032', padding: '20px 32px',
         display: 'flex', alignItems: 'center', flexShrink: 0,
       }}>
         <button onClick={() => nav('menu')} style={{
           background: 'none', border: 'none',
-          color: '#F5B800', fontSize: 30, lineHeight: 1,
-          padding: '0 10px 0 0', cursor: 'pointer',
+          color: '#F5B800', fontSize: 60, lineHeight: 1,
+          padding: '0 16px 0 0', cursor: 'pointer',
         }}>‹</button>
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-          <Logo height={38} />
+          <Logo height={76} />
         </div>
-        <div style={{ width: 40 }} />
+        <div style={{ width: 80 }} />
       </div>
 
       {/* ── 주문내역 타이틀 ── */}
@@ -143,12 +145,12 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         borderBottom: '1px solid #eee', flexShrink: 0,
       }}>
-        <span style={{ fontSize: 24, fontWeight: 900, color: '#1a1a1a' }}>주문내역</span>
+        <span style={{ fontSize: 24, fontWeight: 900, color: '#1a1a1a' }}>{t('orderHistory')}</span>
         <button onClick={clearCart} style={{
           border: '1.5px solid #ccc', borderRadius: 8,
           background: '#fff', padding: '10px 20px',
           fontSize: 16, fontWeight: 600, color: '#555', cursor: 'pointer',
-        }}>전체삭제</button>
+        }}>{t('clearAll')}</button>
       </div>
 
       {/* ── 컬럼 헤더 ── */}
@@ -170,7 +172,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       <div style={{ flex: 1, overflowY: 'auto', padding: `14px ${LIST_PX}px` }}>
         {cart.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#bbb', padding: '100px 0', fontSize: 20 }}>
-            장바구니가 비어있습니다
+            {t('cartEmpty')}
           </div>
         ) : (
           cart.map(item => (
@@ -188,22 +190,22 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline',
           gap: 14, marginBottom: 16,
         }}>
-          <span style={{ fontSize: 20, fontWeight: 700, color: '#555' }}>총 결제금액</span>
+          <span style={{ fontSize: 20, fontWeight: 700, color: '#555' }}>{t('totalAmount')}</span>
           <span style={{ fontSize: 34, fontWeight: 900, color: '#1a1a1a' }}>
-            {total.toLocaleString()} 원
+            {total.toLocaleString()} {t('won')}
           </span>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
           <button onClick={() => setShowPointsPopup(true)} style={{
             flex: 1, padding: '22px 0', border: 'none', borderRadius: 12,
             background: '#d0d0d0', color: '#444', fontSize: 22, fontWeight: 700, cursor: 'pointer',
-          }}>포인트</button>
+          }}>{t('points')}</button>
           <button onClick={handlePayClick} disabled={cart.length === 0} style={{
             flex: 2, padding: '22px 0', border: 'none', borderRadius: 12,
             background: cart.length > 0 ? '#F5B800' : '#ccc',
             color: '#1a1a1a', fontSize: 22, fontWeight: 900,
             cursor: cart.length > 0 ? 'pointer' : 'default',
-          }}>결제하기</button>
+          }}>{t('checkout')}</button>
         </div>
       </div>
 
@@ -211,12 +213,12 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showPointPrompt && (
         <ModalBase onClose={() => setShowPointPrompt(false)}>
           <p style={{ fontSize: 22, fontWeight: 900, textAlign: 'center', marginBottom: 20 }}>
-            포인트를 적립하시겠습니까?
+            {t('earnPoints')}
           </p>
           <div style={{ display: 'flex', gap: 12 }}>
-            <ModalBtn label="아니오" color="#d4d4d4" textColor="#555"
+            <ModalBtn label={t('no')} color="#d4d4d4" textColor="#555"
               onClick={() => { setShowPointPrompt(false); openPayment() }} />
-            <ModalBtn label="예" color="#F5B800" textColor="#1a1a1a"
+            <ModalBtn label={t('yes')} color="#F5B800" textColor="#1a1a1a"
               onClick={() => { setShowPointPrompt(false); setShowPointsPopup(true) }} />
           </div>
         </ModalBase>
@@ -226,10 +228,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showPointsPopup && (
         <ModalBase onClose={closePointsPopup}>
           <p style={{ fontSize: 22, fontWeight: 900, textAlign: 'center', marginBottom: 4 }}>
-            휴대폰 번호를 입력해 주세요
+            {t('enterPhone')}
           </p>
           <p style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 14 }}>
-            적립할 번호를 입력해 주세요
+            {t('enterPhoneSub')}
           </p>
           <div style={{
             width: '100%', border: '2px solid #e44', borderRadius: 10,
@@ -253,8 +255,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             ))}
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            <ModalBtn label="취소" color="#d4d4d4" textColor="#555" onClick={closePointsPopup} />
-            <ModalBtn label="확인" color="#F5B800" textColor="#1a1a1a" onClick={handlePointsConfirm} />
+            <ModalBtn label={t('cancel')} color="#d4d4d4" textColor="#555" onClick={closePointsPopup} />
+            <ModalBtn label={t('confirm')} color="#F5B800" textColor="#1a1a1a" onClick={handlePointsConfirm} />
           </div>
         </ModalBase>
       )}
@@ -271,10 +273,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               </div>
             )}
             <div style={{ fontSize: 13, color: '#aaa', fontWeight: 600, marginBottom: 6 }}>
-              결제 수단을 선택하세요
+              {t('selectPayMethod')}
             </div>
             <div style={{ fontSize: 28, fontWeight: 900, color: '#744032' }}>
-              {total.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>원</span>
+              {total.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>{t('won')}</span>
             </div>
           </div>
 
@@ -295,7 +297,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
                     </PayBadge>
                   </div>
               }
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>신용카드 / 삼성페이</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>{t('creditCard')}</span>
             </button>
 
             <button onClick={() => goPayment('cashPayment')} style={{
@@ -307,28 +309,28 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
                     style={{ width: 96, height: 60, objectFit: 'contain' }} />
                 : <PayBadge bg="#E8F5E9" color="#2e7d32">💵</PayBadge>
               }
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>현금</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>{t('cash')}</span>
             </button>
           </div>
 
           {/* 간편결제 */}
-          <div style={{ fontSize: 12, color: '#888', fontWeight: 600, marginBottom: 14 }}>간편결제</div>
+          <div style={{ fontSize: 12, color: '#888', fontWeight: 600, marginBottom: 14 }}>{t('easyPay')}</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 26 }}>
             {[
-              { logo: PAYMENT_IMAGES.naver,  fallbackLabel: 'N Pay',  fallbackColor: '#03C75A', sub: '네이버페이' },
-              { logo: PAYMENT_IMAGES.kakao,  fallbackLabel: '·pay',   fallbackColor: '#b8860b', sub: '카카오페이' },
-              { logo: PAYMENT_IMAGES.zero,   fallbackLabel: '0 pay',  fallbackColor: '#333',    sub: '제로페이'  },
-              { logo: PAYMENT_IMAGES.payco,  fallbackLabel: 'PAYCO',  fallbackColor: '#E2231A', sub: '페이코'    },
+              { logo: PAYMENT_IMAGES.naver, fallbackLabel: 'N Pay', fallbackColor: '#03C75A', labelKey: 'naverPay' },
+              { logo: PAYMENT_IMAGES.kakao, fallbackLabel: '·pay',  fallbackColor: '#b8860b', labelKey: 'kakaoPay' },
+              { logo: PAYMENT_IMAGES.zero,  fallbackLabel: '0 pay', fallbackColor: '#333',    labelKey: 'zeroPay'  },
+              { logo: PAYMENT_IMAGES.payco, fallbackLabel: 'PAYCO', fallbackColor: '#E2231A', labelKey: 'payco'    },
             ].map(p => (
-              <button key={p.sub} onClick={() => goPayment('payPayment')} style={{
+              <button key={p.labelKey} onClick={() => goPayment('payPayment')} style={{
                 padding: '26px 12px', border: '1.5px solid #e8e8e8', borderRadius: 12, background: '#fff',
                 display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
               }}>
                 {p.logo
-                  ? <img src={p.logo} alt={p.sub} style={{ width: 52, height: 34, objectFit: 'contain', flexShrink: 0 }} />
+                  ? <img src={p.logo} alt={t(p.labelKey)} style={{ width: 52, height: 34, objectFit: 'contain', flexShrink: 0 }} />
                   : <span style={{ fontSize: 15, fontWeight: 900, color: p.fallbackColor, minWidth: 52, textAlign: 'center' }}>{p.fallbackLabel}</span>
                 }
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>{p.sub}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>{t(p.labelKey)}</span>
               </button>
             ))}
           </div>
@@ -336,14 +338,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           <button onClick={() => setShowPaymentPopup(false)} style={{
             width: '100%', padding: '20px 0', border: 'none', borderRadius: 12,
             background: '#e8e8e8', color: '#666', fontSize: 16, fontWeight: 700, cursor: 'pointer',
-          }}>취소</button>
+          }}>{t('cancel')}</button>
         </ModalBase>
       )}
 
       {/* ── 카드 결제 대기 팝업 ── */}
       {showCardPayment && (
         <PayWaitPopup
-          title="카드를 리더기에 읽혀주세요"
+          title={t('waitCard')}
           total={total}
           image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
@@ -356,7 +358,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {/* ── 현금 결제 대기 팝업 ── */}
       {showCashPayment && (
         <PayWaitPopup
-          title="현금을 투입해주세요"
+          title={t('waitCash')}
           total={total}
           image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
@@ -369,7 +371,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {/* ── 간편결제 대기 팝업 ── */}
       {showPayPayment && (
         <PayWaitPopup
-          title="바코드를 스캔해 주세요"
+          title={t('waitPay')}
           total={total}
           image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
@@ -384,9 +386,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
 /* ── 결제 대기 팝업 ── */
 function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
+  const t = useT()
   useEffect(() => {
-    const t = setTimeout(() => onComplete?.(), 5000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => onComplete?.(), 5000)
+    return () => clearTimeout(timer)
   }, [])
 
   return (
@@ -401,9 +404,9 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
           padding: '14px 20px',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
-          <span style={{ color: '#ccc', fontSize: 14 }}>결제할 금액</span>
+          <span style={{ color: '#ccc', fontSize: 14 }}>{t('payAmount')}</span>
           <span style={{ color: '#F5B800', fontSize: 22, fontWeight: 900 }}>
-            {(total || 0).toLocaleString()} 원
+            {(total || 0).toLocaleString()} {t('won')}
           </span>
         </div>
 
@@ -419,13 +422,13 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
             flex: 1, padding: '14px 0', borderRadius: 12,
             border: 'none', background: '#e0e0e0', color: '#555',
             fontSize: 16, fontWeight: 700, cursor: 'pointer',
-          }}>취소</button>
+          }}>{t('cancel')}</button>
           {onComplete && (
             <button onClick={onComplete} style={{
               flex: 1, padding: '14px 0', borderRadius: 12,
               border: 'none', background: '#F5B800', color: '#1a1a1a',
               fontSize: 16, fontWeight: 700, cursor: 'pointer',
-            }}>완료</button>
+            }}>{t('complete')}</button>
           )}
         </div>
       </div>
@@ -527,6 +530,7 @@ function BarcodeIllustration() {
 
 /* ── CartItem ── */
 function CartItem({ item, onUpdateQty }) {
+  const t = useT()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
   return (
     <div style={{
@@ -548,7 +552,7 @@ function CartItem({ item, onUpdateQty }) {
             : <span style={{ fontSize: 44 }}>🍔</span>
           }
           <span style={{ fontSize: 14, fontWeight: 700, color: '#333', wordBreak: 'keep-all', textAlign: 'center', width: IMG_SIZE }}>
-            {item.name}{item.type === 'set' ? ' 세트' : ''}
+            {item.name}{item.type === 'set' ? ` ${t('set')}` : ''}
           </span>
         </div>
 
@@ -567,7 +571,7 @@ function CartItem({ item, onUpdateQty }) {
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
           alignSelf: 'center',
         }}>
-          <span style={{ fontSize: 18, fontWeight: 800 }}>{(item.unitPrice * item.qty).toLocaleString()}원</span>
+          <span style={{ fontSize: 18, fontWeight: 800 }}>{(item.unitPrice * item.qty).toLocaleString()}{t('won')}</span>
           <button onClick={() => onUpdateQty(item.cartId, 0)} style={{
             background: 'none', border: 'none', color: '#bbb',
             fontSize: 20, lineHeight: 1, cursor: 'pointer', padding: 0, flexShrink: 0,
@@ -590,6 +594,7 @@ function CartItem({ item, onUpdateQty }) {
 }
 
 function SubRow({ label, extra }) {
+  const t = useT()
   return (
     <div style={{
       display: 'grid',
@@ -601,7 +606,7 @@ function SubRow({ label, extra }) {
       <span style={{ fontWeight: 500 }}>- {label}</span>
       <span style={{ textAlign: 'center', fontWeight: 600 }}>1</span>
       <span style={{ textAlign: 'right', fontWeight: 600, paddingRight: 26, color: extra > 0 ? '#cc3333' : '#999' }}>
-        {extra > 0 ? `+${extra.toLocaleString()}원` : '0'}
+        {extra > 0 ? `+${extra.toLocaleString()}${t('won')}` : '0'}
       </span>
     </div>
   )

@@ -1,9 +1,10 @@
-import { SET_SURCHARGE } from '../data/menuData'
+import useT from '../i18n/useT'
 
-export default function SingleSetModal({ item, onSelect, onClose }) {
+export default function SingleSetModal({ item, onSelect, onClose, setSurcharge }) {
+  const t = useT()
   if (!item) return null
 
-  const setPrice = item.price + SET_SURCHARGE
+  const setPrice = item.price + (setSurcharge ?? 0)
   const setKcal  = item.kcal ? item.kcal + 350 : null
 
   return (
@@ -67,15 +68,17 @@ export default function SingleSetModal({ item, onSelect, onClose }) {
             alt={item.name}
             price={item.price}
             kcal={item.kcal}
-            label="단품 선택"
+            label={t('singleLabel')}
+            won={t('won')}
             onClick={() => onSelect('single')}
           />
           <ChoiceCard
             image={item.setImage ?? item.image}
-            alt={`${item.name} 세트`}
+            alt={`${item.name} ${t('set')}`}
             price={setPrice}
             kcal={setKcal}
-            label="세트 선택"
+            label={t('setLabel')}
+            won={t('won')}
             onClick={() => onSelect('set')}
           />
         </div>
@@ -84,7 +87,7 @@ export default function SingleSetModal({ item, onSelect, onClose }) {
   )
 }
 
-function ChoiceCard({ image, alt, price, kcal, label, onClick }) {
+function ChoiceCard({ image, alt, price, kcal, label, won, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -105,7 +108,7 @@ function ChoiceCard({ image, alt, price, kcal, label, onClick }) {
           fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900,
           color: '#1a1a1a', marginBottom: 2,
         }}>
-          {price.toLocaleString()} 원
+          {price.toLocaleString()} {won}
         </div>
         <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
           {kcal != null ? `${kcal} kcal` : '- kcal'}

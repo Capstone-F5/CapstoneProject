@@ -1,7 +1,15 @@
+import { useEffect } from 'react'
 import Logo from '../components/Logo'
+import useT from '../i18n/useT'
 
 export default function CompletionScreen({ orderNum, nav }) {
+  const t = useT()
   const numStr = String(orderNum ?? 0).padStart(3, '0')
+
+  useEffect(() => {
+    const t = setTimeout(() => nav('start'), 10000)
+    return () => clearTimeout(t)
+  }, [])
 
   return (
     <div style={{
@@ -11,67 +19,80 @@ export default function CompletionScreen({ orderNum, nav }) {
     }}>
       {/* 헤더 */}
       <div style={{
-        background: '#744032', padding: '10px 16px', flexShrink: 0,
+        background: '#744032', padding: '20px 32px', flexShrink: 0,
         display: 'flex', justifyContent: 'center', alignItems: 'center',
       }}>
-        <Logo height={38} />
+        <Logo height={76} />
       </div>
 
-      {/* 본문 */}
-      <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        padding: 'clamp(32px,8vw,48px) clamp(20px,6vw,32px)',
-        gap: 'clamp(24px,6vw,36px)',
-      }}>
-        <div style={{ fontSize: 'clamp(22px,6vw,28px)', fontWeight: 900, color: '#1a1a1a' }}>
-          결제가 완료되었습니다.
-        </div>
+      {/* 본문 + 버튼 */}
+      <div style={{ flex: 1, position: 'relative' }}>
 
-        {/* 주문번호 카드 */}
+        {/* 중앙 콘텐츠 — 버튼 영역(30%) 위쪽에서 세로 중앙 정렬 */}
         <div style={{
-          border: '3px solid #e00', borderRadius: 20,
-          background: '#fff', textAlign: 'center',
-          padding: 'clamp(32px,8vw,52px) clamp(48px,12vw,80px)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+          position: 'absolute', inset: 0,
+          bottom: '30%',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: 'clamp(24px,6vw,36px)',
+          padding: '0 clamp(30px,9vw,48px)',
         }}>
-          <div style={{ fontSize: 'clamp(15px,4vw,18px)', fontWeight: 600, color: '#555', marginBottom: 16 }}>
-            주문번호
+          <div style={{ fontSize: 'clamp(33px,9vw,42px)', fontWeight: 900, color: '#1a1a1a' }}>
+            {t('paymentComplete')}
           </div>
-          <div style={{ lineHeight: 1 }}>
-            <span style={{ fontSize: 'clamp(56px,15vw,80px)', fontWeight: 900, color: '#e00' }}>
-              {numStr}
-            </span>
-            <span style={{ fontSize: 'clamp(24px,6vw,32px)', fontWeight: 700, color: '#e00', marginLeft: 4 }}>
-              번
-            </span>
+
+          {/* 주문번호 카드 */}
+          <div style={{
+            border: '4px solid #e00', borderRadius: 30,
+            background: '#fff', textAlign: 'center',
+            padding: 'clamp(28px,7vw,44px) clamp(56px,14vw,100px)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+          }}>
+            <div style={{ fontSize: 'clamp(22px,6vw,27px)', fontWeight: 600, color: '#555', marginBottom: 16 }}>
+              {t('orderNumber')}
+            </div>
+            <div style={{ lineHeight: 1 }}>
+              <span style={{ fontSize: 'clamp(84px,22vw,120px)', fontWeight: 900, color: '#e00' }}>
+                {numStr}
+              </span>
+              <span style={{ fontSize: 'clamp(36px,9vw,48px)', fontWeight: 700, color: '#e00', marginLeft: 6 }}>
+                {t('orderUnit')}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 'clamp(22px,6vw,27px)', color: '#666', fontWeight: 500 }}>
+            {t('thankYou')}
           </div>
         </div>
 
-        <div style={{ fontSize: 'clamp(15px,4vw,18px)', color: '#666', fontWeight: 500 }}>
-          이용해 주셔서 감사합니다.
+        {/* 버튼 — 하단 30% 지점에 고정 */}
+        <div style={{
+          position: 'absolute',
+          bottom: '30%',
+          left: 0, right: 0,
+          display: 'flex', justifyContent: 'center',
+          gap: 20,
+          padding: '0 clamp(30px,9vw,48px)',
+        }}>
+          <button onClick={() => nav('start')} style={{
+            width: 'clamp(160px,36vw,240px)',
+            padding: 'clamp(20px,5vw,28px) 0',
+            border: '2px solid #744032', borderRadius: 24,
+            background: '#fff', color: '#744032',
+            fontSize: 'clamp(20px,5.5vw,26px)', fontWeight: 700, cursor: 'pointer',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+          }}>{t('getReceipt')}</button>
+          <button onClick={() => nav('start')} style={{
+            width: 'clamp(160px,36vw,240px)',
+            padding: 'clamp(20px,5vw,28px) 0',
+            border: 'none', borderRadius: 24,
+            background: '#F5B800', color: '#1a1a1a',
+            fontSize: 'clamp(20px,5.5vw,26px)', fontWeight: 700, cursor: 'pointer',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+          }}>{t('getNumber')}</button>
         </div>
-      </div>
 
-      {/* 하단 버튼 */}
-      <div style={{
-        padding: 'clamp(16px,4vw,20px) clamp(20px,6vw,32px) clamp(24px,6vw,36px)',
-        display: 'flex', gap: 14, flexShrink: 0,
-      }}>
-        <button onClick={() => nav('start')} style={{
-          flex: 1, padding: 'clamp(16px,4vw,22px) 0',
-          border: '2px solid #744032', borderRadius: 16,
-          background: '#fff', color: '#744032',
-          fontSize: 'clamp(15px,4vw,18px)', fontWeight: 700, cursor: 'pointer',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
-        }}>영수증 받기</button>
-        <button onClick={() => nav('start')} style={{
-          flex: 1, padding: 'clamp(16px,4vw,22px) 0',
-          border: 'none', borderRadius: 16,
-          background: '#F5B800', color: '#1a1a1a',
-          fontSize: 'clamp(15px,4vw,18px)', fontWeight: 700, cursor: 'pointer',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
-        }}>주문번호만 받기</button>
       </div>
     </div>
   )

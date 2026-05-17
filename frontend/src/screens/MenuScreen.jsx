@@ -4,6 +4,7 @@ import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
 import ItemDetailModal from '../components/ItemDetailModal'
 import { useMenuData } from '../hooks/useMenuData'
+import useT from '../i18n/useT'
 
 const COLS = 3
 const GRID_GAP = 9
@@ -16,6 +17,7 @@ const CAT_IMAGE = {
 }
 
 export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav }) {
+  const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
   const [catId,     setCatId]     = useState('recommended')
@@ -70,7 +72,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           animation: 'spin 0.8s linear infinite',
         }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-        <span style={{ fontSize: 14, color: '#999' }}>메뉴를 불러오는 중...</span>
+        <span style={{ fontSize: 14, color: '#999' }}>{t('loading')}</span>
       </div>
     )
   }
@@ -83,18 +85,18 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
         alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32,
       }}>
         <div style={{ fontSize: 14, color: '#888', textAlign: 'center' }}>
-          메뉴를 불러올 수 없습니다.<br />{error.message}
+          {t('loadError')}<br />{error.message}
         </div>
         <button onClick={retry} style={{
           padding: '12px 28px', borderRadius: 10,
           border: 'none', background: '#744032', color: '#fff',
           fontSize: 14, fontWeight: 700, cursor: 'pointer',
-        }}>다시 시도</button>
+        }}>{t('retry')}</button>
       </div>
     )
   }
 
-  const { categories, menuItems } = menuData
+  const { categories, menuItems, setSides, setDrinks, setSurcharge } = menuData
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -110,26 +112,26 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       {/* ── Header ── */}
       <div style={{
         background: '#744032',
-        padding: '10px 16px',
+        padding: '20px 32px',
         display: 'flex', alignItems: 'center',
         flexShrink: 0,
       }}>
         <button onClick={() => setShowHome(true)} style={{
           background: 'none', border: 'none',
-          color: '#F5B800', fontSize: 30, lineHeight: 1,
-          padding: '0 10px 0 0', cursor: 'pointer',
+          color: '#F5B800', fontSize: 60, lineHeight: 1,
+          padding: '0 16px 0 0', cursor: 'pointer',
         }}>‹</button>
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-          <Logo height={38} />
+          <Logo height={76} />
         </div>
-        <div style={{ width: 40 }} />
+        <div style={{ width: 80 }} />
       </div>
 
       {/* ── Category Tabs ── */}
       <div style={{
         background: '#fff',
         display: 'flex',
-        padding: '6px 4px 5px',
+        padding: '12px 8px 10px',
         borderBottom: '1px solid #ebebeb',
         flexShrink: 0,
       }}>
@@ -141,8 +143,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
               onClick={() => handleCat(cat.id)}
               style={{
                 flex: 1, display: 'flex', flexDirection: 'column',
-                alignItems: 'center', gap: 3,
-                padding: '2px 2px', border: 'none', background: 'none',
+                alignItems: 'center', gap: 6,
+                padding: '4px 4px', border: 'none', background: 'none',
                 cursor: 'pointer',
               }}
             >
@@ -150,8 +152,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 src={CAT_IMAGE[cat.id]}
                 alt={cat.name}
                 style={{
-                  width: 'clamp(36px, 10vw, 46px)',
-                  height: 'clamp(36px, 10vw, 46px)',
+                  width: 'clamp(72px, 20vw, 92px)',
+                  height: 'clamp(72px, 20vw, 92px)',
                   objectFit: 'cover',
                   filter: active ? 'none' : 'grayscale(1) opacity(0.4)',
                   transform: active ? 'scale(1.1)' : 'scale(1)',
@@ -159,7 +161,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 }}
               />
               <span style={{
-                fontSize: 'clamp(9px, 2.4vw, 11px)',
+                fontSize: 'clamp(18px, 4.8vw, 22px)',
                 fontWeight: active ? 700 : 400,
                 color: active ? '#1a1a1a' : '#aaa',
               }}>{cat.name}</span>
@@ -228,22 +230,21 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
             {/* 합계 + 결제하기 */}
             <div style={{
-              padding: '11px 16px 13px',
+              padding: '17px 24px 20px',
               borderTop: '1px solid #f0f0f0',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-              <span style={{ fontSize: 16, color: '#888' }}>
-                총 <b style={{ color: '#1a1a1a' }}>{cart.reduce((s, c) => s + c.qty, 0)}</b>개 ·{' '}
-                <b style={{ color: '#744032' }}>{cart.reduce((s, c) => s + c.unitPrice * c.qty, 0).toLocaleString()}원</b>
+              <span style={{ fontSize: 24, color: '#888' }}>
+                {t('cartSummary', cart.reduce((s, c) => s + c.qty, 0), cart.reduce((s, c) => s + c.unitPrice * c.qty, 0))}
               </span>
               <button onClick={() => nav('cart')} style={{
                 background: '#F5B800', color: '#1a1a1a',
-                border: 'none', borderRadius: 10,
-                padding: '14px 26px',
-                fontSize: 18, fontWeight: 900,
+                border: 'none', borderRadius: 15,
+                padding: '21px 39px',
+                fontSize: 27, fontWeight: 900,
                 cursor: 'pointer',
               }}>
-                결제하기
+                {t('checkout')}
               </button>
             </div>
           </div>
@@ -263,6 +264,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           item={modalItem}
           onSelect={handleTypeSelect}
           onClose={closeModal}
+          setSurcharge={setSurcharge}
         />
       )}
 
@@ -272,6 +274,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           type={modalType}
           onAdd={handleAdd}
           onClose={closeModal}
+          setSides={setSides}
+          setDrinks={setDrinks}
+          setSurcharge={setSurcharge}
         />
       )}
     </div>
@@ -279,6 +284,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 }
 
 function MiniCartItem({ item, updateQty }) {
+  const t = useT()
   const options = [
     item.exclusion && item.exclusion !== '없음' ? item.exclusion : null,
     item.side  ?? null,
@@ -288,29 +294,29 @@ function MiniCartItem({ item, updateQty }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center',
-      padding: '10px 16px', gap: 11,
+      padding: '15px 24px', gap: 17,
       borderBottom: '1px solid #f5f5f5',
-      minHeight: 72,
+      minHeight: 108,
     }}>
       {item.image ? (
         <img src={item.image} alt={item.name} style={{
-          width: 44, height: 44, borderRadius: 6, objectFit: 'cover', flexShrink: 0,
+          width: 66, height: 66, borderRadius: 9, objectFit: 'cover', flexShrink: 0,
         }} />
       ) : (
-        <span style={{ fontSize: 26, flexShrink: 0 }}>🍔</span>
+        <span style={{ fontSize: 39, flexShrink: 0 }}>🍔</span>
       )}
 
       {/* 이름 + 옵션 */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 16, fontWeight: 700, color: '#1a1a1a',
+          fontSize: 24, fontWeight: 700, color: '#1a1a1a',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
-          {item.name}{item.type === 'set' ? ' 세트' : ''}
+          {item.name}{item.type === 'set' ? ` ${t('set')}` : ''}
         </div>
         {options.length > 0 && (
           <div style={{
-            fontSize: 13, color: '#aaa', marginTop: 2,
+            fontSize: 20, color: '#aaa', marginTop: 3,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
             {options.join(' · ')}
@@ -318,17 +324,17 @@ function MiniCartItem({ item, updateQty }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
         <QtyBtn label="−" onClick={() => updateQty(item.cartId, item.qty - 1)} />
-        <span style={{ fontSize: 17, fontWeight: 700, minWidth: 22, textAlign: 'center' }}>{item.qty}</span>
+        <span style={{ fontSize: 26, fontWeight: 700, minWidth: 33, textAlign: 'center' }}>{item.qty}</span>
         <QtyBtn label="+" onClick={() => updateQty(item.cartId, item.qty + 1)} />
       </div>
-      <span style={{ fontSize: 16, fontWeight: 700, color: '#222', flexShrink: 0, minWidth: 68, textAlign: 'right' }}>
-        {(item.unitPrice * item.qty).toLocaleString()}원
+      <span style={{ fontSize: 24, fontWeight: 700, color: '#222', flexShrink: 0, minWidth: 102, textAlign: 'right' }}>
+        {(item.unitPrice * item.qty).toLocaleString()}{t('won')}
       </span>
       <button onClick={() => updateQty(item.cartId, 0)} style={{
         background: 'none', border: 'none',
-        color: '#ccc', fontSize: 18, lineHeight: 1,
+        color: '#ccc', fontSize: 27, lineHeight: 1,
         padding: 2, flexShrink: 0, cursor: 'pointer',
       }}>✕</button>
     </div>
@@ -344,12 +350,12 @@ function FoodCard({ item, onClick }) {
       boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
       display: 'flex', flexDirection: 'column',
       textAlign: 'center',
-      width: '100%',
+      width: '91%',
     }}>
       <div style={{
-        width: '100%', aspectRatio: '1 / 0.85',
+        width: '100%', aspectRatio: '1 / 0.46',
         background: 'radial-gradient(circle at 50% 30%, #fff3c9 0%, #f8f8f8 60%, #f1f1f1 100%)',
-        padding: 10,
+        padding: 8,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',
       }}>
@@ -364,22 +370,22 @@ function FoodCard({ item, onClick }) {
             }}
           />
         ) : (
-          <span style={{ fontSize: 'clamp(30px, 8vw, 44px)' }}>
+          <span style={{ fontSize: 'clamp(21px, 5.6vw, 31px)' }}>
             {item.emoji ?? '🍔'}
           </span>
         )}
       </div>
-      <div style={{ padding: '8px 8px 10px', flexShrink: 0 }}>
+      <div style={{ padding: '10px 8px 12px', flexShrink: 0 }}>
         <div style={{
-          fontSize: 'clamp(13px, 3.6vw, 16px)',
+          fontSize: 'clamp(17px, 4.7vw, 21px)',
           fontWeight: 800, color: '#1a1a1a',
-          lineHeight: 1.25, marginBottom: 4,
+          lineHeight: 1.25, marginBottom: 5,
           wordBreak: 'keep-all', textAlign: 'center',
         }}>
           {item.name}
         </div>
         <div style={{
-          fontSize: 'clamp(12px, 3.2vw, 14px)',
+          fontSize: 'clamp(16px, 4.2vw, 18px)',
           color: '#744032', textAlign: 'center', fontWeight: 700,
         }}>{item.price.toLocaleString()}~</div>
       </div>
@@ -390,9 +396,9 @@ function FoodCard({ item, onClick }) {
 function QtyBtn({ label, onClick }) {
   return (
     <button onClick={(e) => { e.stopPropagation(); onClick() }} style={{
-      width: 29, height: 29,
-      border: '1px solid #ccc', borderRadius: 4,
-      background: '#fff', fontSize: 18,
+      width: 44, height: 44,
+      border: '1px solid #ccc', borderRadius: 6,
+      background: '#fff', fontSize: 27,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       cursor: 'pointer', padding: 0, lineHeight: 1,
     }}>

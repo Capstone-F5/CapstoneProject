@@ -1,21 +1,22 @@
 import { useState } from 'react'
-import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
+import useT from '../i18n/useT'
 
-export default function ItemDetailModal({ item, type, onClose, onAdd }) {
+export default function ItemDetailModal({ item, type, onClose, onAdd, setSides = [], setDrinks = [], setSurcharge = 0 }) {
+  const t = useT()
   const [qty,       setQty]       = useState(1)
   const [exclusion, setExclusion] = useState(item?.exclusions?.[0] ?? '없음')
-  const [side,      setSide]      = useState(SET_SIDES[0])
-  const [drink,     setDrink]     = useState(SET_DRINKS[0])
+  const [side,      setSide]      = useState(setSides[0])
+  const [drink,     setDrink]     = useState(setDrinks[0])
 
   if (!item) return null
 
   const isSet      = type === 'set'
   const unitPrice  = item.price
-    + (isSet ? SET_SURCHARGE : 0)
-    + (isSet ? side.extra + drink.extra : 0)
+    + (isSet ? setSurcharge : 0)
+    + (isSet && side && drink ? side.extra + drink.extra : 0)
 
   const displayImage = isSet ? (item.setImage ?? item.image) : item.image
-  const displayName  = isSet ? `${item.name} 세트` : item.name
+  const displayName  = isSet ? `${item.name} ${t('set')}` : item.name
   const displayKcal  = isSet && item.kcal ? item.kcal + 350 : item.kcal
 
   const handleAdd = () => {
@@ -27,10 +28,10 @@ export default function ItemDetailModal({ item, type, onClose, onAdd }) {
       qty,
       unitPrice,
       exclusion,
-      side:       isSet ? side.name  : null,
-      sideExtra:  isSet ? side.extra : 0,
-      drink:      isSet ? drink.name  : null,
-      drinkExtra: isSet ? drink.extra : 0,
+      side:       isSet ? side?.name  : null,
+      sideExtra:  isSet ? side?.extra ?? 0 : 0,
+      drink:      isSet ? drink?.name  : null,
+      drinkExtra: isSet ? drink?.extra ?? 0 : 0,
     })
   }
 
@@ -96,7 +97,7 @@ export default function ItemDetailModal({ item, type, onClose, onAdd }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
               <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900 }}>
-                {unitPrice.toLocaleString()} 원
+                {unitPrice.toLocaleString()} {t('won')}
               </span>
               {displayKcal && (
                 <span style={{ fontSize: 11, color: '#bbb' }}>{displayKcal} kcal</span>
@@ -122,13 +123,14 @@ export default function ItemDetailModal({ item, type, onClose, onAdd }) {
 
         {/* ── 제외하기 ── */}
         {item.exclusions && item.exclusions.length > 0 && (
-          <OptionSection label="제외하기">
+          <OptionSection label={t('exclude')}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {item.exclusions.map(ex => (
                 <Chip
                   key={ex} label={ex}
                   active={exclusion === ex}
                   onClick={() => setExclusion(ex)}
+                  won={t('won')}
                 />
               ))}
             </div>
@@ -138,29 +140,31 @@ export default function ItemDetailModal({ item, type, onClose, onAdd }) {
         {/* ── 세트 옵션 ── */}
         {isSet && (
           <>
-            <OptionSection label="사이드">
+            <OptionSection label={t('sideSection')}>
               <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-                {SET_SIDES.map(s => (
+                {setSides.map(s => (
                   <Chip
                     key={s.name}
                     label={s.name}
                     extra={s.extra}
-                    active={side.name === s.name}
+                    active={side?.name === s.name}
                     onClick={() => setSide(s)}
+                    won={t('won')}
                   />
                 ))}
               </div>
             </OptionSection>
 
-            <OptionSection label="음료">
+            <OptionSection label={t('drinkSection')}>
               <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-                {SET_DRINKS.map(d => (
+                {setDrinks.map(d => (
                   <Chip
                     key={d.name}
                     label={d.name}
                     extra={d.extra}
-                    active={drink.name === d.name}
+                    active={drink?.name === d.name}
                     onClick={() => setDrink(d)}
+                    won={t('won')}
                   />
                 ))}
               </div>
@@ -178,7 +182,7 @@ export default function ItemDetailModal({ item, type, onClose, onAdd }) {
             cursor: 'pointer',
             boxShadow: '0 3px 10px rgba(116,64,50,0.3)',
           }}>
-            추가하기
+            {t('addToCart')}
           </button>
         </div>
       </div>
@@ -206,7 +210,7 @@ function OptionSection({ label, children }) {
   )
 }
 
-function Chip({ label, extra, active, onClick }) {
+function Chip({ label, extra, active, onClick, won }) {
   const size = 'clamp(64px, 17vw, 80px)'
   return (
     <button
@@ -243,7 +247,7 @@ function Chip({ label, extra, active, onClick }) {
           left: '50%', top: '50%',
           transform: 'translate(-50%, 10px)',
         }}>
-          +{extra.toLocaleString()}원
+          +{extra.toLocaleString()}{won}
         </span>
       )}
     </button>

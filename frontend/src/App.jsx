@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { LocaleProvider } from './i18n/LocaleContext'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
 import MenuScreen from './screens/MenuScreen'
@@ -51,8 +52,10 @@ export default function App() {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
-      {screens[screen] ?? screens.start}
-    </div>
+    <LocaleProvider>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
+        {screens[screen] ?? screens.start}
+      </div>
+    </LocaleProvider>
   )
 }
