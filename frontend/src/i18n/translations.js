@@ -46,6 +46,10 @@ const translations = {
     complete: '완료',
     won: '원',
 
+    // 자동 복귀 / 유휴 타이머
+    autoReturn: (n) => `${n}초 후 처음 화면으로 이동합니다`,
+    idleTap: '화면을 터치하면 계속 주문합니다',
+
     // SingleSetModal / ItemDetailModal
     singleLabel: '단품 선택',
     setLabel: '세트 선택',
@@ -108,6 +112,8 @@ const translations = {
     thankYou: 'Thank you for your visit!',
     getReceipt: 'Get Receipt',
     getNumber: 'Order Number Only',
+    autoReturn: (n) => `Returning to home in ${n}s`,
+    idleTap: 'Tap the screen to continue',
     singleLabel: 'Single',
     setLabel: 'Set Meal',
     exclude: 'Exclude',
@@ -161,6 +167,8 @@ const translations = {
     thankYou: '感谢您的惠顾！',
     getReceipt: '获取收据',
     getNumber: '仅查看订单号',
+    autoReturn: (n) => `${n}秒后返回首页`,
+    idleTap: '触摸屏幕继续点餐',
     singleLabel: '单品选择',
     setLabel: '套餐选择',
     exclude: '去掉',
@@ -214,6 +222,8 @@ const translations = {
     thankYou: 'ご利用ありがとうございました。',
     getReceipt: '領収書を受け取る',
     getNumber: '番号のみ確認',
+    autoReturn: (n) => `${n}秒後にホーム画面に戻ります`,
+    idleTap: '画面をタッチして注文を続けます',
     singleLabel: '単品選択',
     setLabel: 'セット選択',
     exclude: '除外',

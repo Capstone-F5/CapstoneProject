@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useLocale } from '../i18n/LocaleContext'
 import useT from '../i18n/useT'
 
@@ -11,6 +12,9 @@ const LANGS = [
 export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
+
+  // 메인 화면으로 돌아올 때마다 한국어로 초기화
+  useEffect(() => { setLocale('ko') }, [])
 
   return (
     <div
@@ -60,13 +64,16 @@ export default function StartScreen({ nav }) {
             style={{
               background: 'none',
               border: 'none',
-              color: locale === code ? '#fff' : 'rgba(255,255,255,0.55)',
+              color: locale === code ? '#fff' : 'rgba(255,255,255,0.75)',
               fontSize: 20,
               fontWeight: locale === code ? 700 : 400,
               cursor: 'pointer',
               padding: '6px 0',
               textDecoration: locale === code ? 'underline' : 'none',
               textUnderlineOffset: 4,
+              textShadow: locale === code
+                ? '0 0 6px rgba(0,0,0,0.6), 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000'
+                : '1px 1px 3px rgba(0,0,0,0.8), -1px -1px 3px rgba(0,0,0,0.8)',
             }}
           >
             {label}

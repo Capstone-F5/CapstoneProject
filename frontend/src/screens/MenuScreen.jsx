@@ -3,6 +3,7 @@ import Logo from '../components/Logo'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
 import ItemDetailModal from '../components/ItemDetailModal'
+import IdleOverlay from '../components/IdleOverlay'
 import { useMenuData } from '../hooks/useMenuData'
 import useT from '../i18n/useT'
 
@@ -279,6 +280,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           setSurcharge={setSurcharge}
         />
       )}
+
+      <IdleOverlay onExpire={() => { clearCart(); nav('start') }} />
     </div>
   )
 }
@@ -344,7 +347,7 @@ function MiniCartItem({ item, updateQty }) {
 function FoodCard({ item, onClick }) {
   return (
     <button onClick={onClick} style={{
-      background: 'linear-gradient(180deg, #ffffff 0%, #fffaf2 100%)',
+      background: '#ffffff',
       border: '1px solid #f1f1f1', borderRadius: 16,
       padding: 0, overflow: 'hidden', cursor: 'pointer',
       boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
@@ -354,7 +357,7 @@ function FoodCard({ item, onClick }) {
     }}>
       <div style={{
         width: '100%', aspectRatio: '1 / 0.46',
-        background: 'radial-gradient(circle at 50% 30%, #fff3c9 0%, #f8f8f8 60%, #f1f1f1 100%)',
+        background: '#ffffff',
         padding: 8,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',

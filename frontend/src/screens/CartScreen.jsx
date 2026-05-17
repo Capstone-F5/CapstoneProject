@@ -3,6 +3,7 @@ import Logo from '../components/Logo'
 import { lookupCustomer, addPoints } from '../services/pointsService'
 import { createOrder }   from '../services/orderService'
 import { processPayment } from '../services/paymentService'
+import IdleOverlay from '../components/IdleOverlay'
 import useT from '../i18n/useT'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
@@ -380,6 +381,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           <BarcodeIllustration />
         </PayWaitPopup>
       )}
+
+      <IdleOverlay onExpire={() => { clearCart(); nav('start') }} />
     </div>
   )
 }
