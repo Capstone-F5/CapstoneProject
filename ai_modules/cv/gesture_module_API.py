@@ -88,12 +88,24 @@ def _is_ok(landmarks):
     return dist < 0.05 and middle_open and ring_open and pinky_open
 
 
+def _is_thumb_open(landmarks):
+    """손 방향(왼손/오른손)에 무관하게 엄지 펴짐 여부를 판단"""
+    thumb_tip = landmarks[4]
+    thumb_ip = landmarks[3]
+    index_mcp = landmarks[5]
+
+    tip_to_palm = ((thumb_tip.x - index_mcp.x) ** 2 + (thumb_tip.y - index_mcp.y) ** 2) ** 0.5
+    ip_to_palm = ((thumb_ip.x - index_mcp.x) ** 2 + (thumb_ip.y - index_mcp.y) ** 2) ** 0.5
+
+    return tip_to_palm > ip_to_palm
+
+
 def _count_fingers(landmarks):
     """펴진 손가락 개수 반환 (1~5)"""
     count = 0
 
-    # 엄지는 x축으로 판단 (좌우 방향이라 y축 기준 불가)
-    if landmarks[4].x < landmarks[3].x:
+    # 엄지는 손 방향에 무관한 상대 거리로 판단
+    if _is_thumb_open(landmarks):
         count += 1
 
     # 나머지 4손가락은 y축으로 판단 (tip이 pip보다 위에 있으면 펴진 것)
