@@ -1,4 +1,4 @@
-import { menuItems, categories, SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
+﻿import { menuItems, categories, SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
 
 // ─────────────────────────────────────────────────────────────────
 // API 응답 스펙 (백엔드 연동 시 이 형식으로 맞춰주세요)
@@ -15,8 +15,8 @@ import { menuItems, categories, SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../
 //       kcal: number | null,
 //       hasSet: boolean,
 //       exclusions: string[],  // 요청한 locale 언어로 반환
-//       image: string,         // e.g. "/images/burgers/F버거.png"
-//       setImage: string       // e.g. "/images/sets/F버거 세트.png"
+//       image: string,         // e.g. "/images/burgers/F버거.webp"
+//       setImage: string       // e.g. "/images/sets/F버거 세트.webp"
 //     }]
 //   },
 //   setSides:    [{ name: string, extra: number, image: string }],

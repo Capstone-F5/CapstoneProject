@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { useGesture } from './hooks/useGesture'
 import { LocaleProvider } from './i18n/LocaleContext'
+import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
 import MenuScreen from './screens/MenuScreen'
@@ -11,12 +13,237 @@ import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 
-export default function App() {
+// 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
+const GESTURE_LABELS = {
+  swipe_right: '→ 다음',
+  swipe_left:  '← 이전',
+  swipe_up:    '↑ 위로',
+  swipe_down:  '↓ 아래로',
+  ok:          '✓ 확인',
+  finger_1:    '☝ 1',
+  finger_2:    '✌ 2',
+  finger_3:    '3',
+  finger_4:    '4',
+  finger_5:    '✋ 5',
+}
+
+const _isCollect = new URLSearchParams(window.location.search).has('collect')
+
+export default _isCollect ? CollectTool : function App() {
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
   const [orderType, setOrderType] = useState(null)
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
+
+  // 제스처 포인터 (손바닥 중심 위치)
+  const [pointer, setPointer] = useState(null)   // { x, y } screen px
+  const pointerRef = useRef(null)                // 최신 포인터 위치 (콜백에서 참조)
+
+  // OK 로딩 링 (0.5초 채우면 클릭)
+  const [okPending, setOkPending] = useState(null)  // { x, y } — 링 고정 위치
+  const [okProgress, setOkProgress] = useState(0)  // 0→1
+  const okRafRef = useRef(null)
+
+  // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
+  const screenRef = useRef(screen)
+  useEffect(() => { screenRef.current = screen }, [screen])
+
+  // 화면별 제스처 액션 — 렌더마다 최신 클로저를 갱신
+  const gestureActionsRef = useRef({})
+  gestureActionsRef.current = {
+    orderType: {
+      dineIn:  () => { setOrderType('dine-in'); setScreen('menu') },
+      takeout: () => { setOrderType('takeout');  setScreen('menu') },
+    },
+  }
+
+  // 감지된 제스처 표시용 (일시적 알림)
+  const [gestureLabel, setGestureLabel] = useState(null)
+  const labelTimerRef = useRef(null)
+
+  const showLabel = useCallback((text) => {
+    setGestureLabel(text)
+    clearTimeout(labelTimerRef.current)
+    labelTimerRef.current = setTimeout(() => setGestureLabel(null), 1200)
+  }, [])
+
+  // ── 포인터 민감도 ────────────────────────────────────────────────────────
+  // 1.0 = 손이 프레임 끝까지 가야 커서도 끝. 2.0 = 절반만 움직여도 끝까지.
+  // 카메라가 세로(portrait)면 SENS_X를 올리고, 가로(landscape)면 SENS_Y를 올린다.
+  const POINTER_SENS_X = 1.5
+  const POINTER_SENS_Y = 1.5
+
+  // 정규화 좌표(MediaPipe 0~1, 좌우 반전 전) → 화면 픽셀로 변환
+  const normToScreen = useCallback(({ x, y }) => {
+    const nx = (1 - x) - 0.5   // 좌우 반전 후 중심 기준
+    const ny = y - 0.5
+    return {
+      x: (0.5 + nx * POINTER_SENS_X) * window.innerWidth,
+      y: (0.5 + ny * POINTER_SENS_Y) * window.innerHeight,
+    }
+  }, [])
+
+  // 제스처 활동 → idle 타이머 리셋용 커스텀 이벤트 (2초 스로틀)
+  const lastActivityRef = useRef(0)
+  const dispatchActivity = useCallback(() => {
+    const now = Date.now()
+    if (now - lastActivityRef.current > 2000) {
+      lastActivityRef.current = now
+      window.dispatchEvent(new Event('gesture-activity'))
+    }
+  }, [])
+
+  // 포인터: useGesture 의 onPointer 콜백 — 매 MediaPipe 프레임마다 즉시 호출
+  const handlePointer = useCallback((norm) => {
+    if (!norm) {
+      setPointer(null)
+      pointerRef.current = null
+      return
+    }
+    const p = normToScreen(norm)
+    setPointer(p)
+    pointerRef.current = p
+    dispatchActivity()
+  }, [normToScreen, dispatchActivity])
+
+  // OK 이동 취소 임계값 (screen px) — 이 이상 움직이면 링 취소
+  const OK_MOVE_THRESHOLD = 80
+
+  // OK: 손을 충분히 안 움직이면 0.5초 후 클릭
+  // — 이미 진행 중이면 재시작하지 않음 (쿨다운 재발화로 인한 리셋 방지)
+  // — 매 프레임 손 이동 거리 체크, 임계값 초과 or 손 사라지면 취소
+  const fireOk = useCallback(() => {
+    if (okRafRef.current !== null) return  // 이미 진행 중
+
+    const p = pointerRef.current
+    if (!p) return
+
+    const startX = p.x
+    const startY = p.y
+    const start  = performance.now()
+    const DURATION = 500
+
+    setOkPending({ x: startX, y: startY })
+    setOkProgress(0)
+
+    const tick = (now) => {
+      const cur = pointerRef.current
+
+      // 손 사라짐 or 너무 많이 움직임 → 취소
+      if (!cur) {
+        okRafRef.current = null
+        setOkPending(null)
+        setOkProgress(0)
+        return
+      }
+      const dist = Math.hypot(cur.x - startX, cur.y - startY)
+      if (dist > OK_MOVE_THRESHOLD) {
+        okRafRef.current = null
+        setOkPending(null)
+        setOkProgress(0)
+        return
+      }
+
+      const progress = Math.min((now - start) / DURATION, 1)
+      setOkProgress(progress)
+
+      if (progress < 1) {
+        okRafRef.current = requestAnimationFrame(tick)
+      } else {
+        okRafRef.current = null
+        const el = document.elementFromPoint(startX, startY)
+        if (el) el.click()
+        setOkPending(null)
+        setOkProgress(0)
+      }
+    }
+    okRafRef.current = requestAnimationFrame(tick)
+  }, [])
+
+  // 포인터 위치의 가장 가까운 스크롤 가능 요소를 스크롤
+  const scrollAtPointer = useCallback((dy) => {
+    const p = pointerRef.current
+    let el = p ? document.elementFromPoint(p.x, p.y) : null
+    while (el && el !== document.documentElement) {
+      const { overflowY } = window.getComputedStyle(el)
+      if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+        el.scrollBy({ top: dy, behavior: 'smooth' })
+        return
+      }
+      el = el.parentElement
+    }
+    window.scrollBy({ top: dy, behavior: 'smooth' })
+  }, [])
+
+  // 테스트용 HUD 상태
+  const [gestureHud, setGestureHud] = useState(null)
+
+  const handleGesture = useCallback(({ gesture, hands, total_fingers }) => {
+    // HUD 업데이트 (포인터는 onPointer 가 처리)
+    const gestureDisplay = gesture ? (GESTURE_LABELS[gesture] ?? gesture) : '-'
+    setGestureHud({
+      left:    hands?.left  ? `${hands.left.finger_count}개`  : '-',
+      right:   hands?.right ? `${hands.right.finger_count}개` : '-',
+      total:   total_fingers ?? 0,
+      gesture: gestureDisplay,
+    })
+
+    if (!gesture) return
+
+    const currentScreen = screenRef.current
+
+    // ── 랜딩 페이지: 커서 + OK만 ─────────────────────
+    if (currentScreen === 'start') {
+      if (gesture === 'ok') { fireOk(); showLabel(GESTURE_LABELS.ok) }
+      return
+    }
+
+    // ── 식사 장소 선택: OK(포인터 클릭) + 1(매장) + 2(포장) ──
+    if (currentScreen === 'orderType') {
+      const { dineIn, takeout } = gestureActionsRef.current.orderType
+      const activeHand  = hands?.right || hands?.left
+      const fingerCount = activeHand?.finger_count ?? -1
+      if      (gesture === 'ok')                              { fireOk(); showLabel(GESTURE_LABELS.ok) }
+      else if (gesture === 'finger_1' && fingerCount <= 1)   { dineIn();  showLabel('☝ 매장') }
+      else if (gesture === 'finger_2' && fingerCount >= 2)   { takeout(); showLabel('✌ 포장') }
+      return
+    }
+
+    // ── 나머지 모든 페이지 ────────────────────────────
+    if (gesture === 'ok') {
+      fireOk()
+      showLabel(GESTURE_LABELS.ok)
+      return
+    }
+
+    if (gesture === 'swipe_up') {
+      scrollAtPointer(-260)
+      showLabel(GESTURE_LABELS.swipe_up)
+      return
+    }
+
+    if (gesture === 'swipe_down') {
+      scrollAtPointer(260)
+      showLabel(GESTURE_LABELS.swipe_down)
+      return
+    }
+
+    // 메뉴 화면 좌우 스와이프 → 페이지 ◄/► 버튼 자동 클릭
+    if (currentScreen === 'menu' && (gesture === 'swipe_left' || gesture === 'swipe_right')) {
+      const selector = gesture === 'swipe_left'
+        ? 'button[data-page="next"]'
+        : 'button[data-page="prev"]'
+      const btn = document.querySelector(selector)
+      if (btn) btn.click()
+      showLabel(GESTURE_LABELS[gesture])
+      return
+    }
+
+    if (gesture.startsWith('swipe_')) showLabel(GESTURE_LABELS[gesture])
+  }, [showLabel, fireOk, scrollAtPointer])
+
+  useGesture({ onPointer: handlePointer, onGesture: handleGesture, enabled: true })
 
   const nav = (s) => setScreen(s)
 
@@ -56,6 +283,87 @@ export default function App() {
   return (
     <LocaleProvider>
       <>
+        {/* ── 테스트 HUD (좌측 하단) ── */}
+        {gestureHud && (
+          <div style={{
+            position: 'fixed', bottom: 16, left: 16,
+            background: 'rgba(0,0,0,0.75)', color: '#fff',
+            padding: '10px 16px', borderRadius: 10,
+            fontSize: 13, lineHeight: 1.8,
+            fontFamily: 'monospace', pointerEvents: 'none', zIndex: 9002,
+          }}>
+            <div>왼손 &nbsp;: {gestureHud.left}</div>
+            <div>오른손: {gestureHud.right}</div>
+            <div>합계 &nbsp;: {gestureHud.total}개</div>
+            <div style={{ color: gestureHud.gesture !== '-' ? '#7fff7f' : '#888' }}>
+              제스처: {gestureHud.gesture}
+            </div>
+          </div>
+        )}
+
+        {/* ── 제스처 포인터 ── */}
+        {pointer && (
+          <div style={{
+            position: 'fixed',
+            left: pointer.x - 14,
+            top:  pointer.y - 14,
+            width: 28, height: 28,
+            borderRadius: '50%',
+            background: 'rgba(255, 80, 80, 0.55)',
+            border: '2.5px solid rgba(255,255,255,0.85)',
+            pointerEvents: 'none',
+            zIndex: 9000,
+            transition: 'none',
+          }} />
+        )}
+
+        {/* ── OK 로딩 링 (0.5초) ── */}
+        {okPending && (
+          <div style={{
+            position: 'fixed',
+            left: okPending.x - 28,
+            top:  okPending.y - 28,
+            width: 56, height: 56,
+            borderRadius: '50%',
+            background: `conic-gradient(
+              rgba(80, 210, 255, 0.95) ${okProgress * 360}deg,
+              rgba(255,255,255,0.18) 0deg
+            )`,
+            pointerEvents: 'none',
+            zIndex: 9004,
+          }}>
+            {/* 안쪽 구멍 */}
+            <div style={{
+              position: 'absolute',
+              inset: 7,
+              borderRadius: '50%',
+              background: 'rgba(0,0,0,0.55)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'rgba(255,255,255,0.9)',
+              fontSize: 14, fontWeight: 700,
+            }}>✓</div>
+          </div>
+        )}
+
+        {/* ── 제스처 라벨 알림 ── */}
+        {gestureLabel && (
+          <div style={{
+            position: 'fixed',
+            top: 24, left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.72)',
+            color: '#fff',
+            padding: '8px 22px',
+            borderRadius: 24,
+            fontSize: 18,
+            fontWeight: 600,
+            pointerEvents: 'none',
+            zIndex: 9001,
+          }}>
+            {gestureLabel}
+          </div>
+        )}
+
         {/* ── 메인 레이아웃 ── */}
         <div style={{
           display: 'flex', flexDirection: 'column',

@@ -2,7 +2,7 @@ export function PaymentWaitScreen({ title, total, illustration, onCancel, onComp
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      minHeight: '100dvh', minHeight: '100vh',
+      minHeight: '100dvh',
       background: '#fff',
       alignItems: 'center',
       padding: 'clamp(60px, 14vw, 80px) clamp(16px, 6vw, 32px) clamp(28px, 7vw, 44px)',
