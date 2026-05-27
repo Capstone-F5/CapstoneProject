@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { LocaleProvider } from './i18n/LocaleContext'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
@@ -10,6 +10,8 @@ import CardPaymentScreen from './screens/CardPaymentScreen'
 import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
+import GestureCursor from './components/GestureCursor'
+import { useGesture } from './hooks/useGesture'
 
 export default function App() {
   const [screen,    setScreen]    = useState('start')
@@ -18,7 +20,75 @@ export default function App() {
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
 
-  const nav = (s) => setScreen(s)
+  // 제스처 커서 상태
+  const [gestureCursor,   setGestureCursor]   = useState(null)
+  const [dwellProgress,   setDwellProgress]   = useState(0)
+
+  const nav = useCallback((s) => setScreen(s), [])
+
+  // cart를 ref로도 추적 — handleGesture closure에서 최신 값 읽기 위해
+  const cartRef = useRef(cart)
+  useEffect(() => { cartRef.current = cart }, [cart])
+
+  // ── 제스처 → 화면 전환 매핑 ──────────────────────────────────────────
+  const handleGesture = useCallback(({ gesture, cursor, progress }) => {
+    setGestureCursor(gesture === 'point' || gesture === 'dwell' ? cursor : null)
+    setDwellProgress(progress ?? 0)
+
+    if (gesture === 'none') return
+
+    // Dwell: 커서 위치의 실제 DOM 요소를 클릭 → 모든 화면에서 공통 동작
+    if (gesture === 'dwell' && cursor) {
+      const x = cursor[0] * window.innerWidth
+      const y = cursor[1] * window.innerHeight
+      const el = document.elementFromPoint(x, y)
+      if (el) {
+        const target = el.closest('button, a, [role="button"]') ?? el
+        target.click()
+      }
+      return
+    }
+
+    setScreen(prev => {
+      switch (prev) {
+        case 'start':
+          if (['swipe_right', 'ok'].includes(gesture))          return 'orderType'
+          break
+        case 'orderType':
+          if (gesture === 'swipe_left')                          return 'start'
+          if (['swipe_right', 'ok'].includes(gesture))           return 'menu'
+          break
+        case 'menu':
+          if (gesture === 'swipe_left')                          return 'orderType'
+          if (gesture === 'ok' && cartRef.current.length > 0)   return 'cart'
+          break
+        case 'cart':
+          if (gesture === 'swipe_left')                          return 'menu'
+          if (gesture === 'ok')                                  return 'payment'
+          break
+        case 'payment':
+          if (gesture === 'swipe_left')                          return 'cart'
+          break
+        case 'cardPayment':
+        case 'payPayment':
+        case 'cashPayment':
+          if (gesture === 'swipe_left')                          return 'payment'
+          if (gesture === 'ok')                                  return 'complete'
+          break
+        case 'complete':
+          if (['ok', 'swipe_right'].includes(gesture)) {
+            setCart([])
+            return 'start'
+          }
+          break
+        default:
+          break
+      }
+      return prev
+    })
+  }, [])
+
+  useGesture(handleGesture)
 
   const addToCart = (item) => {
     setCart(prev => {
@@ -56,6 +126,9 @@ export default function App() {
   return (
     <LocaleProvider>
       <>
+        {/* ── 손 커서 오버레이 ── */}
+        <GestureCursor cursor={gestureCursor} progress={dwellProgress} />
+
         {/* ── 메인 레이아웃 ── */}
         <div style={{
           display: 'flex', flexDirection: 'column',
