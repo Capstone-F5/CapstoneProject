@@ -89,7 +89,7 @@ _pointer_filters = {"Left": _new_pointer_filter(), "Right": _new_pointer_filter(
 
 # ── FSM + Debouncing ─────────────────────────────────────────────────────────
 CONFIRM_FRAMES    = 3    # 일반 정적 제스처 확정 프레임
-CONFIRM_FRAMES_OK = 7    # ok — 연속 7프레임(~0.23초) 유지해야 발화
+CONFIRM_FRAMES_OK = 4    # ok — 규칙 기반이므로 4프레임(~0.13초)으로 단축
 STATIC_COOLDOWN    = 0.8  # 일반 제스처 재인식 대기
 STATIC_COOLDOWN_OK = 0.6  # ok 재인식 대기
 _gesture_state  = {
@@ -107,9 +107,13 @@ _GESTURE_PRIORITY = {
     'finger_4':    1, 'finger_5':    1,
 }
 
-# ── finger_* 신뢰도 임계값 (ok 보다 높게 — 오인식 억제) ────────────────────
-FINGER_CONF_THRESHOLD = 0.85   # finger_1~5
-OK_CONF_THRESHOLD     = 0.9   # ok
+# ── finger_* 신뢰도 임계값 ──────────────────────────────────────────────────
+FINGER_CONF_THRESHOLD = 0.85   # finger_1~5 (ML)
+# ok는 규칙 기반으로 처리하므로 ML 임계값 불필요
+
+# ── 핀치(ok) 규칙 기반 임계값 ───────────────────────────────────────────────
+# 엄지 끝(4) ↔ 검지 끝(8) 3D 거리. 값을 높이면 더 멀어도 인식, 낮추면 더 붙어야 인식.
+PINCH_RULE_THRESHOLD = 0.06
 
 # ── 스와이프 ─────────────────────────────────────────────────────────────────
 SWIPE_MIN_NORM  = 0.12      # ML 기반 사용 시에도 최소 이동 거리 필터
@@ -235,12 +239,16 @@ def _process_one_hand(mp_label, raw_landmarks, w, h):
         raw = _classify_static(landmarks)
         gesture = _confirm_static(mp_label, raw)
 
-    finger_count = _count_fingers(landmarks, mp_label)
+    finger_count  = _count_fingers(landmarks, mp_label)
+    pinch_dist    = round(_pinch_distance(landmarks), 4)
+    pointing      = _is_pointing(landmarks)
 
     return label, {
         "gesture":        gesture,
         "finger_count":   finger_count,
         "index_position": index_pos,
+        "pinch_distance": pinch_dist,   # 엄지 끝 ↔ 검지 끝 정규화 거리
+        "is_pointing":    pointing,     # 검지만 핀 상태 여부
     }
 
 
@@ -334,12 +342,32 @@ def _count_fingers(landmarks, mp_label):
 
 
 def _classify_static(landmarks):
+    # ok(핀치) — 규칙 기반 우선, ML 미사용
+    if _pinch_distance(landmarks) < PINCH_RULE_THRESHOLD:
+        return 'ok'
+
+    # finger_1~5 — ML 분류기
     label, conf = predict_static(landmarks, confidence_threshold=0.0)
-    if label is not None:
-        min_conf = FINGER_CONF_THRESHOLD if label.startswith('finger_') else OK_CONF_THRESHOLD
-        if conf >= min_conf:
+    if label is not None and label != 'ok' and label.startswith('finger_'):
+        if conf >= FINGER_CONF_THRESHOLD:
             return label
     return None
+
+
+def _pinch_distance(landmarks):
+    """엄지 끝(4) ↔ 검지 끝(8) 거리 (정규화 좌표 기준)."""
+    return _dist3d(landmarks[4], landmarks[8])
+
+
+def _is_pointing(landmarks):
+    """커서 활성: 검지 핀 또는 엄지+검지 핀 (중지·약지·소지 접힘)."""
+    index_ext   = _is_finger_extended(landmarks, 8,  6)
+    others_cls  = (
+        not _is_finger_extended(landmarks, 12, 10) and
+        not _is_finger_extended(landmarks, 16, 14) and
+        not _is_finger_extended(landmarks, 20, 18)
+    )
+    return index_ext and others_cls
 
 
 def _is_open_hand_for_swipe(landmarks):

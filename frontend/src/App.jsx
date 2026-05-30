@@ -69,10 +69,10 @@ export default _isCollect ? CollectTool : function App() {
   }, [])
 
   // ── 포인터 민감도 ────────────────────────────────────────────────────────
-  // 1.0 = 손이 프레임 끝까지 가야 커서도 끝. 2.0 = 절반만 움직여도 끝까지.
-  // 카메라가 세로(portrait)면 SENS_X를 올리고, 가로(landscape)면 SENS_Y를 올린다.
-  const POINTER_SENS_X = 1.5
-  const POINTER_SENS_Y = 1.5
+  // 앵커 기반 매핑을 useGesture 에서 처리하므로 1.0 고정.
+  // 이동 범위는 useGesture.js 의 ANCHOR_WINDOW_HALF 로 조절.
+  const POINTER_SENS_X = 1.0
+  const POINTER_SENS_Y = 1.0
 
   // 정규화 좌표(MediaPipe 0~1, 좌우 반전 전) → 화면 픽셀로 변환
   const normToScreen = useCallback(({ x, y }) => {
