@@ -36,17 +36,42 @@ export default _isCollect ? CollectTool : function App() {
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
 
-  // 제스처 포인터 (손바닥 중심 위치)
-  const [pointer, setPointer] = useState(null)   // { x, y } screen px
-  const pointerRef = useRef(null)                // 최신 포인터 위치 (콜백에서 참조)
+  // 손동작 인식 On/Off & PiP 표시 (localStorage 영구 저장)
+  const [gestureEnabled, setGestureEnabled] = useState(() => {
+    const v = localStorage.getItem('gestureEnabled')
+    return v === null ? true : v === 'true'
+  })
+  const [pipEnabled, setPipEnabled] = useState(() => {
+    return localStorage.getItem('pipEnabled') === 'true'
+  })
+  useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
+  useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])
 
-  // OK 로딩 링 (0.5초 채우면 클릭)
-  const [okPending, setOkPending] = useState(null)  // { x, y } — 링 고정 위치
-  const [okProgress, setOkProgress] = useState(0)  // 0→1
-  const okRafRef = useRef(null)
+  // PiP 캔버스 — useGesture가 매 프레임 카메라 영상 + 관절을 직접 그림
+  const pipCanvasRef = useRef(null)
 
-  // MenuScreen 스와이프 imperative 핸들러
+  // 포인터 — DOM 직접 조작으로 React 리렌더 없이 30fps 업데이트
+  const pointerRef    = useRef(null)   // 최신 위치 { x, y }
+  const pointerDivRef = useRef(null)   // 커서 DOM 노드
+
+  // OK 로딩 링 — DOM 직접 조작
+  const okRingRef = useRef(null)
+  const okRafRef  = useRef(null)
+
+  // 엣지 존 — DOM 직접 조작
+  const EDGE_MARGIN    = 0.10   // 화면 크기의 10%
+  const EDGE_MAX_SPEED = 500    // px/s (최대 강도일 때)
+  const edgeTopRef    = useRef(null)
+  const edgeBottomRef = useRef(null)
+  const edgeLeftRef   = useRef(null)
+  const edgeRightRef  = useRef(null)
+  const edgeStateRef  = useRef({ left: 0, right: 0, top: 0, bottom: 0 })
+  const edgeRafRef    = useRef(null)
+  const edgeLastTRef  = useRef(null)
+
+  // MenuScreen 스와이프 / 모달 imperative 핸들러
   const menuSwipeRef = useRef(null)
+  const menuModalRef = useRef(null)
 
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
@@ -97,68 +122,132 @@ export default _isCollect ? CollectTool : function App() {
     }
   }, [])
 
-  // 포인터: useGesture 의 onPointer 콜백 — 매 MediaPipe 프레임마다 즉시 호출
+  // 엣지 인디케이터 opacity 초기화
+  const clearEdge = useCallback(() => {
+    edgeStateRef.current = { left: 0, right: 0, top: 0, bottom: 0 }
+    if (edgeTopRef.current)    edgeTopRef.current.style.opacity    = 0
+    if (edgeBottomRef.current) edgeBottomRef.current.style.opacity = 0
+    if (edgeLeftRef.current)   edgeLeftRef.current.style.opacity   = 0
+    if (edgeRightRef.current)  edgeRightRef.current.style.opacity  = 0
+  }, [])
+
+  // 포인터: useGesture 의 onPointer 콜백 — React state 없이 DOM 직접 업데이트
   const handlePointer = useCallback((norm) => {
     if (!norm) {
-      setPointer(null)
       pointerRef.current = null
+      // opacity 만 끄기 — DOM은 유지해서 재등장 시 위치가 부드럽게 트랜지션됨
+      if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
+      clearEdge()
       return
     }
     const p = normToScreen(norm)
-    setPointer(p)
     pointerRef.current = p
+    const d = pointerDivRef.current
+    if (d) {
+      d.style.left    = `${p.x - 14}px`
+      d.style.top     = `${p.y - 14}px`
+      d.style.opacity = '1'
+    }
+
+    // ── 엣지 존 감지 ──────────────────────────────────────────────────────
+    const nx = p.x / window.innerWidth
+    const ny = p.y / window.innerHeight
+    // 강도: 존 경계에서 0, 화면 끝에서 1
+    const eL = Math.max(0, (EDGE_MARGIN - nx)       / EDGE_MARGIN)
+    const eR = Math.max(0, (EDGE_MARGIN - (1 - nx)) / EDGE_MARGIN)
+    const eT = Math.max(0, (EDGE_MARGIN - ny)       / EDGE_MARGIN)
+    const eB = Math.max(0, (EDGE_MARGIN - (1 - ny)) / EDGE_MARGIN)
+
+    if (edgeTopRef.current)    edgeTopRef.current.style.opacity    = eT
+    if (edgeBottomRef.current) edgeBottomRef.current.style.opacity = eB
+    if (edgeLeftRef.current)   edgeLeftRef.current.style.opacity   = eL
+    if (edgeRightRef.current)  edgeRightRef.current.style.opacity  = eR
+
+    edgeStateRef.current = { left: eL, right: eR, top: eT, bottom: eB }
+
+    // 엣지 자동 스크롤 루프 — 이미 실행 중이면 재시작 안 함
+    if ((eL + eR + eT + eB) > 0 && !edgeRafRef.current) {
+      edgeLastTRef.current = null
+      const tick = (t) => {
+        const cur = pointerRef.current
+        if (!cur) { edgeRafRef.current = null; return }
+        const e = edgeStateRef.current
+        if (e.left + e.right + e.top + e.bottom === 0) { edgeRafRef.current = null; return }
+
+        const dt = edgeLastTRef.current !== null ? (t - edgeLastTRef.current) / 1000 : 0
+        edgeLastTRef.current = t
+
+        if (dt > 0) {
+          const dx = (e.right - e.left) * EDGE_MAX_SPEED * dt
+          const dy = (e.bottom - e.top) * EDGE_MAX_SPEED * dt
+          // 커서 위치 아래의 스크롤 가능한 요소 탐색
+          let el = document.elementFromPoint(cur.x, cur.y)
+          let scrolled = false
+          while (el && el !== document.documentElement) {
+            const cs   = window.getComputedStyle(el)
+            const canY = (cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight
+            const canX = (cs.overflowX === 'auto' || cs.overflowX === 'scroll') && el.scrollWidth  > el.clientWidth
+            if (canY || canX) {
+              if (canY) el.scrollTop  += dy
+              if (canX) el.scrollLeft += dx
+              scrolled = true
+              break
+            }
+            el = el.parentElement
+          }
+          if (!scrolled) window.scrollBy(0, dy)
+        }
+
+        edgeRafRef.current = requestAnimationFrame(tick)
+      }
+      edgeRafRef.current = requestAnimationFrame(tick)
+    }
+
     dispatchActivity()
-  }, [normToScreen, dispatchActivity])
+  }, [normToScreen, dispatchActivity, clearEdge])
 
   // OK 이동 취소 임계값 (screen px) — 이 이상 움직이면 링 취소
   const OK_MOVE_THRESHOLD = 80
 
-  // OK: 손을 충분히 안 움직이면 0.5초 후 클릭
-  // — 이미 진행 중이면 재시작하지 않음 (쿨다운 재발화로 인한 리셋 방지)
-  // — 매 프레임 손 이동 거리 체크, 임계값 초과 or 손 사라지면 취소
+  // OK: 손을 충분히 안 움직이면 0.5초 후 클릭 — DOM 직접 조작으로 rAF 리렌더 없음
   const fireOk = useCallback(() => {
-    if (okRafRef.current !== null) return  // 이미 진행 중
+    if (okRafRef.current !== null) return
 
     const p = pointerRef.current
     if (!p) return
 
-    const startX = p.x
-    const startY = p.y
-    const start  = performance.now()
+    const startX   = p.x
+    const startY   = p.y
+    const start    = performance.now()
     const DURATION = 500
+    const ring     = okRingRef.current
 
-    setOkPending({ x: startX, y: startY })
-    setOkProgress(0)
+    if (ring) {
+      ring.style.display    = 'block'
+      ring.style.left       = `${startX - 28}px`
+      ring.style.top        = `${startY - 28}px`
+      ring.style.background = `conic-gradient(rgba(80,210,255,0.95) 0deg, rgba(255,255,255,0.18) 0deg)`
+    }
 
     const tick = (now) => {
       const cur = pointerRef.current
-
-      // 손 사라짐 or 너무 많이 움직임 → 취소
-      if (!cur) {
+      if (!cur || Math.hypot(cur.x - startX, cur.y - startY) > OK_MOVE_THRESHOLD) {
         okRafRef.current = null
-        setOkPending(null)
-        setOkProgress(0)
-        return
-      }
-      const dist = Math.hypot(cur.x - startX, cur.y - startY)
-      if (dist > OK_MOVE_THRESHOLD) {
-        okRafRef.current = null
-        setOkPending(null)
-        setOkProgress(0)
+        if (ring) ring.style.display = 'none'
         return
       }
 
       const progress = Math.min((now - start) / DURATION, 1)
-      setOkProgress(progress)
+      if (ring) ring.style.background =
+        `conic-gradient(rgba(80,210,255,0.95) ${progress * 360}deg, rgba(255,255,255,0.18) 0deg)`
 
       if (progress < 1) {
         okRafRef.current = requestAnimationFrame(tick)
       } else {
         okRafRef.current = null
+        if (ring) ring.style.display = 'none'
         const el = document.elementFromPoint(startX, startY)
         if (el) el.click()
-        setOkPending(null)
-        setOkProgress(0)
       }
     }
     okRafRef.current = requestAnimationFrame(tick)
@@ -230,9 +319,15 @@ export default _isCollect ? CollectTool : function App() {
       return
     }
 
+    // 메뉴 화면 모달 제스처 (단품/세트 선택) — 스와이프/스크롤보다 먼저 처리
+    if (currentScreen === 'menu' && menuModalRef.current) {
+      if (gesture === 'finger_1') { menuModalRef.current('single'); showLabel('☝ 단품'); return }
+      if (gesture === 'finger_2') { menuModalRef.current('set');    showLabel('✌ 세트');  return }
+    }
+
     // 메뉴 화면 좌우 스와이프 → 페이지/탭 전환
     if (currentScreen === 'menu' && (gesture === 'swipe_left' || gesture === 'swipe_right')) {
-      menuSwipeRef.current?.(gesture === 'swipe_left' ? 'left' : 'right')
+      menuSwipeRef.current?.(gesture === 'swipe_right' ? 'left' : 'right')
       showLabel(GESTURE_LABELS[gesture])
       return
     }
@@ -240,7 +335,24 @@ export default _isCollect ? CollectTool : function App() {
     if (gesture.startsWith('swipe_')) showLabel(GESTURE_LABELS[gesture])
   }, [showLabel, fireOk, scrollAtPointer])
 
-  useGesture({ onPointer: handlePointer, onGesture: handleGesture, enabled: true })
+  useGesture({
+    onPointer:    handlePointer,
+    onGesture:    handleGesture,
+    enabled:      gestureEnabled,
+    pipCanvasRef: gestureEnabled && pipEnabled ? pipCanvasRef : null,
+  })
+
+  // 손동작 OFF: 잔여 포인터/OK 링 UI 즉시 숨김
+  useEffect(() => {
+    if (gestureEnabled) return
+    pointerRef.current = null
+    if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
+    if (okRingRef.current)     okRingRef.current.style.display     = 'none'
+    if (okRafRef.current) { cancelAnimationFrame(okRafRef.current); okRafRef.current = null }
+    if (edgeRafRef.current) { cancelAnimationFrame(edgeRafRef.current); edgeRafRef.current = null }
+    edgeStateRef.current = { left: 0, right: 0, top: 0, bottom: 0 }
+  }, [gestureEnabled])
+
 
   const nav = (s) => setScreen(s)
 
@@ -265,10 +377,16 @@ export default _isCollect ? CollectTool : function App() {
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, chatOpen }
 
+  const startProps = {
+    ...props,
+    gestureEnabled, setGestureEnabled,
+    pipEnabled,     setPipEnabled,
+  }
+
   const screens = {
-    start:       <StartScreen {...props} />,
+    start:       <StartScreen {...startProps} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
-    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} />,
+    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} />,
     cart:        <CartScreen {...props} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
@@ -298,49 +416,63 @@ export default _isCollect ? CollectTool : function App() {
           </div>
         )}
 
-        {/* ── 제스처 포인터 ── */}
-        {pointer && (
-          <div style={{
-            position: 'fixed',
-            left: pointer.x - 14,
-            top:  pointer.y - 14,
-            width: 28, height: 28,
-            borderRadius: '50%',
-            background: 'rgba(255, 80, 80, 0.55)',
-            border: '2.5px solid rgba(255,255,255,0.85)',
-            pointerEvents: 'none',
-            zIndex: 9000,
-            transition: 'none',
-          }} />
-        )}
+        {/* ── 제스처 포인터 — DOM 직접 조작, React 리렌더 없음 ── */}
+        <div ref={pointerDivRef} style={{
+          position: 'fixed',
+          left: -100, top: -100,
+          width: 28, height: 28,
+          borderRadius: '50%',
+          background: 'rgba(255, 80, 80, 0.55)',
+          border: '2.5px solid rgba(255,255,255,0.85)',
+          pointerEvents: 'none',
+          zIndex: 9000,
+          opacity: 0,
+          // 등장/사라짐만 트랜지션 (위치는 이미 OneEuro로 스무딩됨)
+          transition: 'opacity 0.18s ease-out',
+          willChange: 'left, top, opacity',
+        }} />
 
-        {/* ── OK 로딩 링 (0.5초) ── */}
-        {okPending && (
+        {/* ── 카메라 PiP — 우측 상단 반투명 미리보기 (실제 인식 영역 + 관절) ── */}
+        {gestureEnabled && pipEnabled && (
           <div style={{
             position: 'fixed',
-            left: okPending.x - 28,
-            top:  okPending.y - 28,
-            width: 56, height: 56,
-            borderRadius: '50%',
-            background: `conic-gradient(
-              rgba(80, 210, 255, 0.95) ${okProgress * 360}deg,
-              rgba(255,255,255,0.18) 0deg
-            )`,
+            top: 16, right: 16,
+            width: 200,
+            borderRadius: 10,
+            overflow: 'hidden',
+            border: '1.5px solid rgba(255,255,255,0.45)',
+            boxShadow: '0 4px 18px rgba(0,0,0,0.45)',
+            opacity: 0.82,
+            background: '#000',
             pointerEvents: 'none',
-            zIndex: 9004,
+            zIndex: 9003,
           }}>
-            {/* 안쪽 구멍 */}
-            <div style={{
-              position: 'absolute',
-              inset: 7,
-              borderRadius: '50%',
-              background: 'rgba(0,0,0,0.55)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'rgba(255,255,255,0.9)',
-              fontSize: 14, fontWeight: 700,
-            }}>✓</div>
+            {/* canvas 비율은 카메라 해상도에 따라 자동 — width:100% + height:auto 로 왜곡 없이 */}
+            <canvas
+              ref={pipCanvasRef}
+              style={{ display: 'block', width: '100%', height: 'auto' }}
+            />
           </div>
         )}
+
+        {/* ── OK 로딩 링 — DOM 직접 조작 ── */}
+        <div ref={okRingRef} style={{
+          display: 'none',
+          position: 'fixed',
+          width: 56, height: 56,
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          zIndex: 9004,
+        }}>
+          <div style={{
+            position: 'absolute', inset: 7,
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(255,255,255,0.9)',
+            fontSize: 14, fontWeight: 700,
+          }}>✓</div>
+        </div>
 
         {/* ── 제스처 라벨 알림 ── */}
         {gestureLabel && (

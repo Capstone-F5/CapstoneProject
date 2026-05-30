@@ -9,11 +9,41 @@ const LANGS = [
   { code: 'ja', label: '日本語' },
 ]
 
-export default function StartScreen({ nav }) {
+export default function StartScreen({
+  nav,
+  gestureEnabled, setGestureEnabled,
+  pipEnabled,     setPipEnabled,
+}) {
   const { locale, setLocale } = useLocale()
   const t = useT()
 
   useEffect(() => { setLocale('ko') }, [])
+
+  // 작은 토글 버튼 스타일
+  const toggleBtn = (active, disabled = false) => ({
+    padding: '8px 14px',
+    background: disabled
+      ? 'rgba(255,255,255,0.18)'
+      : active ? 'rgba(80,200,140,0.92)' : 'rgba(40,40,40,0.78)',
+    color: disabled ? 'rgba(255,255,255,0.55)' : '#fff',
+    border: '1.5px solid rgba(255,255,255,0.55)',
+    borderRadius: 22,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+    display: 'flex', alignItems: 'center', gap: 6,
+    transition: 'background 0.18s',
+  })
+
+  const dot = (on) => (
+    <span style={{
+      width: 8, height: 8, borderRadius: '50%',
+      background: on ? '#7fff9f' : 'rgba(255,255,255,0.4)',
+      boxShadow: on ? '0 0 6px #7fff9f' : 'none',
+    }} />
+  )
 
   return (
     <div
@@ -33,6 +63,35 @@ export default function StartScreen({ nav }) {
         padding: '0 36px 78px',
       }}
     >
+      {/* 설정 토글 — 좌측 상단 */}
+      {setGestureEnabled && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: 16, left: 16,
+            display: 'flex', gap: 8,
+            zIndex: 10,
+          }}
+        >
+          <button
+            onClick={() => setGestureEnabled(v => !v)}
+            style={toggleBtn(gestureEnabled)}
+            title="손동작 인식 켜기/끄기"
+          >
+            {dot(gestureEnabled)} 손동작 {gestureEnabled ? 'ON' : 'OFF'}
+          </button>
+          <button
+            onClick={() => gestureEnabled && setPipEnabled(v => !v)}
+            disabled={!gestureEnabled}
+            style={toggleBtn(pipEnabled && gestureEnabled, !gestureEnabled)}
+            title="카메라 미리보기 켜기/끄기"
+          >
+            {dot(pipEnabled && gestureEnabled)} 카메라 {pipEnabled ? 'ON' : 'OFF'}
+          </button>
+        </div>
+      )}
+
       {/* 주문 시작 버튼 */}
       <button
         onClick={e => { e.stopPropagation(); nav('orderType') }}

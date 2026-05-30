@@ -24,7 +24,7 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
@@ -68,6 +68,17 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   useEffect(() => {
     setPage(p => Math.min(p, Math.max(0, totalPages - 1)))
   }, [totalPages])
+
+  // 단품/세트 선택 모달이 열려 있는 동안만 modalRef 에 핸들러 등록
+  useEffect(() => {
+    if (!modalRef) return
+    if (modalStep === 'singleSet') {
+      modalRef.current = (type) => { handleTypeSelect(type) }
+    } else {
+      modalRef.current = null
+    }
+    return () => { if (modalRef) modalRef.current = null }
+  }, [modalRef, modalStep])
 
   // 제스처 스와이프 핸들러 — App.jsx 가 ref 를 통해 호출
   useEffect(() => {

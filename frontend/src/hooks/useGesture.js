@@ -4,7 +4,9 @@ import { Hands } from '@mediapipe/hands'
 // ── 카메라 설정 ──────────────────────────────────────────────────────────────
 const CAM_W   = 640
 const CAM_H   = 480
-const MAX_FPS = 30
+const MAX_FPS = 20
+// 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
+const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
 
 const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
 
@@ -22,6 +24,11 @@ const POINTER_MIRROR_X   = false
 const EXTENSION_MARGIN_STRICT = 1.15
 const EXTENSION_MARGIN_THUMB  = 1.05
 const EXTENSION_MARGIN_LOOSE  = 1.05  // 스와이프 open-hand 판정
+// 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식
+const EXTENSION_MARGIN_POINT       = 1.08
+// 히스테리시스: 이미 가리키는 중이면 더 관대 (잠깐 굽혀도 유지)
+const EXTENSION_MARGIN_POINT_HOLD  = 1.00
+const EXTENSION_MARGIN_FOLD_HOLD   = 1.18  // 다른 손가락 "안 펴짐" 판정도 완화
 
 function _dist2d(a, b) {
   if (!a || !b) return Number.NaN
@@ -51,6 +58,15 @@ function _isValidLandmarks(lm) {
   return true
 }
 
+// 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
+// 카메라 비율에 무관하게 비교하려면 x를 보정해야 하지만,
+// 여기선 단순 임계값 비교이므로 2D 그대로 사용
+const MIN_PALM_SIZE = 0.10  // 이 이하면 너무 멀리 있는 손으로 간주
+
+function _palmSize(lm) {
+  return _dist2d(lm[0], lm[9])
+}
+
 function _isFingerExtended(lm, tipIdx, pipIdx, margin = EXTENSION_MARGIN_STRICT) {
   const wrist = lm[0]
   const dTip = _dist2d(lm[tipIdx], wrist)
@@ -69,7 +85,7 @@ function _isThumbExtended(lm) {
 // 커서 활성 A: 검지만 핀 (엄지 무관)
 function _isPointing(lm) {
   return (
-     _isFingerExtended(lm, 8,  6) &&
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
     !_isFingerExtended(lm, 12, 10) &&
     !_isFingerExtended(lm, 16, 14) &&
     !_isFingerExtended(lm, 20, 18)
@@ -79,29 +95,51 @@ function _isPointing(lm) {
 // 커서 활성 B: 엄지+검지 동시에 핀 (핀치 전 준비 자세)
 function _isThumbIndexOpen(lm) {
   return (
-    _isThumbExtended(lm)            &&
-     _isFingerExtended(lm, 8,  6)   &&
-    !_isFingerExtended(lm, 12, 10)  &&
-    !_isFingerExtended(lm, 16, 14)  &&
+    _isThumbExtended(lm)                                  &&
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
+    !_isFingerExtended(lm, 12, 10)                        &&
+    !_isFingerExtended(lm, 16, 14)                        &&
     !_isFingerExtended(lm, 20, 18)
   )
 }
 
-// 핀치: 엄지 끝(4) ↔ 검지 끝(8) 3D 거리 + 검지 부분 펴짐 확인
-// - 2D(x,y)만 쓰면 손을 옆으로 돌려 노드만 겹쳐도 핀치로 오인식됨
-// - 3D 거리를 쓰면 z(깊이) 차이가 커서 해당 동작이 걸러짐
-// - 주먹도 검지 부분 펴짐 조건으로 추가 차단
-const PINCH_DIST_THRESHOLD = 0.06
-function _isPinching(lm) {
-  const d = _dist3d(lm[4], lm[8])
-  if (!Number.isFinite(d) || d >= PINCH_DIST_THRESHOLD) return false
+// 히스테리시스: 이미 가리키는 중일 때 검사 — 검지는 더 관대하게, 나머지는 살짝 펴져도 허용
+// (잠깐 손가락이 굽거나 떨려도 커서가 끊기지 않게 함)
+function _isPointingHold(lm) {
+  const indexOK = _isFingerExtended(lm, 8, 6, EXTENSION_MARGIN_POINT_HOLD)
+  const otherFolded =
+    !_isFingerExtended(lm, 12, 10, EXTENSION_MARGIN_FOLD_HOLD) &&
+    !_isFingerExtended(lm, 16, 14, EXTENSION_MARGIN_FOLD_HOLD) &&
+    !_isFingerExtended(lm, 20, 18, EXTENSION_MARGIN_FOLD_HOLD)
+  return indexOK && otherFolded
+}
+
+// 핀치: 엄지(4) ↔ 검지(8) 거리를 손 크기(팜 사이즈) 대비 비율로 판정
+// - 3D z 기반 고정 임계값은 카메라 각도에 따라 z 추정이 불안정해 오탈락이 많음
+// - 팜 크기 정규화 비율은 손이 멀거나 가깝거나, 각도가 달라도 일관된 값 유지
+// - 히스테리시스: 진입 임계(더 엄격) vs 유지 임계(더 관대) → 각도 변화에서 끊김 방지
+// - 주먹 오인식 차단은 _isFingerExtended(8, 6, 0.8) 유지 (검지가 조금이라도 펴져야 함)
+const PINCH_RATIO_ENTER = 0.30   // 팜 대비 30% 이내: 핀치 진입
+const PINCH_RATIO_EXIT  = 0.44   // 팜 대비 44% 이내: 핀치 유지 (히스테리시스)
+
+function _isPinching(lm, alreadyPinching = false) {
+  const palm = _palmSize(lm)
+  if (!Number.isFinite(palm) || palm < 1e-6) return false
+  const d     = _dist2d(lm[4], lm[8])
+  if (!Number.isFinite(d)) return false
+  const ratio = d / palm
+  const thr   = alreadyPinching ? PINCH_RATIO_EXIT : PINCH_RATIO_ENTER
+  if (ratio >= thr) return false
   return _isFingerExtended(lm, 8, 6, 0.8)
 }
 
-// 앵커 기반 매핑 범위 (±이 범위가 전체 화면에 매핑)
-const ANCHOR_WINDOW_HALF = 0.25
-// 엣지 도달 시 앵커 이동 비율 (프레임당, 높을수록 빠르게 따라옴 0.0~1.0)
-const EDGE_FOLLOW_RATE   = 0.15
+// 카메라 활성 구역 마진 (손바닥 중심 기준 → 손가락 끝 오프셋 보정 포함)
+const CAM_MARGIN_L   = 0.20   // 좌: 손 측면 오프셋 보정
+const CAM_MARGIN_R   = 0.20   // 우: 손 측면 오프셋 보정
+const CAM_MARGIN_TOP = 0.25   // 상: 기본 10% + 손가락 끝↔손바닥 중심 차이 15%
+const CAM_MARGIN_BOT = 0.10
+const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
+const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
 
 // ── 클라이언트 사이드 제스처 인식 ────────────────────────────────────────────
 
@@ -119,8 +157,8 @@ function _isOpenForSwipe(lm) {
   return n >= 3
 }
 
-function _classifyStatic(lm) {
-  if (_isPinching(lm)) return 'ok'
+// 핀치 제외 정적 분류 — 루프에서 핀치를 별도 체크한 뒤 나머지 분류에 사용
+function _classifyStaticNoPinch(lm) {
   const t = _isThumbExtended(lm)
   const i = _isFingerExtended(lm, 8,  6)
   const m = _isFingerExtended(lm, 12, 10)
@@ -133,6 +171,11 @@ function _classifyStatic(lm) {
   if (n === 4 && i && m && r && p) return 'finger_4'
   if (n === 5)                     return 'finger_5'
   return null
+}
+
+function _classifyStatic(lm) {
+  if (_isPinching(lm)) return 'ok'
+  return _classifyStaticNoPinch(lm)
 }
 
 // FSM debounce
@@ -166,63 +209,99 @@ function _confirmStatic(state, gesture) {
 
 // 스와이프 파라미터
 const SWIPE_COOLDOWN_MS      = 600   // 같은 방향 / 무관 쿨다운
-const SWIPE_COOLDOWN_REVERSE = 1500  // 직전과 반대 방향 쿨다운 (복귀 동작 오인식 방지)
-const SWIPE_WINDOW_MS        = 600
-const SWIPE_MIN_FRAMES   = 5
+const SWIPE_COOLDOWN_REVERSE = 1500  // 직전 반대 방향 쿨다운 (복귀 동작 오인식 방지)
+const SWIPE_WINDOW_MS        = 700   // 버퍼 유지 시간
+const SWIPE_MIN_FRAMES       = 4     // 트림 후 최소 프레임 수
+const SWIPE_STEP_THRESHOLD   = 0.004 // 프레임 간 이동 최소치 (정지 판정)
 
 // 좌우 — x 변위 최소치 / y 최대 허용 오차
-const SWIPE_LR_MIN_X     = 0.12
-const SWIPE_LR_MAX_Y     = 0.07
+const SWIPE_LR_MIN_X     = 0.10
+const SWIPE_LR_MAX_Y     = 0.08
 // 상하 — y 변위 최소치 / x 최대 허용 오차
-const SWIPE_UD_MIN_Y     = 0.10
-const SWIPE_UD_MAX_X     = 0.07
-// 직선도: 순변위 / 총경로 길이 (1=완전직선, 낮을수록 꺾임)
-const SWIPE_STRAIGHTNESS = 0.55
-// 방향 일관성: 같은 방향 스텝 비율 (흔들림/왕복 제거)
+const SWIPE_UD_MIN_Y     = 0.09
+const SWIPE_UD_MAX_X     = 0.08
+// 직선도: 순변위 / 총경로 길이
+const SWIPE_STRAIGHTNESS = 0.50
+// 방향 일관성: 같은 방향 스텝 비율
 const SWIPE_CONSISTENCY  = 0.65
+// 최소 속도: 정규화 단위/초 (느린 드리프트 차단)
+const SWIPE_MIN_SPEED    = 0.25
 
 const _SWIPE_REVERSE = {
   swipe_left: 'swipe_right', swipe_right: 'swipe_left',
   swipe_up:   'swipe_down',  swipe_down:  'swipe_up',
 }
 
-// X는 화면 미러링 반영: 카메라 dx<0 = 사용자 기준 오른쪽 → swipe_right
-function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm) {
-  if (!_isOpenForSwipe(lm)) return null
-  if (buf.length < SWIPE_MIN_FRAMES) return null
+// 버퍼 앞뒤의 정지 프레임 제거 — 스와이프 전 대기·후 감속 구간이 분석을 희석하는 것을 방지
+function _trimBuf(buf) {
+  let start = 0
+  while (start < buf.length - 2) {
+    const d = Math.hypot(buf[start+1].x - buf[start].x, buf[start+1].y - buf[start].y)
+    if (d >= SWIPE_STEP_THRESHOLD) break
+    start++
+  }
+  let end = buf.length - 1
+  while (end > start + 2) {
+    const d = Math.hypot(buf[end].x - buf[end-1].x, buf[end].y - buf[end-1].y)
+    if (d >= SWIPE_STEP_THRESHOLD) break
+    end--
+  }
+  return start === 0 && end === buf.length - 1 ? buf : buf.slice(start, end + 1)
+}
 
-  const dx = buf[buf.length - 1].x - buf[0].x
-  const dy = buf[buf.length - 1].y - buf[0].y
+// X는 화면 미러링 반영: 카메라 dx<0 = 사용자 기준 오른쪽 → swipe_right
+// camAR: 실제 카메라 비율(width/height). AR_REF 기준으로 x를 물리 단위로 보정.
+function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm, camAR) {
+  if (!_isOpenForSwipe(lm)) return null
+
+  // 정지 구간 제거 후 분석
+  const a = _trimBuf(buf)
+  if (a.length < SWIPE_MIN_FRAMES) return null
+
+  // 정규화 x를 물리 단위로 변환 — 카메라 비율이 달라도 임계값이 일정한 물리 거리에 대응
+  // wide(16:9): camAR/AR_REF > 1 → 같은 normalized dx = 더 넓은 물리 이동 → 스케일 업
+  // tall(9:16): camAR/AR_REF < 1 → 같은 normalized dx = 좁은 물리 이동 → 스케일 다운
+  const xPhys = camAR / AR_REF
+
+  const rawDx = a[a.length - 1].x - a[0].x
+  const rawDy = a[a.length - 1].y - a[0].y
+  const dx  = rawDx * xPhys   // 물리 단위 x 변위
+  const dy  = rawDy            // y는 그대로
   const adx = Math.abs(dx), ady = Math.abs(dy)
   const netDist = Math.sqrt(dx * dx + dy * dy)
-  if (netDist < 0.04) return null
 
-  // ① 방향 후보 판별
+  // ① 방향 후보 판별 (물리 단위 기준)
   let candidate = null
   if (adx >= ady && adx >= SWIPE_LR_MIN_X && ady <= SWIPE_LR_MAX_Y) {
+    // 방향 일관성은 부호만 보므로 raw x step 그대로 사용
     let pos = 0, neg = 0
-    for (let i = 1; i < buf.length; i++) {
-      const step = buf[i].x - buf[i-1].x
+    for (let i = 1; i < a.length; i++) {
+      const step = a[i].x - a[i-1].x
       if (step >  0.001) pos++
       else if (step < -0.001) neg++
     }
     const total = pos + neg
     if (total === 0 || Math.max(pos, neg) / total < SWIPE_CONSISTENCY) return null
-    candidate = dx < 0 ? 'swipe_right' : 'swipe_left'
+    candidate = rawDx < 0 ? 'swipe_right' : 'swipe_left'
   } else if (ady > adx && ady >= SWIPE_UD_MIN_Y && adx <= SWIPE_UD_MAX_X) {
-    candidate = dy < 0 ? 'swipe_up' : 'swipe_down'
+    candidate = rawDy < 0 ? 'swipe_up' : 'swipe_down'
   }
   if (!candidate) return null
 
-  // ② 방향별 쿨다운: 직전과 반대 방향은 더 길게 (복귀 동작 오인식 방지)
+  // ② 방향별 쿨다운
   const isReverse = lastSwipeDir && _SWIPE_REVERSE[lastSwipeDir] === candidate
   const cooldown  = isReverse ? SWIPE_COOLDOWN_REVERSE : SWIPE_COOLDOWN_MS
   if (performance.now() - lastSwipeT < cooldown) return null
 
-  // ③ 직선도 체크
+  // ③ 속도 게이트 (물리 단위)
+  const dt = (a[a.length - 1].t - a[0].t) / 1000
+  if (dt < 0.05 || netDist / dt < SWIPE_MIN_SPEED) return null
+
+  // ④ 직선도 (물리 단위)
   let pathLen = 0
-  for (let i = 1; i < buf.length; i++) {
-    const px = buf[i].x - buf[i-1].x, py = buf[i].y - buf[i-1].y
+  for (let i = 1; i < a.length; i++) {
+    const px = (a[i].x - a[i-1].x) * xPhys
+    const py =  a[i].y - a[i-1].y
     pathLen += Math.sqrt(px * px + py * py)
   }
   if (netDist / (pathLen + 1e-6) < SWIPE_STRAIGHTNESS) return null
@@ -294,6 +373,67 @@ function resetPointerState(s) {
   s.outX = null; s.outY = null
 }
 
+// ── MediaPipe 관절 연결선 (21개 랜드마크) ─────────────────────────────────────
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],           // 엄지
+  [0,5],[5,6],[6,7],[7,8],           // 검지
+  [5,9],[9,10],[10,11],[11,12],      // 중지
+  [9,13],[13,14],[14,15],[15,16],    // 약지
+  [13,17],[17,18],[18,19],[19,20],   // 소지
+  [0,17],[5,9],[9,13],[13,17],       // 손바닥
+]
+
+// PiP 캔버스에 영상 + 랜드마크를 그린다 (미러 반전 포함)
+function _drawPip(canvas, video, lms, handed) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const vw = video.videoWidth, vh = video.videoHeight
+  if (!vw || !vh) return
+  if (canvas.width !== vw || canvas.height !== vh) {
+    canvas.width  = vw
+    canvas.height = vh
+  }
+  // 미러 반전 영상
+  ctx.save()
+  ctx.translate(vw, 0)
+  ctx.scale(-1, 1)
+  ctx.drawImage(video, 0, 0)
+  ctx.restore()
+
+  // 각 손 랜드마크
+  for (let hi = 0; hi < lms.length; hi++) {
+    const lm    = lms[hi]
+    if (!lm || lm.length < 21) continue
+    const isRight = handed[hi]?.label === 'Right'  // MP 기준 (사용자 왼손)
+
+    // 연결선
+    ctx.lineWidth   = 2.5
+    ctx.strokeStyle = isRight ? 'rgba(100,160,255,0.9)' : 'rgba(80,220,130,0.9)'
+    for (const [a, b] of HAND_CONNECTIONS) {
+      ctx.beginPath()
+      ctx.moveTo((1 - lm[a].x) * vw, lm[a].y * vh)
+      ctx.lineTo((1 - lm[b].x) * vw, lm[b].y * vh)
+      ctx.stroke()
+    }
+
+    // 관절 점
+    for (let j = 0; j < 21; j++) {
+      const x = (1 - lm[j].x) * vw
+      const y = lm[j].y * vh
+      const isTip = [4, 8, 12, 16, 20].includes(j)
+      ctx.beginPath()
+      ctx.arc(x, y, isTip ? 5 : 3, 0, Math.PI * 2)
+      ctx.fillStyle   = j === 0 ? 'rgba(255,80,80,0.95)'
+                      : isTip  ? 'rgba(255,230,60,0.95)'
+                                : 'rgba(255,255,255,0.85)'
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'
+      ctx.lineWidth   = 1
+      ctx.fill()
+      ctx.stroke()
+    }
+  }
+}
+
 // ── 카메라 ───────────────────────────────────────────────────────────────────
 async function openCamera() {
   for (let attempt = 1; attempt <= CAM_RETRY_COUNT; attempt++) {
@@ -317,7 +457,7 @@ async function openCamera() {
  * @param {(data: Object)    => void} opts.onGesture  제스처 결과 (매 프레임)
  * @param {(payload: Array)  => void} opts.onLandmarks 원시 랜드마크 (수집 도구용)
  */
-export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enabled = true }) {
+export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCanvasRef, enabled = true }) {
   const pointerRef   = useRef(onPointer)
   const gestureRef   = useRef(onGesture)
   const landmarksRef = useRef(onLandmarks)
@@ -335,11 +475,13 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
     let active   = true
     let inflight = false
     let lastSent = 0
+    let camAR    = AR_REF   // 카메라 실제 비율 (열린 후 갱신)
 
     // ── 포인터 상태 ──────────────────────────────────────────────────────────
     const pointerStates = { Left: makePointerState(), Right: makePointerState() }
-    const anchors       = { Left: null, Right: null }
     const wasActive     = { Left: false, Right: false }
+    // 한 번 가리키기 시작했으면 잠깐 흔들려도 끊기지 않게 — 히스테리시스
+    const wasPointing   = { Left: false, Right: false }
     const CURSOR_HIDE_DELAY_MS = 350
     const hideTimers    = { Left: null, Right: null }
 
@@ -348,6 +490,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
     const palmBufs      = { Left: [], Right: [] }
     const lastSwipes    = { Left: -Infinity, Right: -Infinity }
     const lastSwipeDirs = { Left: null, Right: null }
+    // ok 발화 후 손을 한 번 펴야 다음 ok 허용 (같은 자리 연속 발화 방지)
+    const okNeedsOpen   = { Left: false, Right: false }
+    // 핀치 히스테리시스 — 진입/유지 임계를 구분해 각도 변화에서 끊기지 않게 함
+    const wasPinching   = { Left: false, Right: false }
 
     const handleResults = (results) => {
       if (!active) return
@@ -368,37 +514,43 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
 
       // ── 포인터 ────────────────────────────────────────────────────────────
       try {
-        if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx])) {
+        if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
+            _palmSize(lms[activeIdx]) >= MIN_PALM_SIZE) {
           const lm       = lms[activeIdx]
-          const pointing = _isPointing(lm) || _isThumbIndexOpen(lm)
-          const pinching = !pointing && _isPinching(lm)
+          // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
+          const pointing = wasPointing[activeLabel]
+            ? (_isPointingHold(lm) || _isPointing(lm) || _isThumbIndexOpen(lm))
+            : (_isPointing(lm)     || _isThumbIndexOpen(lm))
+          // 핀치도 히스테리시스 — 포인터 섹션에서는 wasPinching을 미리 읽고, 제스처 섹션에서 갱신
+          const pinching = !pointing && _isPinching(lm, wasPinching[activeLabel])
+          wasPointing[activeLabel] = pointing
 
-          if (pointing || pinching) {
+          // 신뢰도 낮은 감지 무시 (화면 가장자리, 손 일부 잘림 등)
+          const handScore = handed[activeIdx]?.score ?? 1
+          if (handScore < 0.7) {
+            if (!hideTimers[activeLabel]) {
+              hideTimers[activeLabel] = setTimeout(() => {
+                hideTimers[activeLabel] = null
+                wasActive[activeLabel]  = false
+                pointerRef.current?.(null)
+              }, CURSOR_HIDE_DELAY_MS)
+            }
+          } else if (pointing || pinching) {
             clearTimeout(hideTimers[activeLabel])
             hideTimers[activeLabel] = null
 
-            const px = (lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 4
-            const py = (lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 4
+            // 손목(0)↔중지MCP(9) 중간점 — 손 자세에 가장 안정적
+            const px = (lm[0].x + lm[9].x) / 2
+            const py = (lm[0].y + lm[9].y) / 2
 
             if (Number.isFinite(px) && Number.isFinite(py)) {
-              if (!wasActive[activeLabel]) anchors[activeLabel] = { x: px, y: py }
+              // 재활성화 시 OneEuro 리셋 — 이전 상태가 남아 있으면 커서 점프 발생
+              if (!wasActive[activeLabel]) resetPointerState(pointerStates[activeLabel])
               wasActive[activeLabel] = true
 
-              const anchor   = anchors[activeLabel]
-              const relX     = (px - anchor.x) / ANCHOR_WINDOW_HALF
-              const relY     = (py - anchor.y) / ANCHOR_WINDOW_HALF
-              const baseX    = POINTER_MIRROR_X ? (1 - anchor.x) : anchor.x
-              const dirX     = POINTER_MIRROR_X ? -1 : 1
-              const rawNormX = baseX + relX * 0.5 * dirX
-              const rawNormY = anchor.y + relY * 0.5
-              // 커서가 화면 끝을 벗어나면 앵커를 손 방향으로 조금씩 이동
-              // → 클러칭 없이 화면 끝 너머로 계속 이동 가능
-              if (rawNormX > 1 || rawNormX < 0)
-                anchor.x += (px - anchor.x) * EDGE_FOLLOW_RATE
-              if (rawNormY > 1 || rawNormY < 0)
-                anchor.y += (py - anchor.y) * EDGE_FOLLOW_RATE
-              const normX  = Math.max(0, Math.min(1, rawNormX))
-              const normY  = Math.max(0, Math.min(1, rawNormY))
+              // 절대 선형 매핑 — 방향별 마진 개별 적용
+              const normX = Math.max(0, Math.min(1, (px - CAM_MARGIN_L)   / CAM_ACTIVE_X))
+              const normY = Math.max(0, Math.min(1, (py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y))
               const [sx, sy] = smoothPointer(
                 pointerStates[activeLabel], normX, normY, performance.now() / 1000
               )
@@ -407,7 +559,6 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
               clearTimeout(hideTimers[activeLabel])
               hideTimers[activeLabel] = null
               wasActive[activeLabel]  = false
-              anchors[activeLabel]    = null
               pointerRef.current?.(null)
             }
           } else {
@@ -415,7 +566,6 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
               hideTimers[activeLabel] = setTimeout(() => {
                 hideTimers[activeLabel] = null
                 wasActive[activeLabel]  = false
-                anchors[activeLabel]    = null
                 pointerRef.current?.(null)
               }, CURSOR_HIDE_DELAY_MS)
             }
@@ -436,11 +586,13 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
           clearTimeout(hideTimers[lbl])
           hideTimers[lbl]       = null
           resetPointerState(pointerStates[lbl])
-          anchors[lbl]          = null
           wasActive[lbl]        = false
+          wasPointing[lbl]      = false
+          wasPinching[lbl]      = false
           gestureStates[lbl]    = makeGestureState()
           palmBufs[lbl].length  = 0
           lastSwipeDirs[lbl]    = null
+          okNeedsOpen[lbl]      = false
         }
       }
 
@@ -464,6 +616,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
+        if (_palmSize(lm) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
@@ -475,8 +628,15 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
         while (palmBufs[mpLabel].length && palmBufs[mpLabel][0].t < cutoff)
           palmBufs[mpLabel].shift()
 
+        // 핀치 히스테리시스 적용 — 이전 프레임 핀치 여부를 넘겨 유지 임계 사용
+        const pinching = _isPinching(lm, wasPinching[mpLabel])
+        wasPinching[mpLabel] = pinching
+
+        // ok 리셋 플래그: 핀치 해제되면 다시 허용
+        if (!pinching) okNeedsOpen[mpLabel] = false
+
         let gesture = null
-        const swipe = _detectSwipe(palmBufs[mpLabel], lastSwipes[mpLabel], lastSwipeDirs[mpLabel], lm)
+        const swipe = _detectSwipe(palmBufs[mpLabel], lastSwipes[mpLabel], lastSwipeDirs[mpLabel], lm, camAR)
         if (swipe) {
           lastSwipes[mpLabel]              = frameNow
           lastSwipeDirs[mpLabel]           = swipe
@@ -485,8 +645,13 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
           gestureStates[mpLabel].count     = 0
           gesture = swipe
         } else {
-          gesture = _confirmStatic(gestureStates[mpLabel], _classifyStatic(lm))
+          // _classifyStatic 내부의 _isPinching도 히스테리시스 적용
+          const raw     = pinching ? 'ok' : _classifyStaticNoPinch(lm)
+          const blocked = (raw === 'ok' && okNeedsOpen[mpLabel]) ? null : raw
+          gesture = _confirmStatic(gestureStates[mpLabel], blocked)
         }
+
+        if (gesture === 'ok') okNeedsOpen[mpLabel] = true
 
         handData[side] = {
           gesture,
@@ -507,6 +672,11 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
         total_fingers: Object.values(handData).reduce((s, d) => s + d.finger_count, 0),
         gesture:       dominant,
       })
+
+      // PiP 캔버스에 인식 영상 + 관절 그리기
+      if (pipCanvasRef?.current && video) {
+        try { _drawPip(pipCanvasRef.current, video, lms, handed) } catch {}
+      }
     }
 
     // inflight 워치독
@@ -546,10 +716,16 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, enable
         if (!active) return
         if (videoRef) videoRef.current = video
 
+        // 실제 카메라 비율 측정 — 이후 모든 제스처 계산에 적용
+        if (video.videoWidth && video.videoHeight) {
+          camAR = video.videoWidth / video.videoHeight
+          console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
+        }
+
         hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
         hands.setOptions({
           maxNumHands:            2,
-          modelComplexity:        1,
+          modelComplexity:        0,
           minDetectionConfidence: 0.6,
           minTrackingConfidence:  0.5,
         })
