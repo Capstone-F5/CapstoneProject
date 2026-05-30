@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useMicVAD, utils } from '@ricky0123/vad-react'
+import { useLocale } from '../i18n/LocaleContext'
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -13,11 +15,9 @@ const CSS = `
   .wave-bar:nth-child(5){ animation-delay:0s }
 `
 
-// Chrome 은 동시 SpeechRecognition 인스턴스를 1 개만 허용한다.
-// 다국어 자동 감지는 백엔드 Whisper(/ai_modules/stt) 로 이전 예정. 여기서는 한국어 단일.
-const SR_LANG = 'ko-KR'
-
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+// 네이티브 지원 locale (ko/zh/ja 외 모든 언어 → 영어로 fallback)
+const NATIVE_LOCALES = new Set(['ko', 'zh', 'ja'])
+const langToLocale = (lang) => NATIVE_LOCALES.has(lang) ? lang : 'en'
 
 const INIT_MESSAGES = [
   {
@@ -26,28 +26,36 @@ const INIT_MESSAGES = [
   },
 ]
 
-// 브라우저 세션 단위로 고정되는 LLM 세션 ID (탭 닫으면 초기화).
 function getSessionId() {
   const KEY = 'kiosk_llm_session_id'
   let sid = sessionStorage.getItem(KEY)
   if (!sid) {
-    sid = (crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    sid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
     sessionStorage.setItem(KEY, sid)
   }
   return sid
 }
 
 export default function ChatPanel({ onClose }) {
+  const { setLocale } = useLocale()
+
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
   const [isTyping,  setIsTyping]  = useState(false)
   const [listening, setListening] = useState(false)
-  const scrollRef   = useRef(null)
-  const srRef       = useRef(null)   // { sr, abort() } — 현재 활성 SR
-  const restartTimerRef = useRef(null)  // scheduleRestart 의 단일 타이머
-  const activeRef   = useRef(true)
-  const isTypingRef = useRef(false)
-  const sessionIdRef = useRef(getSessionId())
-  const audioRef    = useRef(null)   // 현재 재생 중 TTS — 정리용
+
+  const scrollRef       = useRef(null)
+  const activeRef       = useRef(true)
+  const isTypingRef     = useRef(false)
+  const sessionIdRef    = useRef(getSessionId())
+  const audioRef        = useRef(null)    // 재생 중 Audio — 정리용
+  // 첫 발화 감지 언어 — sessionStorage 연동으로 채팅 닫았다 열어도 유지
+  // nav('start') 시 App에서 sessionStorage 항목 삭제 → 새 손님은 null로 시작
+  const detectedLangRef = useRef(sessionStorage.getItem('kiosk_detected_lang') || null)
+
+  // onSpeechEnd를 ref로 관리 → VAD 옵션이 재생성되지 않도록
+  const speechEndHandlerRef = useRef(null)
+  // async 함수 안에서 최신 vad 인스턴스에 접근하기 위한 ref
+  const vadRef = useRef(null)
 
   useEffect(() => { isTypingRef.current = isTyping }, [isTyping])
 
@@ -56,160 +64,240 @@ export default function ChatPanel({ onClose }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, isTyping])
 
-  function scheduleRestart() {
-    if (restartTimerRef.current) return  // 이미 예약돼 있으면 중복 예약 금지
-    restartTimerRef.current = setTimeout(() => {
-      restartTimerRef.current = null
-      if (activeRef.current && !isTypingRef.current) startListening()
-    }, 500)
-  }
+  // ─── Silero VAD ──────────────────────────────────────────────────────────────
 
-  function startListening() {
-    if (!SR || !activeRef.current || isTypingRef.current) return
-    // StrictMode 이중 마운트 등으로 SR 가 살아 있는데 또 호출되는 경우 차단.
-    if (srRef.current?.sr) return
+  const vad = useMicVAD({
+    // 모델 로딩 완료 후 자동 시작 — 로딩 전 start() 호출로 인한 흰 화면 방지
+    startOnLoad: true,
+    positiveSpeechThreshold: 0.8,
+    negativeSpeechThreshold: 0.35,
+    minSpeechFrames: 4,
+    preSpeechPadFrames: 1,
+    redemptionFrames: 10,
+    workletURL: '/vad.worklet.bundle.min.js',
+    modelURL: '/silero_vad.onnx',
+    onSpeechStart: () => {
+      if (activeRef.current && !isTypingRef.current) setListening(true)
+    },
+    onSpeechEnd: (audio) => speechEndHandlerRef.current?.(audio),
+    onVADMisfire: () => setListening(false),
+  })
 
-    const sr = new SR()
-    sr.lang = SR_LANG
-    sr.interimResults = false
-    sr.maxAlternatives = 1
+  // vadRef 항상 최신 유지
+  useEffect(() => { vadRef.current = vad }, [vad])
 
-    let done = false
-    const finalize = () => {
-      if (done) return
-      done = true
-      // 자신이 현재 활성 SR 일 때만 ref 비움 (이미 다른 SR 로 교체됐을 가능성 가드)
-      if (srRef.current?.sr === sr) srRef.current = null
-      setListening(false)
-    }
+  // speechEndHandlerRef 업데이트 — isTyping·detectedLang 등 최신 상태 참조
+  speechEndHandlerRef.current = useCallback(async (audio) => {
+    setListening(false)
+    if (!activeRef.current || isTypingRef.current) return
 
-    sr.onresult = (e) => {
-      finalize()
-      const text = e.results[0]?.[0]?.transcript?.trim()
-      if (!text) { scheduleRestart(); return }
-      setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
-      handleBotReply(text)
-    }
+    // Float32Array(16 kHz) → WAV Blob → 백엔드 Whisper
+    const wavBlob = new Blob([utils.encodeWAV(audio)], { type: 'audio/wav' })
+    if (wavBlob.size < 2000) return   // 너무 짧으면 무시 (VAD misfire 보험)
 
-    sr.onerror = (ev) => {
-      if (ev.error && ev.error !== 'no-speech' && ev.error !== 'aborted') {
-        // eslint-disable-next-line no-console
-        console.warn('[ChatPanel] SR error:', ev.error)
-      }
-      finalize()
-      scheduleRestart()
-    }
+    const form = new FormData()
+    form.append('audio', wavBlob, 'audio.wav')
 
-    sr.onend = () => {
-      if (done) return
-      finalize()
-      scheduleRestart()
-    }
-
-    srRef.current = { sr, abort: () => { try { sr.abort() } catch {} } }
     try {
-      sr.start()
-      setListening(true)
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[ChatPanel] SR start failed:', e)
-      finalize()
-      scheduleRestart()
-    }
-  }
+      const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form })
+      const data = await res.json()
+      const text = (data.text || '').trim()
 
-  // GPT 응답을 음성으로 재생. 재생이 끝나면(또는 실패하면) resolve.
+      // 첫 발화에서 언어 감지 → 이후 대화 전체에 고정
+      if (data.language && !detectedLangRef.current) {
+        const raw    = data.language.slice(0, 2).toLowerCase()
+        const locale = langToLocale(raw)   // ko/zh/ja 외 → 'en'
+        detectedLangRef.current = locale
+        sessionStorage.setItem('kiosk_detected_lang', locale)
+        setLocale(locale)
+      }
+
+      if (text) {
+        setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
+        handleBotReply(text)
+      }
+    } catch (e) {
+      console.error('[ChatPanel] STT error:', e)
+    }
+  }, [setLocale])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── TTS: MediaSource 스트리밍 재생 ─────────────────────────────────────────
+
   async function playTts(text) {
     if (!text || !activeRef.current) return
+
+    let res
     try {
-      const res = await fetch('/ai_modules/tts', {
+      res = await fetch('/ai_modules/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, format: 'mp3' }),
       })
       if (!res.ok) return
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      audioRef.current = audio
-      await new Promise((resolve) => {
-        audio.onended = resolve
-        audio.onerror = resolve
-        audio.play().catch(resolve)
-      })
-      URL.revokeObjectURL(url)
-      audioRef.current = null
-    } catch {
-      // 네트워크/오디오 오류는 조용히 무시 — 텍스트는 이미 떠 있음
+    } catch { return }
+
+    const useMediaSource =
+      typeof window.MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('audio/mpeg')
+
+    if (!useMediaSource) {
+      // 폴백: blob 전체 수신 후 재생
+      try {
+        const blob  = await res.blob()
+        const url   = URL.createObjectURL(blob)
+        const audio = new Audio(url)
+        audioRef.current = audio
+        await new Promise(resolve => {
+          audio.onended = resolve
+          audio.onerror = resolve
+          audio.play().catch(resolve)
+        })
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      } catch {}
+      return
     }
+
+    const mediaSource = new MediaSource()
+    const audio       = new Audio()
+    audioRef.current  = audio
+    const objectUrl   = URL.createObjectURL(mediaSource)
+    audio.src         = objectUrl
+
+    await new Promise((resolve) => {
+      mediaSource.addEventListener('sourceopen', async () => {
+        let sb
+        try { sb = mediaSource.addSourceBuffer('audio/mpeg') }
+        catch { resolve(); return }
+
+        const waitUpdate = () =>
+          new Promise(r => sb.addEventListener('updateend', r, { once: true }))
+
+        const reader = res.body.getReader()
+        audio.play().catch(() => {})
+
+        try {
+          while (activeRef.current) {
+            const { done, value } = await reader.read()
+            if (done) {
+              if (mediaSource.readyState === 'open') mediaSource.endOfStream()
+              break
+            }
+            if (sb.updating) await waitUpdate()
+            sb.appendBuffer(value)
+            await waitUpdate()
+          }
+        } catch { /* 정지 중 스트림 오류 무시 */ }
+      }, { once: true })
+
+      audio.onended = resolve
+      audio.onerror = resolve
+    })
+
+    URL.revokeObjectURL(objectUrl)
+    audioRef.current = null
   }
 
-  async function handleBotReply(text) {
+  // ─── LLM: SSE 스트리밍 ───────────────────────────────────────────────────────
+
+  async function handleBotReply(userText) {
     setIsTyping(true)
     isTypingRef.current = true
-    srRef.current?.abort()
-    setListening(false)
+    vadRef.current?.pause()   // 봇 응답 중 VAD 일시 정지
+
+    const msgId = `bot-${Date.now()}`
+    setMessages(prev => [...prev, { id: msgId, role: 'bot', text: '' }])
 
     let replyText = ''
     try {
-      const res = await fetch('/ai_modules/llm', {
+      const res = await fetch('/ai_modules/llm/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionIdRef.current,
-          input: text,
+          input: userText,
+          language: detectedLangRef.current ?? undefined,
         }),
       })
-      if (!res.ok) {
-        const detail = await res.text().catch(() => '')
-        throw new Error(`HTTP ${res.status} ${detail.slice(0, 200)}`)
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const reader  = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop()
+
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.token) {
+              replyText += data.token
+              setMessages(prev =>
+                prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
+              )
+            }
+            if (data.done && data.output) {
+              replyText = data.output
+              setMessages(prev =>
+                prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
+              )
+            }
+          } catch { /* JSON 파싱 실패 무시 */ }
+        }
       }
-      const data = await res.json()
-      replyText = (data.output || '').trim()
-      if (!replyText) replyText = '죄송해요, 응답을 받지 못했어요. 다시 말씀해 주시겠어요?'
     } catch (e) {
       replyText = '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.'
-      // eslint-disable-next-line no-console
+      setMessages(prev =>
+        prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
+      )
       console.error('[ChatPanel] LLM error:', e)
     }
 
-    if (!activeRef.current) return
-
-    setMessages(prev => [...prev, {
-      id: Date.now(), role: 'bot', text: replyText,
-    }])
     setIsTyping(false)
     isTypingRef.current = false
 
-    // 음성 재생이 끝난 뒤 다시 듣기 시작 (자기 목소리 인식 방지)
+    if (!activeRef.current) return
+
     await playTts(replyText)
-    setTimeout(() => { if (activeRef.current) startListening() }, 300)
+
+    // TTS 재생 완료 후 VAD 재개
+    if (activeRef.current) {
+      setTimeout(() => vadRef.current?.start(), 300)
+    }
   }
+
+  // ─── 마운트 / 언마운트 ────────────────────────────────────────────────────────
 
   useEffect(() => {
     activeRef.current = true
-    if (!SR) {
-      setMessages(prev => [...prev, {
-        id: 'no-sr', role: 'bot',
-        text: '이 브라우저는 음성 인식을 지원하지 않습니다. Chrome 브라우저를 사용해 주세요.',
-      }])
-      return
-    }
-    startListening()
+    // startOnLoad: true 이므로 별도 start() 불필요 — 언마운트 시 정리만 담당
+
     return () => {
       activeRef.current = false
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current)
-        restartTimerRef.current = null
-      }
-      srRef.current?.abort()
-      srRef.current = null
+      vadRef.current?.pause()
       if (audioRef.current) {
         try { audioRef.current.pause() } catch {}
         audioRef.current = null
       }
     }
-  }, [])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── 렌더 ─────────────────────────────────────────────────────────────────────
+
+  const isVadLoading = vad.loading
+  const isVadErrored = !!vad.errored
+  // 에러 내용을 콘솔에 출력해 원인 파악
+  if (vad.errored) console.error('[VAD] 초기화 실패:', vad.errored)
+  const isSpeaking   = vad.userSpeaking
 
   return (
     <div
@@ -218,7 +306,7 @@ export default function ChatPanel({ onClose }) {
     >
       <style>{CSS}</style>
 
-      {/* ── 메시지 목록 ── */}
+      {/* 메시지 목록 */}
       <div
         ref={scrollRef}
         style={{
@@ -243,17 +331,22 @@ export default function ChatPanel({ onClose }) {
               whiteSpace: 'pre-wrap', wordBreak: 'keep-all',
             }}>
               {msg.text}
+              {msg.role === 'bot' && isTyping && msg.text && (
+                <span style={{
+                  display: 'inline-block', width: 2, height: '1em',
+                  background: '#555', marginLeft: 2, verticalAlign: 'text-bottom',
+                  animation: 'chatBlink 1s infinite',
+                }} />
+              )}
             </div>
           </div>
         ))}
 
-        {isTyping && (
+        {isTyping && messages[messages.length - 1]?.text === '' && (
           <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <div style={{
-              background: '#C8E0FF',
-              borderRadius: '4px 16px 16px 16px',
-              padding: '12px 16px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+              background: '#C8E0FF', borderRadius: '4px 16px 16px 16px',
+              padding: '12px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
               display: 'flex', alignItems: 'center', gap: 2,
             }}>
               <span className="chat-dot" />
@@ -264,13 +357,20 @@ export default function ChatPanel({ onClose }) {
         )}
       </div>
 
-      {/* ── 음성 인식 상태 표시 ── */}
+      {/* 음성 인식 상태 표시 */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '8px 12px 12px',
-        gap: 10, flexShrink: 0,
+        padding: '8px 12px 12px', gap: 10, flexShrink: 0,
       }}>
-        {listening ? (
+        {isVadErrored ? (
+          <span style={{ fontSize: 12, color: '#c00' }}>
+            오류: {vad.errored?.message ?? String(vad.errored)}
+          </span>
+        ) : isVadLoading ? (
+          <span style={{ fontSize: 13, color: '#aaa' }}>음성 인식 준비 중...</span>
+        ) : isTyping ? (
+          <span style={{ fontSize: 13, color: '#888' }}>답변 중...</span>
+        ) : isSpeaking || listening ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 3, height: 20 }}>
               <span className="wave-bar" />
@@ -281,10 +381,8 @@ export default function ChatPanel({ onClose }) {
             </div>
             <span style={{ fontSize: 13, color: '#744032', fontWeight: 700 }}>듣고 있습니다...</span>
           </>
-        ) : isTyping ? (
-          <span style={{ fontSize: 13, color: '#888' }}>답변 중...</span>
         ) : (
-          <span style={{ fontSize: 13, color: '#aaa' }}>잠시 후 음성 인식이 시작됩니다</span>
+          <span style={{ fontSize: 13, color: '#aaa' }}>말씀해 주세요</span>
         )}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useGesture } from './hooks/useGesture'
-import { LocaleProvider } from './i18n/LocaleContext'
+import { LocaleProvider, useLocale } from './i18n/LocaleContext'
 import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
@@ -29,7 +29,9 @@ const GESTURE_LABELS = {
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
-export default _isCollect ? CollectTool : function App() {
+// LocaleProvider 바깥에서는 useLocale() 호출 불가 → AppContent로 분리
+function AppContent() {
+  const { setLocale } = useLocale()
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
   const [orderType, setOrderType] = useState(null)
@@ -354,7 +356,15 @@ export default _isCollect ? CollectTool : function App() {
   }, [gestureEnabled])
 
 
-  const nav = (s) => setScreen(s)
+  const nav = (s) => {
+    if (s === 'start') {
+      // 새 손님 시작 — 언어·세션 초기화
+      setLocale('ko')
+      sessionStorage.removeItem('kiosk_detected_lang')
+      sessionStorage.removeItem('kiosk_llm_session_id')
+    }
+    setScreen(s)
+  }
 
   const addToCart = (item) => {
     setCart(prev => {
@@ -396,8 +406,7 @@ export default _isCollect ? CollectTool : function App() {
   }
 
   return (
-    <LocaleProvider>
-      <>
+    <>
         {/* ── 테스트 HUD (좌측 하단) ── */}
         {gestureHud && (
           <div style={{
@@ -543,6 +552,13 @@ export default _isCollect ? CollectTool : function App() {
           </button>
         )}
       </>
+  )
+}
+
+export default _isCollect ? CollectTool : function App() {
+  return (
+    <LocaleProvider>
+      <AppContent />
     </LocaleProvider>
   )
 }

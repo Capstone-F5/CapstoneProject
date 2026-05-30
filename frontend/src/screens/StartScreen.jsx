@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useLocale } from '../i18n/LocaleContext'
 import useT from '../i18n/useT'
+import IdleOverlay from '../components/IdleOverlay'
 
 const LANGS = [
   { code: 'ko', label: '한글' },
@@ -46,6 +47,7 @@ export default function StartScreen({
   )
 
   return (
+    <>
     <div
       onClick={() => nav('orderType')}
       style={{
@@ -139,5 +141,13 @@ export default function StartScreen({
         ))}
       </div>
     </div>
+
+    {/* 대기 화면 idle 3분 → 언어·세션 초기화 (nav('start')에서 setLocale('ko') + sessionStorage 클리어) */}
+    <IdleOverlay
+      idleMs={170000}
+      warningSeconds={10}
+      onExpire={() => nav('start')}
+    />
+    </>
   )
 }
