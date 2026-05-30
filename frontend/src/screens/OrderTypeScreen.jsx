@@ -1,4 +1,4 @@
-import Logo from '../components/Logo'
+﻿import Logo from '../components/Logo'
 import useT from '../i18n/useT'
 
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
@@ -49,7 +49,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
             onClick={() => select('dine-in')}
           >
             <img
-              src="/images/sets/F버거 세트.png"
+              src="/images/sets/F버거 세트.webp"
               alt="dine-in"
               style={{ width: '70%', aspectRatio: '1 / 1', objectFit: 'scale-down' }}
             />
@@ -60,7 +60,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
             onClick={() => select('takeout')}
           >
             <img
-              src="/images/etc/Takeout.png"
+              src="/images/etc/Takeout.webp"
               alt="포장"
               style={{ width: '70%', aspectRatio: '1 / 1', objectFit: 'scale-down' }}
             />

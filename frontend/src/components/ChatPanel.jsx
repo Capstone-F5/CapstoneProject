@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { useLocale } from '../i18n/LocaleContext'
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -14,13 +13,9 @@ const CSS = `
   .wave-bar:nth-child(5){ animation-delay:0s }
 `
 
-// 4개 언어를 동시에 시작해 먼저 인식되는 언어로 자동 전환 (레이싱)
-const LANG_CONFIGS = [
-  { srLang: 'ko-KR', locale: 'ko' },
-  { srLang: 'en-US', locale: 'en' },
-  { srLang: 'zh-CN', locale: 'zh' },
-  { srLang: 'ja-JP', locale: 'ja' },
-]
+// Chrome 은 동시 SpeechRecognition 인스턴스를 1 개만 허용한다.
+// 다국어 자동 감지는 백엔드 Whisper(/ai_modules/stt) 로 이전 예정. 여기서는 한국어 단일.
+const SR_LANG = 'ko-KR'
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition
 
@@ -31,16 +26,28 @@ const INIT_MESSAGES = [
   },
 ]
 
+// 브라우저 세션 단위로 고정되는 LLM 세션 ID (탭 닫으면 초기화).
+function getSessionId() {
+  const KEY = 'kiosk_llm_session_id'
+  let sid = sessionStorage.getItem(KEY)
+  if (!sid) {
+    sid = (crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    sessionStorage.setItem(KEY, sid)
+  }
+  return sid
+}
+
 export default function ChatPanel({ onClose }) {
-  const { setLocale } = useLocale()
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
   const [isTyping,  setIsTyping]  = useState(false)
   const [listening, setListening] = useState(false)
   const scrollRef   = useRef(null)
-  const srRef       = useRef(null)   // { abort() } — aborts all racing instances
+  const srRef       = useRef(null)   // { sr, abort() } — 현재 활성 SR
+  const restartTimerRef = useRef(null)  // scheduleRestart 의 단일 타이머
   const activeRef   = useRef(true)
   const isTypingRef = useRef(false)
-  const settledRef  = useRef(false)  // true once any racing instance wins
+  const sessionIdRef = useRef(getSessionId())
+  const audioRef    = useRef(null)   // 현재 재생 중 TTS — 정리용
 
   useEffect(() => { isTypingRef.current = isTyping }, [isTyping])
 
@@ -50,81 +57,133 @@ export default function ChatPanel({ onClose }) {
   }, [messages, isTyping])
 
   function scheduleRestart() {
-    setTimeout(() => {
+    if (restartTimerRef.current) return  // 이미 예약돼 있으면 중복 예약 금지
+    restartTimerRef.current = setTimeout(() => {
+      restartTimerRef.current = null
       if (activeRef.current && !isTypingRef.current) startListening()
     }, 500)
   }
 
   function startListening() {
     if (!SR || !activeRef.current || isTypingRef.current) return
+    // StrictMode 이중 마운트 등으로 SR 가 살아 있는데 또 호출되는 경우 차단.
+    if (srRef.current?.sr) return
 
-    settledRef.current = false
-    setListening(true)
+    const sr = new SR()
+    sr.lang = SR_LANG
+    sr.interimResults = false
+    sr.maxAlternatives = 1
 
-    const instances = []
-    let doneCount = 0
+    let done = false
+    const finalize = () => {
+      if (done) return
+      done = true
+      // 자신이 현재 활성 SR 일 때만 ref 비움 (이미 다른 SR 로 교체됐을 가능성 가드)
+      if (srRef.current?.sr === sr) srRef.current = null
+      setListening(false)
+    }
 
-    LANG_CONFIGS.forEach(({ srLang, locale: detectedLocale }) => {
-      const sr = new SR()
-      sr.lang = srLang
-      sr.interimResults = false
-      sr.maxAlternatives = 1
+    sr.onresult = (e) => {
+      finalize()
+      const text = e.results[0]?.[0]?.transcript?.trim()
+      if (!text) { scheduleRestart(); return }
+      setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
+      handleBotReply(text)
+    }
 
-      sr.onresult = (e) => {
-        if (settledRef.current) return
-        settledRef.current = true
-        instances.forEach(s => { try { s.abort() } catch {} })
-        setListening(false)
-
-        const text = e.results[0]?.[0]?.transcript?.trim()
-        if (!text) { scheduleRestart(); return }
-
-        // 인식된 언어로 앱 로케일 자동 전환
-        setLocale(detectedLocale)
-
-        setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
-        handleBotReply(text)
+    sr.onerror = (ev) => {
+      if (ev.error && ev.error !== 'no-speech' && ev.error !== 'aborted') {
+        // eslint-disable-next-line no-console
+        console.warn('[ChatPanel] SR error:', ev.error)
       }
+      finalize()
+      scheduleRestart()
+    }
 
-      const onDone = () => {
-        doneCount++
-        if (doneCount >= LANG_CONFIGS.length && !settledRef.current) {
-          settledRef.current = true
-          setListening(false)
-          scheduleRestart()
-        }
-      }
+    sr.onend = () => {
+      if (done) return
+      finalize()
+      scheduleRestart()
+    }
 
-      sr.onend   = onDone
-      sr.onerror = onDone
-      instances.push(sr)
-    })
-
-    srRef.current = { abort: () => instances.forEach(s => { try { s.abort() } catch {} }) }
-    instances.forEach(sr => { try { sr.start() } catch {} })
+    srRef.current = { sr, abort: () => { try { sr.abort() } catch {} } }
+    try {
+      sr.start()
+      setListening(true)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[ChatPanel] SR start failed:', e)
+      finalize()
+      scheduleRestart()
+    }
   }
 
-  function handleBotReply(text) {
+  // GPT 응답을 음성으로 재생. 재생이 끝나면(또는 실패하면) resolve.
+  async function playTts(text) {
+    if (!text || !activeRef.current) return
+    try {
+      const res = await fetch('/ai_modules/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, format: 'mp3' }),
+      })
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audioRef.current = audio
+      await new Promise((resolve) => {
+        audio.onended = resolve
+        audio.onerror = resolve
+        audio.play().catch(resolve)
+      })
+      URL.revokeObjectURL(url)
+      audioRef.current = null
+    } catch {
+      // 네트워크/오디오 오류는 조용히 무시 — 텍스트는 이미 떠 있음
+    }
+  }
+
+  async function handleBotReply(text) {
     setIsTyping(true)
     isTypingRef.current = true
     srRef.current?.abort()
     setListening(false)
 
-    // ── LLM 연동 전 임시 응답 ──────────────────────────────────────
-    // 실제 연동 시 이 setTimeout을 API 호출로 교체하세요:
-    //   const res = await fetch('/api/chat', { method:'POST',
-    //     body: JSON.stringify({ message: text }) })
-    //   const { reply } = await res.json()
-    // ──────────────────────────────────────────────────────────────
-    setTimeout(() => {
-      setIsTyping(false)
-      isTypingRef.current = false
-      setMessages(prev => [...prev, {
-        id: Date.now(), role: 'bot',
-        text: 'AI 서비스 연결을 준비 중입니다. 잠시 후 더 나은 서비스로 찾아오겠습니다! 😊\n불편하신 점은 직원에게 문의해 주세요.',
-      }])
-      setTimeout(() => { if (activeRef.current) startListening() }, 500)
-    }, 900)
+    let replyText = ''
+    try {
+      const res = await fetch('/ai_modules/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionIdRef.current,
+          input: text,
+        }),
+      })
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status} ${detail.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      replyText = (data.output || '').trim()
+      if (!replyText) replyText = '죄송해요, 응답을 받지 못했어요. 다시 말씀해 주시겠어요?'
+    } catch (e) {
+      replyText = '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.'
+      // eslint-disable-next-line no-console
+      console.error('[ChatPanel] LLM error:', e)
+    }
+
+    if (!activeRef.current) return
+
+    setMessages(prev => [...prev, {
+      id: Date.now(), role: 'bot', text: replyText,
+    }])
+    setIsTyping(false)
+    isTypingRef.current = false
+
+    // 음성 재생이 끝난 뒤 다시 듣기 시작 (자기 목소리 인식 방지)
+    await playTts(replyText)
+    setTimeout(() => { if (activeRef.current) startListening() }, 300)
   }
 
   useEffect(() => {
@@ -139,7 +198,16 @@ export default function ChatPanel({ onClose }) {
     startListening()
     return () => {
       activeRef.current = false
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current)
+        restartTimerRef.current = null
+      }
       srRef.current?.abort()
+      srRef.current = null
+      if (audioRef.current) {
+        try { audioRef.current.pause() } catch {}
+        audioRef.current = null
+      }
     }
   }, [])
 

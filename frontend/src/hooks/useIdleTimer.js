@@ -33,7 +33,7 @@ export function useIdleTimer({ idleMs, warningSeconds, onExpire }) {
   }, [idleMs, warningSeconds])
 
   useEffect(() => {
-    const EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart']
+    const EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'gesture-activity']
     EVENTS.forEach(e => window.addEventListener(e, reset, { passive: true }))
     reset()
     return () => {

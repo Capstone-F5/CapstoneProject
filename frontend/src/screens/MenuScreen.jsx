@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
 import Logo from '../components/Logo'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
@@ -11,10 +11,10 @@ const COLS = 3
 const GRID_GAP = 9
 
 const CAT_IMAGE = {
-  recommended: '/images/sets/F버거 세트.png',
-  burger:      '/images/burgers/불고기버거.png',
-  side:        '/images/sides/감튀.png',
-  drink:       '/images/drinks/콜라.png',
+  recommended: '/images/sets/F버거 세트.webp',
+  burger:      '/images/burgers/불고기버거.webp',
+  side:        '/images/sides/감튀.webp',
+  drink:       '/images/drinks/콜라.webp',
 }
 
 const CAT_I18N_KEY = {
@@ -216,7 +216,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             gap: 10, padding: '6px 0',
             background: '#f2f2f2',
           }}>
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} style={{
+            <button data-page="prev" onClick={() => setPage(p => Math.max(0, p - 1))} style={{
               background: 'none', border: 'none',
               color: '#F5B800', fontSize: 16, cursor: 'pointer', padding: '0 4px',
             }}>◄</button>
@@ -227,7 +227,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 transition: 'all 0.2s',
               }} />
             ))}
-            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} style={{
+            <button data-page="next" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} style={{
               background: 'none', border: 'none',
               color: '#F5B800', fontSize: 16, cursor: 'pointer', padding: '0 4px',
             }}>►</button>
