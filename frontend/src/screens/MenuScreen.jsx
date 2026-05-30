@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 import Logo from '../components/Logo'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
@@ -24,7 +24,7 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
@@ -34,7 +34,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   const [modalItem, setModalItem] = useState(null)
   const [modalStep, setModalStep] = useState(null)   // 'singleSet' | 'detail'
   const [modalType, setModalType] = useState('single')
-  const swipeStartX = useRef(null)
+  const swipeStartX  = useRef(null)
+  const lastNavRef   = useRef(-Infinity)
+  const NAV_COOLDOWN = 800  // ms
 
   const handleItemTap = (item) => {
     setModalItem(item)
@@ -66,6 +68,52 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   useEffect(() => {
     setPage(p => Math.min(p, Math.max(0, totalPages - 1)))
   }, [totalPages])
+
+  // 단품/세트 선택 모달이 열려 있는 동안만 modalRef 에 핸들러 등록
+  useEffect(() => {
+    if (!modalRef) return
+    if (modalStep === 'singleSet') {
+      modalRef.current = (type) => { handleTypeSelect(type) }
+    } else {
+      modalRef.current = null
+    }
+    return () => { if (modalRef) modalRef.current = null }
+  }, [modalRef, modalStep])
+
+  // 제스처 스와이프 핸들러 — App.jsx 가 ref 를 통해 호출
+  useEffect(() => {
+    if (!swipeRef || !menuData) return
+    const cats = menuData.categories ?? []
+    swipeRef.current = (dir) => {
+      const now = performance.now()
+      if (now - lastNavRef.current < NAV_COOLDOWN) return
+      lastNavRef.current = now
+      if (dir === 'left') {
+        if (page < totalPages - 1) {
+          setPage(p => p + 1)
+        } else {
+          const idx = cats.findIndex(c => c.id === catId)
+          if (idx < cats.length - 1) {
+            setCatId(cats[idx + 1].id)
+            setPage(0)
+          }
+        }
+      } else {
+        if (page > 0) {
+          setPage(p => p - 1)
+        } else {
+          const idx = cats.findIndex(c => c.id === catId)
+          if (idx > 0) {
+            const prevCat   = cats[idx - 1]
+            const prevItems = menuData.menuItems?.[prevCat.id] ?? []
+            const prevTotal = Math.max(1, Math.ceil(prevItems.length / itemsPerPage))
+            setCatId(prevCat.id)
+            setPage(prevTotal - 1)
+          }
+        }
+      }
+    }
+  }, [swipeRef, page, totalPages, catId, menuData, itemsPerPage])
 
   if (isLoading) {
     return (
