@@ -144,8 +144,8 @@ export default function StartScreen({
 
     {/* 대기 화면 idle 3분 → 언어·세션 초기화 (nav('start')에서 setLocale('ko') + sessionStorage 클리어) */}
     <IdleOverlay
-      idleMs={170000}
-      warningSeconds={10}
+      idleMs={180000}
+      warningSeconds={0}
       onExpire={() => nav('start')}
     />
     </>

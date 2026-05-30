@@ -36,7 +36,7 @@ function getSessionId() {
   return sid
 }
 
-export default function ChatPanel({ onClose }) {
+export default function ChatPanel({ onClose, isOpen = true }) {
   const { setLocale } = useLocale()
 
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
@@ -67,8 +67,8 @@ export default function ChatPanel({ onClose }) {
   // ─── Silero VAD ──────────────────────────────────────────────────────────────
 
   const vad = useMicVAD({
-    // 모델 로딩 완료 후 자동 시작 — 로딩 전 start() 호출로 인한 흰 화면 방지
-    startOnLoad: true,
+    // startOnLoad: false — 앱 시작 시 모델만 미리 로드, 마이크는 채팅 열 때만 시작
+    startOnLoad: false,
     positiveSpeechThreshold: 0.8,
     negativeSpeechThreshold: 0.35,
     minSpeechFrames: 4,
@@ -113,6 +113,7 @@ export default function ChatPanel({ onClose }) {
       }
 
       if (text) {
+        window.dispatchEvent(new Event('gesture-activity'))  // idle 타이머 리셋
         setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
         handleBotReply(text)
       }
@@ -203,6 +204,7 @@ export default function ChatPanel({ onClose }) {
   async function handleBotReply(userText) {
     setIsTyping(true)
     isTypingRef.current = true
+    window.dispatchEvent(new Event('gesture-activity'))  // 봇 응답도 idle 타이머 리셋
     vadRef.current?.pause()   // 봇 응답 중 VAD 일시 정지
 
     const msgId = `bot-${Date.now()}`
@@ -275,20 +277,47 @@ export default function ChatPanel({ onClose }) {
     }
   }
 
-  // ─── 마운트 / 언마운트 ────────────────────────────────────────────────────────
+  // ─── 채팅 열림/닫힘 → VAD start/pause ───────────────────────────────────────
 
   useEffect(() => {
-    activeRef.current = true
-    // startOnLoad: true 이므로 별도 start() 불필요 — 언마운트 시 정리만 담당
-
-    return () => {
+    if (isOpen) {
+      activeRef.current = true
+      // 모델 로딩이 완료된 경우에만 start (로딩 중이면 로딩 완료 후 effect 재실행)
+      if (!vad.loading) vadRef.current?.start()
+    } else {
       activeRef.current = false
       vadRef.current?.pause()
+      setListening(false)
       if (audioRef.current) {
         try { audioRef.current.pause() } catch {}
         audioRef.current = null
       }
     }
+  }, [isOpen, vad.loading])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── 세션 리셋 이벤트 (nav('start') 호출 시) ─────────────────────────────────
+
+  useEffect(() => {
+    const handleReset = async () => {
+      // 백엔드 LLM 메모리 초기화
+      const oldSid = sessionIdRef.current
+      try {
+        await fetch(`/ai_modules/llm/reset?session_id=${oldSid}`, { method: 'POST' })
+      } catch {}
+
+      // 새 세션 ID 발급
+      const newSid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      sessionIdRef.current = newSid
+      sessionStorage.setItem('kiosk_llm_session_id', newSid)
+
+      // 프론트 상태 초기화
+      detectedLangRef.current = null
+      setMessages(INIT_MESSAGES)
+      setIsTyping(false)
+      isTypingRef.current = false
+    }
+    window.addEventListener('kiosk-session-reset', handleReset)
+    return () => window.removeEventListener('kiosk-session-reset', handleReset)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── 렌더 ─────────────────────────────────────────────────────────────────────

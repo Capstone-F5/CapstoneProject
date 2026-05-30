@@ -358,10 +358,13 @@ function AppContent() {
 
   const nav = (s) => {
     if (s === 'start') {
-      // 새 손님 시작 — 언어·세션 초기화
+      // 새 손님 시작 — 채팅 닫기, 언어·세션 초기화
+      setChatOpen(false)
       setLocale('ko')
       sessionStorage.removeItem('kiosk_detected_lang')
       sessionStorage.removeItem('kiosk_llm_session_id')
+      // 항상 마운트된 ChatPanel에 리셋 신호 전달
+      window.dispatchEvent(new CustomEvent('kiosk-session-reset'))
     }
     setScreen(s)
   }
@@ -513,7 +516,7 @@ function AppContent() {
             {screens[screen] ?? screens.start}
           </div>
 
-          {/* 채팅 패널 — 하단에서 슬라이드업 */}
+          {/* 채팅 패널 — 항상 마운트(백그라운드 모델 프리로드), CSS로 열고 닫음 */}
           <div style={{
             flexShrink: 0,
             height: chatOpen ? '33vh' : 0,
@@ -522,7 +525,7 @@ function AppContent() {
             background: '#e0e0e0',
             borderTop: chatOpen ? '1.5px solid #bbb' : 'none',
           }}>
-            {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+            <ChatPanel onClose={() => setChatOpen(false)} isOpen={chatOpen} />
           </div>
         </div>
 
