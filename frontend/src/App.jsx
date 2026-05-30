@@ -45,6 +45,9 @@ export default _isCollect ? CollectTool : function App() {
   const [okProgress, setOkProgress] = useState(0)  // 0→1
   const okRafRef = useRef(null)
 
+  // MenuScreen 스와이프 imperative 핸들러
+  const menuSwipeRef = useRef(null)
+
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
   useEffect(() => { screenRef.current = screen }, [screen])
@@ -180,13 +183,11 @@ export default _isCollect ? CollectTool : function App() {
   const [gestureHud, setGestureHud] = useState(null)
 
   const handleGesture = useCallback(({ gesture, hands, total_fingers }) => {
-    // HUD 업데이트 (포인터는 onPointer 가 처리)
-    const gestureDisplay = gesture ? (GESTURE_LABELS[gesture] ?? gesture) : '-'
+    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신)
     setGestureHud({
-      left:    hands?.left  ? `${hands.left.finger_count}개`  : '-',
-      right:   hands?.right ? `${hands.right.finger_count}개` : '-',
-      total:   total_fingers ?? 0,
-      gesture: gestureDisplay,
+      left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
+      right: hands?.right ? `${hands.right.finger_count}개` : '-',
+      total: total_fingers ?? 0,
     })
 
     if (!gesture) return
@@ -229,13 +230,9 @@ export default _isCollect ? CollectTool : function App() {
       return
     }
 
-    // 메뉴 화면 좌우 스와이프 → 페이지 ◄/► 버튼 자동 클릭
+    // 메뉴 화면 좌우 스와이프 → 페이지/탭 전환
     if (currentScreen === 'menu' && (gesture === 'swipe_left' || gesture === 'swipe_right')) {
-      const selector = gesture === 'swipe_left'
-        ? 'button[data-page="next"]'
-        : 'button[data-page="prev"]'
-      const btn = document.querySelector(selector)
-      if (btn) btn.click()
+      menuSwipeRef.current?.(gesture === 'swipe_left' ? 'left' : 'right')
       showLabel(GESTURE_LABELS[gesture])
       return
     }
@@ -271,7 +268,7 @@ export default _isCollect ? CollectTool : function App() {
   const screens = {
     start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
-    menu:        <MenuScreen {...props} />,
+    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} />,
     cart:        <CartScreen {...props} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
@@ -295,8 +292,8 @@ export default _isCollect ? CollectTool : function App() {
             <div>왼손 &nbsp;: {gestureHud.left}</div>
             <div>오른손: {gestureHud.right}</div>
             <div>합계 &nbsp;: {gestureHud.total}개</div>
-            <div style={{ color: gestureHud.gesture !== '-' ? '#7fff7f' : '#888' }}>
-              제스처: {gestureHud.gesture}
+            <div style={{ color: gestureLabel ? '#7fff7f' : '#888' }}>
+              제스처: {gestureLabel ?? '-'}
             </div>
           </div>
         )}
