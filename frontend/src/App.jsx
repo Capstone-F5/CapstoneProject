@@ -83,6 +83,8 @@ function AppContent() {
   // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
   const screenVoiceRef    = useRef(null)
   const pendingActionsRef = useRef([])
+  const awaitingScreenRef = useRef(false)   // navigate 후 새 화면 마운트 대기 중 여부
+  const drainTimerRef     = useRef(null)     // 화면 마운트 지연 시 재드레인 폴백 타이머
   // 현재 열린 메뉴 팝업 상태 — LLM이 선택 내용을 읽고 수정하는 데 사용
   const modalStateRef     = useRef(null)
 
@@ -406,6 +408,49 @@ function AppContent() {
 
   const clearCart = () => setCart([])
 
+  // 기존 장바구니 라인의 옵션을 제자리에서 변경 (cartId·위치 유지)
+  // a: { item_type?, quantity?, exclusion?, side?, drink? } — 제공된 필드만 변경
+  const updateItemOptions = (cartId, a) => {
+    setCart(prev => prev.map(c => {
+      if (c.cartId !== cartId) return c
+      const menu = menuByIdRef.current[c.id]
+      if (!menu) return c
+      const md        = menuDataRef.current
+      const sides     = md?.setSides    ?? []
+      const drinks    = md?.setDrinks   ?? []
+      const surcharge = md?.setSurcharge ?? 0
+
+      const type = a.item_type ?? c.type
+      const isSet = type === 'set'
+      const qty   = a.quantity ?? c.qty
+      // 변경 요청 없는 옵션은 기존값 유지
+      const exclusionReq = a.exclusion ?? c.exclusion
+      const exclusion = menu.exclusions?.includes(exclusionReq) ? exclusionReq : '없음'
+
+      let sideObj = null, drinkObj = null
+      if (isSet) {
+        const sideName  = a.side  ?? c.side
+        const drinkName = a.drink ?? c.drink
+        sideObj  = sides.find(s => s.name === sideName)   ?? sides[0]  ?? null
+        drinkObj = drinks.find(d => d.name === drinkName) ?? drinks[0] ?? null
+      }
+      const unitPrice = menu.price
+        + (isSet ? surcharge : 0)
+        + (isSet ? (sideObj?.extra ?? 0) + (drinkObj?.extra ?? 0) : 0)
+
+      const side  = isSet ? (sideObj?.name ?? null) : null
+      const drink = isSet ? (drinkObj?.name ?? null) : null
+      const key = `${c.id}-${type}-${exclusion}-${side ?? ''}-${drink ?? ''}`
+      return {
+        ...c, type, qty, unitPrice, exclusion,
+        side, sideExtra: isSet ? (sideObj?.extra ?? 0) : 0,
+        drink, drinkExtra: isSet ? (drinkObj?.extra ?? 0) : 0,
+        image: isSet ? (menu.setImage ?? menu.image) : menu.image,
+        key,
+      }
+    }))
+  }
+
   // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
   const cartForLLM = useMemo(() =>
     cart.map(c => ({
@@ -514,6 +559,12 @@ function AppContent() {
         else console.warn('[voice] remove_item: 장바구니에서 찾지 못함', a.match)
         return 'handled'
       }
+      case 'update_item': {
+        const id = resolveCartId(a.match)
+        if (id != null) updateItemOptions(id, a)
+        else console.warn('[voice] update_item: 장바구니에서 찾지 못함', a.match)
+        return 'handled'
+      }
       case 'clear_cart':
         clearCart()
         return 'handled'
@@ -542,21 +593,52 @@ function AppContent() {
   }
 
   // 큐 드레인: App 레벨 → 화면 브릿지 순으로 처리.
-  // 화면 전환 액션은 처리 후 중단(새 화면 마운트 후 effect가 재드레인).
+  // 화면 전환(navigate) 직후 새 화면이 마운트되기 전 도착한 종속 액션은 버리지 않고
+  // 큐에 유지했다가 마운트 후(또는 폴백 타이머) 재드레인한다.
   function drainVoiceActions() {
     const q = pendingActionsRef.current
     while (q.length) {
       const a = q[0]
       const res = execAppAction(a)
-      if (res === 'nav')     { q.shift(); break }
+      if (res === 'nav') {
+        q.shift()
+        awaitingScreenRef.current = true   // 새 화면 마운트 대기 시작
+        break
+      }
       if (res === 'handled') { q.shift(); continue }
       // 화면 종속 액션 → 현재 화면 브릿지에 위임
       const handled = screenVoiceRef.current?.(a)
       if (handled) { q.shift(); continue }
-      // 현재 화면에서 처리 불가(화면 불일치) → 무시
+      // 처리 못 함: 화면 전환 대기 중이면 보존하고 잠시 후 재시도
+      if (awaitingScreenRef.current) {
+        scheduleDrainRetry()
+        break
+      }
+      // 전환 대기도 아닌데 처리 불가 → 현재 화면과 무관한 액션, 무시
       console.warn('[voice] 현재 화면에서 처리할 수 없는 액션, 무시:', a)
       q.shift()
     }
+  }
+
+  // 화면 마운트가 늦어질 때 큐를 재드레인하는 폴백 (최대 ~1초)
+  function scheduleDrainRetry(attempt = 0) {
+    if (drainTimerRef.current) clearTimeout(drainTimerRef.current)
+    if (attempt > 20) {   // 약 1초 후에도 처리 못 하면 포기(무한 보류 방지)
+      awaitingScreenRef.current = false
+      if (pendingActionsRef.current.length) {
+        console.warn('[voice] 대기 액션 처리 실패, 폐기:', pendingActionsRef.current.splice(0))
+      }
+      return
+    }
+    drainTimerRef.current = setTimeout(() => {
+      const before = pendingActionsRef.current.length
+      drainVoiceActions()
+      // 여전히 남아있고 아직 대기 중이면 다음 시도 예약
+      if (pendingActionsRef.current.length && pendingActionsRef.current.length === before
+          && awaitingScreenRef.current) {
+        scheduleDrainRetry(attempt + 1)
+      }
+    }, 50)
   }
 
   // AI 액션 → 한국어 알림 메시지
@@ -568,6 +650,7 @@ function AppContent() {
       case 'add_item':        return `장바구니 추가: ${menuName} ${a.quantity || 1}개`
       case 'update_qty':      return `수량 변경: ${a.quantity}개`
       case 'remove_item':     return `삭제: ${menuName}`
+      case 'update_item':     return `옵션 변경: ${menuName}`
       case 'clear_cart':      return '장바구니 전체 삭제'
       case 'navigate':        return `화면 이동: ${screenLabel[a.screen] || a.screen}`
       case 'checkout':        return '장바구니로 이동'
@@ -601,8 +684,9 @@ function AppContent() {
     drainVoiceActions()
   }
 
-  // 화면 전환 후(새 화면 브릿지 등록 완료) 남은 액션 이어서 처리
+  // 화면 전환 후(자식 화면 브릿지 등록 effect가 먼저 실행됨) 남은 액션 이어서 처리
   useEffect(() => {
+    awaitingScreenRef.current = false   // 새 화면 마운트 완료 → 대기 해제
     if (pendingActionsRef.current.length) drainVoiceActions()
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 

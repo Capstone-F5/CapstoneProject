@@ -108,12 +108,13 @@ def add_item(
 
 
 @tool
-def update_qty(menu_id: int, quantity: int) -> str:
+def update_qty(menu_id: int, quantity: int, cart_id: float | None = None) -> str:
     """장바구니의 특정 메뉴 수량을 변경한다.
 
     Args:
         menu_id: 수량을 바꿀 메뉴의 카탈로그 ID.
         quantity: 새 수량. 0 이하이면 삭제됨(remove_item 사용 권장).
+        cart_id: 같은 메뉴가 옵션별로 여러 줄이면 context의 cart_id로 정확한 줄 지정.
     """
     menu = get_menu(menu_id)
     if menu is None:
@@ -124,16 +125,64 @@ def update_qty(menu_id: int, quantity: int) -> str:
     if not exists:
         return f"장바구니에 {menu['name']}이(가) 없습니다."
 
-    push_action({"type": "update_qty", "match": {"menu_id": menu_id}, "quantity": quantity})
+    match = {"cart_id": cart_id} if cart_id is not None else {"menu_id": menu_id}
+    push_action({"type": "update_qty", "match": match, "quantity": quantity})
     return f"{menu['name']} 수량을 {quantity}개로 변경"
 
 
 @tool
-def remove_item(menu_id: int) -> str:
+def update_item(
+    cart_id: float,
+    item_type: str | None = None,
+    quantity: int | None = None,
+    exclusion: str | None = None,
+    side: str | None = None,
+    drink: str | None = None,
+) -> str:
+    """이미 담긴 장바구니 항목의 옵션을 제자리에서 변경한다(삭제 후 재담기 아님).
+
+    음료/사이드/제외/수량/단품·세트를 바꿀 때 사용. 변경할 필드만 채운다.
+    반드시 context의 cart_id로 대상 줄을 지정한다.
+
+    Args:
+        cart_id: 변경할 장바구니 줄의 cart_id (context에 표시됨).
+        item_type: 'single'|'set' 로 변경 시.
+        quantity: 수량 변경 시.
+        exclusion: 제외 옵션 변경 시 (예: '양상추 제외').
+        side: 세트 사이드 변경 시 (예: '치킨너겟').
+        drink: 세트 음료 변경 시 (예: '생수').
+    """
+    cart = get_cart()
+    target = next((c for c in cart if c.get("cart_id") == cart_id), None)
+    if target is None:
+        return f"오류: cart_id {cart_id} 항목이 장바구니에 없습니다."
+
+    action: dict = {"type": "update_item", "match": {"cart_id": cart_id}}
+    if item_type in ("single", "set"):
+        action["item_type"] = item_type
+    if quantity is not None:
+        action["quantity"] = quantity
+    if exclusion is not None:
+        action["exclusion"] = exclusion
+    if side is not None:
+        action["side"] = side
+    if drink is not None:
+        action["drink"] = drink
+
+    push_action(action)
+    name = target.get("name", "메뉴")
+    changed = side or drink or exclusion or (f"{quantity}개" if quantity else None) or item_type or "옵션"
+    return f"{name} {changed}(으)로 변경"
+
+
+@tool
+def remove_item(menu_id: int, cart_id: float | None = None) -> str:
     """장바구니에서 특정 메뉴를 삭제한다.
 
     Args:
         menu_id: 삭제할 메뉴의 카탈로그 ID.
+        cart_id: 같은 메뉴가 옵션별로 여러 줄이면 context의 cart_id로 정확한 줄 지정.
+                 (예: "F버거 생수 세트"처럼 옵션으로 특정하는 경우 해당 줄의 cart_id 사용)
     """
     menu = get_menu(menu_id)
     if menu is None:
@@ -144,7 +193,8 @@ def remove_item(menu_id: int) -> str:
     if not exists:
         return f"장바구니에 {menu['name']}이(가) 없습니다."
 
-    push_action({"type": "remove_item", "match": {"menu_id": menu_id}})
+    match = {"cart_id": cart_id} if cart_id is not None else {"menu_id": menu_id}
+    push_action({"type": "remove_item", "match": match})
     return f"{menu['name']} 삭제"
 
 
@@ -288,6 +338,7 @@ def ui_action(action: str, value: str | None = None, item_type: str | None = Non
 ACTION_TOOLS = [
     add_item,
     update_qty,
+    update_item,
     remove_item,
     clear_cart,
     navigate,

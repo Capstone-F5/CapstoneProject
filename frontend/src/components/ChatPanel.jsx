@@ -95,11 +95,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const vad = useMicVAD({
     // startOnLoad: false — 앱 시작 시 모델만 미리 로드, 마이크는 채팅 열 때만 시작
     startOnLoad: false,
-    positiveSpeechThreshold: 0.8,
-    negativeSpeechThreshold: 0.35,
-    minSpeechFrames: 4,
-    preSpeechPadFrames: 4,   // 첫 음절 잘림 방지 (1→4, ~128ms 선행 패딩)
-    redemptionFrames: 10,
+    positiveSpeechThreshold: 0.7,  // 짧고 작은 발화도 감지 (0.8→0.7)
+    negativeSpeechThreshold: 0.3,  // 말 끝을 조금 늦게 판정해 짧은 단어 보존
+    minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게 (4→2)
+    preSpeechPadFrames: 5,         // 첫 음절 잘림 방지 (~160ms 선행 패딩)
+    redemptionFrames: 12,          // 짧은 끊김에 말 끝 조기 종료 방지
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
     onSpeechStart: () => {
@@ -128,7 +128,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
     // Float32Array(16 kHz) → WAV Blob → 백엔드 Whisper
     const wavBlob = new Blob([utils.encodeWAV(audio)], { type: 'audio/wav' })
-    if (wavBlob.size < 2000) return   // 너무 짧으면 무시 (VAD misfire 보험)
+    // ~30ms(약 1KB) 미만만 차단 — 짧은 단어("네", "응")는 통과 (이전 2000→1000)
+    if (wavBlob.size < 1000) return
 
     // STT 구간 시작 — 이 플래그로 동일 구간에 다른 발화가 끼어드는 것을 차단
     isProcessingRef.current = true

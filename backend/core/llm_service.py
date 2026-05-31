@@ -17,13 +17,21 @@ from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.memory import get_memory
 from ai_modules.llm.session_context import set_session_id
 
-# 첫 발화에서 감지된 언어를 LLM에 권장 지시하는 SystemMessage 텍스트
-# "반드시"가 아닌 "기본으로" — 사용자가 언어 전환 요청 시 프롬프트 규칙이 우선
+# 감지된 언어로 답변하도록 지시하는 SystemMessage 텍스트.
+# ko/zh/ja 는 UI 지원 언어이므로 해당 언어 고정.
+# "en" 버킷은 영어 + UI 미지원 언어(독일어/프랑스어 등 라틴 문자) 공용 —
+# UI는 영어로 표시되지만 답변은 사용자가 실제 쓴 언어에 맞춘다(LLM이 입력 텍스트로 판별).
 _LANG_INSTRUCTIONS: dict[str, str] = {
-    "ko": "이 대화의 기본 언어는 한국어입니다. 사용자가 언어 변경을 요청하면 그에 따르세요.",
-    "en": "The default language for this conversation is English. Switch if the user requests.",
-    "zh": "本对话默认使用中文。如用户要求切换语言，请遵从。",
-    "ja": "この会話のデフォルト言語は日本語です。ユーザーが変更を求めた場合は従ってください。",
+    "ko": "사용자는 한국어로 말하고 있습니다. 반드시 한국어로만 답변하세요. 메뉴 이름은 원래 표기 그대로 사용합니다.",
+    "en": (
+        "The kiosk UI is displayed in English. Reply in the SAME language the user is actually "
+        "using in their message: if they write in English, reply in English; if they write in "
+        "another language such as German, French, Spanish or Vietnamese, reply in that same language. "
+        "Keep all menu item names in their original Korean form, and always state prices in Korean won "
+        "(e.g., 4,500 won)."
+    ),
+    "zh": "用户正在使用中文。请务必只用中文回答。菜单名称保留原文，价格一律用韩元表示（例如 4500 韩元）。",
+    "ja": "ユーザーは日本語で話しています。必ず日本語のみで答えてください。メニュー名は元の表記のまま使い、価格は必ず韓国ウォンで表記してください（例: 4,500ウォン）。",
 }
 # ko / zh / ja 외 모든 언어는 영어로 처리
 _NATIVE_LANGS = frozenset({"ko", "zh", "ja"})
@@ -44,7 +52,7 @@ def _cart_summary(cart: list) -> str:
     """장바구니 스냅샷을 사람이 읽는 요약 문자열로 변환."""
     if not cart:
         return "현재 장바구니: 비어 있음"
-    lines = ["현재 장바구니:"]
+    lines = ["현재 장바구니: (수정/삭제 시 cart_id로 정확한 줄을 지정)"]
     total = 0
     for c in cart:
         name = c.get("name") or f"메뉴#{c.get('menu_id')}"
@@ -54,7 +62,8 @@ def _cart_summary(cart: list) -> str:
         total += subtotal
         type_label = "세트" if c.get("item_type") == "set" else "단품"
         excl = c.get("exclusion", "없음")
-        line = f"  - {name}({type_label}) x{qty}  {price}원  소계 {subtotal}원"
+        cid = c.get("cart_id")
+        line = f"  - cart_id={cid} | menu_id={c.get('menu_id')} | {name}({type_label}) x{qty}  소계 {subtotal}원"
         if excl and excl != "없음":
             line += f"  [{excl}]"
         side = c.get("side")
