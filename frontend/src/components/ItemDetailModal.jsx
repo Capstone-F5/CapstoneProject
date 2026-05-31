@@ -11,7 +11,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
   initialDrinkName  = null,
   // 0이면 수동 확인, 양수면 해당 ms 후 자동 확인 (음성 주문 시 사용)
   autoConfirmMs     = 0,
-}) {
+}, ref) {
   const t = useT()
 
   const initSide  = setSides.find(s => s.name === initialSideName) ?? setSides[0]

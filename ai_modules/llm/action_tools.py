@@ -20,8 +20,8 @@ from .menu_catalog import (
 @tool
 def add_item(
     menu_id: int,
-    item_type: str,
-    quantity: int,
+    item_type: str = "single",
+    quantity: int = 1,
     exclusion: str = "없음",
     side: str | None = None,
     drink: str | None = None,

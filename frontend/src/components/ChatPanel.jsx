@@ -122,8 +122,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     setListening(false)
     if (!activeRef.current) return
 
-    // LLM 생성 중이거나 STT 처리 중이면 → 오디오 버림 (텍스트가 없어 큐 불가)
-    if (isTypingRef.current || isProcessingRef.current) return
+    // 이미 STT 처리 중이면 건너뜀 (동시 STT 방지)
+    // isTypingRef(LLM 생성 중)는 여기서 차단하지 않음 — STT 후 pendingTextRef에 큐잉
+    if (isProcessingRef.current) return
 
     // Float32Array(16 kHz) → WAV Blob → 백엔드 Whisper
     const wavBlob = new Blob([utils.encodeWAV(audio)], { type: 'audio/wav' })

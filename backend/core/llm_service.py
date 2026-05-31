@@ -135,6 +135,7 @@ async def run_agent_stream(
 
     output_parts: list[str] = []
     in_tool_call = False
+    emitted_count = 0  # 이미 인라인으로 전송한 액션 수 추적
 
     async for event in executor.astream_events(
         {"input": user_input, "chat_history": chat_history},
@@ -147,6 +148,13 @@ async def run_agent_stream(
 
         elif kind == "on_tool_end":
             in_tool_call = False
+            # 도구 실행 즉시 새로 쌓인 액션을 SSE 로 내보냄
+            # → 텍스트 토큰보다 먼저 프론트에 도달 → 화면 이동이 응답 텍스트보다 앞서 발생
+            current_actions = get_actions()
+            if len(current_actions) > emitted_count:
+                for action in current_actions[emitted_count:]:
+                    yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
+                emitted_count = len(current_actions)
 
         elif kind == "on_chat_model_stream" and not in_tool_call:
             chunk = event["data"]["chunk"]
@@ -159,8 +167,9 @@ async def run_agent_stream(
     output = "".join(output_parts)
     await memory.asave_context({"input": user_input}, {"output": output})
 
-    # 발행된 액션을 SSE 로 일괄 전송 (스트림 종료 후)
-    for action in get_actions():
+    # 인라인으로 아직 전송되지 않은 나머지 액션 전송 (안전장치)
+    remaining = get_actions()[emitted_count:]
+    for action in remaining:
         yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
 
     yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
