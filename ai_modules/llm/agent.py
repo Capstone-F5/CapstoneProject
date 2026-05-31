@@ -1,5 +1,6 @@
 """
 OpenAI Function Calling 기반 LangChain Agent 빌더.
+MVP: ACTION_TOOLS (액션 발행 전용) 사용. tools.py 는 Phase 5 에서 복원.
 """
 from __future__ import annotations
 
@@ -9,12 +10,13 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
-from .prompts import SYSTEM_PROMPT
-from .tools import TOOLS
+from .action_tools import ACTION_TOOLS
+from .menu_catalog import render_catalog_for_prompt
+from .prompts import SYSTEM_PROMPT_TEMPLATE
 
 
 def build_agent_executor() -> AgentExecutor:
-    """매 요청마다 새로 만들기에는 무거우니, 모듈 로더에서 1회 빌드해 재사용."""
+    """싱글톤 빌드 시 1회 실행. 카탈로그를 시스템 프롬프트에 합성."""
     model = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
     llm = ChatOpenAI(
         model=model,
@@ -22,22 +24,24 @@ def build_agent_executor() -> AgentExecutor:
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(catalog=render_catalog_for_prompt())
+
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", SYSTEM_PROMPT),
+            ("system", system_prompt),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
 
-    agent = create_tool_calling_agent(llm=llm, tools=TOOLS, prompt=prompt)
+    agent = create_tool_calling_agent(llm=llm, tools=ACTION_TOOLS, prompt=prompt)
     return AgentExecutor(
         agent=agent,
-        tools=TOOLS,
+        tools=ACTION_TOOLS,
         verbose=False,
         handle_parsing_errors=True,
-        max_iterations=6,
+        max_iterations=8,
         return_intermediate_steps=True,
     )
 

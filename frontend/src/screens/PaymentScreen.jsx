@@ -2,7 +2,7 @@ export default function PaymentScreen({ total, nav }) {
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      minHeight: '100dvh', minHeight: '100vh',
+      minHeight: '100dvh',
       background: '#fff', padding: 'clamp(32px, 8vw, 56px) clamp(16px, 6vw, 28px) 32px',
     }}>
       {/* Greeting */}

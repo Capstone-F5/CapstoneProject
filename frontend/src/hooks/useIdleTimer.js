@@ -18,6 +18,10 @@ export function useIdleTimer({ idleMs, warningSeconds, onExpire }) {
     clear()
     setSecondsLeft(null)
     mainRef.current = setTimeout(() => {
+      if (warningSeconds <= 0) {
+        expireRef.current?.()
+        return
+      }
       let s = warningSeconds
       setSecondsLeft(s)
       countRef.current = setInterval(() => {

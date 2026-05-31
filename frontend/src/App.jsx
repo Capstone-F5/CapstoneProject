@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useGesture } from './hooks/useGesture'
-import { LocaleProvider } from './i18n/LocaleContext'
+import { LocaleProvider, useLocale } from './i18n/LocaleContext'
 import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
@@ -12,6 +12,7 @@ import CardPaymentScreen from './screens/CardPaymentScreen'
 import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
+import { useMenuData } from './hooks/useMenuData'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -29,12 +30,18 @@ const GESTURE_LABELS = {
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
-export default _isCollect ? CollectTool : function App() {
+// LocaleProvider 바깥에서는 useLocale() 호출 불가 → AppContent로 분리
+function AppContent() {
+  const { setLocale } = useLocale()
+  // UI에서 쓰는 메뉴 데이터와 동일한 소스 — API 연동 시에도 자동 반영
+  const { menuData } = useMenuData()
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
   const [orderType, setOrderType] = useState(null)
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
+  const [voiceToast, setVoiceToast] = useState(null)   // AI 동작 알림
+  const voiceToastTimer = useRef(null)
 
   // 손동작 인식 On/Off & PiP 표시 (localStorage 영구 저장)
   const [gestureEnabled, setGestureEnabled] = useState(() => {
@@ -72,6 +79,22 @@ export default _isCollect ? CollectTool : function App() {
   // MenuScreen 스와이프 / 모달 imperative 핸들러
   const menuSwipeRef = useRef(null)
   const menuModalRef = useRef(null)
+
+  // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
+  const screenVoiceRef    = useRef(null)
+  const pendingActionsRef = useRef([])
+  const awaitingScreenRef = useRef(false)   // navigate 후 새 화면 마운트 대기 중 여부
+  const drainTimerRef     = useRef(null)     // 화면 마운트 지연 시 재드레인 폴백 타이머
+  // 현재 열린 메뉴 팝업 상태 — LLM이 선택 내용을 읽고 수정하는 데 사용
+  const modalStateRef     = useRef(null)
+
+  // 음성 액션 핸들러가 항상 최신 데이터를 읽도록 ref로 유지
+  // (speechEndHandlerRef의 stale closure를 우회하는 유일한 안전한 방법)
+  const appCartRef    = useRef(cart)
+  const menuDataRef   = useRef(menuData)
+  const menuByIdRef   = useRef({})
+  appCartRef.current  = cart
+  menuDataRef.current = menuData
 
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
@@ -354,7 +377,18 @@ export default _isCollect ? CollectTool : function App() {
   }, [gestureEnabled])
 
 
-  const nav = (s) => setScreen(s)
+  const nav = (s) => {
+    if (s === 'start') {
+      // 새 손님 시작 — 채팅 닫기, 언어·세션 초기화
+      setChatOpen(false)
+      setLocale('ko')
+      sessionStorage.removeItem('kiosk_detected_lang')
+      sessionStorage.removeItem('kiosk_llm_session_id')
+      // 항상 마운트된 ChatPanel에 리셋 신호 전달
+      window.dispatchEvent(new CustomEvent('kiosk-session-reset'))
+    }
+    setScreen(s)
+  }
 
   const addToCart = (item) => {
     setCart(prev => {
@@ -374,6 +408,288 @@ export default _isCollect ? CollectTool : function App() {
 
   const clearCart = () => setCart([])
 
+  // 기존 장바구니 라인의 옵션을 제자리에서 변경 (cartId·위치 유지)
+  // a: { item_type?, quantity?, exclusion?, side?, drink? } — 제공된 필드만 변경
+  const updateItemOptions = (cartId, a) => {
+    setCart(prev => prev.map(c => {
+      if (c.cartId !== cartId) return c
+      const menu = menuByIdRef.current[c.id]
+      if (!menu) return c
+      const md        = menuDataRef.current
+      const sides     = md?.setSides    ?? []
+      const drinks    = md?.setDrinks   ?? []
+      const surcharge = md?.setSurcharge ?? 0
+
+      const type = a.item_type ?? c.type
+      const isSet = type === 'set'
+      const qty   = a.quantity ?? c.qty
+      // 변경 요청 없는 옵션은 기존값 유지
+      const exclusionReq = a.exclusion ?? c.exclusion
+      const exclusion = menu.exclusions?.includes(exclusionReq) ? exclusionReq : '없음'
+
+      let sideObj = null, drinkObj = null
+      if (isSet) {
+        const sideName  = a.side  ?? c.side
+        const drinkName = a.drink ?? c.drink
+        sideObj  = sides.find(s => s.name === sideName)   ?? sides[0]  ?? null
+        drinkObj = drinks.find(d => d.name === drinkName) ?? drinks[0] ?? null
+      }
+      const unitPrice = menu.price
+        + (isSet ? surcharge : 0)
+        + (isSet ? (sideObj?.extra ?? 0) + (drinkObj?.extra ?? 0) : 0)
+
+      const side  = isSet ? (sideObj?.name ?? null) : null
+      const drink = isSet ? (drinkObj?.name ?? null) : null
+      const key = `${c.id}-${type}-${exclusion}-${side ?? ''}-${drink ?? ''}`
+      return {
+        ...c, type, qty, unitPrice, exclusion,
+        side, sideExtra: isSet ? (sideObj?.extra ?? 0) : 0,
+        drink, drinkExtra: isSet ? (drinkObj?.extra ?? 0) : 0,
+        image: isSet ? (menu.setImage ?? menu.image) : menu.image,
+        key,
+      }
+    }))
+  }
+
+  // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
+  const cartForLLM = useMemo(() =>
+    cart.map(c => ({
+      cart_id:   c.cartId,
+      menu_id:   c.id,
+      name:      c.name,
+      item_type: c.type,
+      quantity:  c.qty,
+      unit_price: c.unitPrice,
+      exclusion: c.exclusion,
+      side:      c.side,
+      drink:     c.drink,
+    }))
+  , [cart])
+
+  // UI와 동일한 menuData 소스로 id → item 맵 구성
+  const _menuById = useMemo(() => {
+    if (!menuData?.menuItems) return {}
+    const map = {}
+    Object.values(menuData.menuItems).forEach(list => list.forEach(m => { map[m.id] = m }))
+    return map
+  }, [menuData])
+  menuByIdRef.current = _menuById   // 항상 최신 맵을 ref에 반영
+
+  // LLM add_item 액션 → addToCart 스키마로 변환
+  // ref 경유로 읽어 stale closure 완전 차단
+  function buildCartItem(a) {
+    const menu = menuByIdRef.current[a.menu_id]
+    if (!menu) return null
+
+    const md        = menuDataRef.current
+    const isSet     = a.item_type === 'set'
+    const sides     = md?.setSides    ?? []
+    const drinks    = md?.setDrinks   ?? []
+    const surcharge = md?.setSurcharge ?? 0
+
+    let sideObj = null, drinkObj = null
+    if (isSet) {
+      sideObj  = sides.find(s  => s.name  === a.side)  ?? sides[0]  ?? null
+      drinkObj = drinks.find(d => d.name === a.drink) ?? drinks[0] ?? null
+    }
+
+    const unitPrice = menu.price
+      + (isSet ? surcharge : 0)
+      + (isSet ? (sideObj?.extra ?? 0) + (drinkObj?.extra ?? 0) : 0)
+
+    const validExclusion = menu.exclusions?.includes(a.exclusion) ? a.exclusion : '없음'
+
+    return {
+      id:         menu.id,
+      name:       menu.name,
+      image:      isSet ? (menu.setImage ?? menu.image) : menu.image,
+      type:       isSet ? 'set' : 'single',
+      qty:        a.quantity ?? 1,
+      unitPrice,
+      exclusion:  validExclusion,
+      side:       isSet ? (sideObj?.name ?? null) : null,
+      sideExtra:  isSet ? (sideObj?.extra ?? 0)   : 0,
+      drink:      isSet ? (drinkObj?.name ?? null) : null,
+      drinkExtra: isSet ? (drinkObj?.extra ?? 0)  : 0,
+      ...(a.special_note ? { special_note: a.special_note } : {}),
+    }
+  }
+
+  // match 규칙: cart_id 우선, 없으면 menu_id 로 마지막 라인 탐색.
+  // appCartRef.current 로 읽어 stale closure 와 무관하게 항상 최신 cart 참조.
+  function resolveCartId(match) {
+    if (!match) return null
+    const cur = appCartRef.current
+    if (match.cart_id != null) {
+      const found = cur.find(c => c.cartId === match.cart_id)
+      return found ? found.cartId : null
+    }
+    if (match.menu_id != null) {
+      const matches = cur.filter(c => c.id === match.menu_id)
+      return matches.length ? matches[matches.length - 1].cartId : null
+    }
+    return null
+  }
+
+  // App 레벨에서 처리 가능한 액션 실행.
+  // 반환: 'nav'(화면 전환 발생) | 'handled'(처리됨) | 'no'(App 레벨 아님 → 화면 브릿지로)
+  function execAppAction(a) {
+    switch (a.type) {
+      case 'add_item': {
+        // 메뉴 화면이 마운트되어 있으면 UI 모달을 통해 시각적으로 처리
+        // (SingleSetModal → ItemDetailModal → 자동 확인 → addToCart)
+        const visuallyHandled = screenVoiceRef.current?.({...a, type: 'add_item'})
+        if (!visuallyHandled) {
+          // 메뉴 화면이 아닌 경우: 직접 장바구니에 추가
+          const item = buildCartItem(a)
+          if (item) addToCart(item)
+          else console.warn('[voice] buildCartItem 실패: 알 수 없는 menu_id', a.menu_id)
+        }
+        return 'handled'
+      }
+      case 'update_qty': {
+        const id = resolveCartId(a.match)
+        if (id != null) updateQty(id, a.quantity)
+        else console.warn('[voice] update_qty: 장바구니에서 찾지 못함', a.match)
+        return 'handled'
+      }
+      case 'remove_item': {
+        const id = resolveCartId(a.match)
+        if (id != null) updateQty(id, 0)
+        else console.warn('[voice] remove_item: 장바구니에서 찾지 못함', a.match)
+        return 'handled'
+      }
+      case 'update_item': {
+        const id = resolveCartId(a.match)
+        if (id != null) updateItemOptions(id, a)
+        else console.warn('[voice] update_item: 장바구니에서 찾지 못함', a.match)
+        return 'handled'
+      }
+      case 'clear_cart':
+        clearCart()
+        return 'handled'
+      case 'navigate':
+        nav(a.screen)
+        return 'nav'
+      case 'checkout':
+        nav('cart')
+        return 'nav'
+      case 'order_type':
+        setOrderType(a.value === 'takeout' ? 'takeout' : 'dine-in')
+        nav('menu')
+        return 'nav'
+      case 'set_language':
+        if (a.value) setLocale(a.value)
+        return 'handled'
+      case 'set_gesture':
+        setGestureEnabled(a.value === 'on')
+        return 'handled'
+      case 'set_camera':
+        setPipEnabled(a.value === 'on')
+        return 'handled'
+      default:
+        return 'no'   // 화면 종속 액션
+    }
+  }
+
+  // 큐 드레인: App 레벨 → 화면 브릿지 순으로 처리.
+  // 화면 전환(navigate) 직후 새 화면이 마운트되기 전 도착한 종속 액션은 버리지 않고
+  // 큐에 유지했다가 마운트 후(또는 폴백 타이머) 재드레인한다.
+  function drainVoiceActions() {
+    const q = pendingActionsRef.current
+    while (q.length) {
+      const a = q[0]
+      const res = execAppAction(a)
+      if (res === 'nav') {
+        q.shift()
+        awaitingScreenRef.current = true   // 새 화면 마운트 대기 시작
+        break
+      }
+      if (res === 'handled') { q.shift(); continue }
+      // 화면 종속 액션 → 현재 화면 브릿지에 위임
+      const handled = screenVoiceRef.current?.(a)
+      if (handled) { q.shift(); continue }
+      // 처리 못 함: 화면 전환 대기 중이면 보존하고 잠시 후 재시도
+      if (awaitingScreenRef.current) {
+        scheduleDrainRetry()
+        break
+      }
+      // 전환 대기도 아닌데 처리 불가 → 현재 화면과 무관한 액션, 무시
+      console.warn('[voice] 현재 화면에서 처리할 수 없는 액션, 무시:', a)
+      q.shift()
+    }
+  }
+
+  // 화면 마운트가 늦어질 때 큐를 재드레인하는 폴백 (최대 ~1초)
+  function scheduleDrainRetry(attempt = 0) {
+    if (drainTimerRef.current) clearTimeout(drainTimerRef.current)
+    if (attempt > 20) {   // 약 1초 후에도 처리 못 하면 포기(무한 보류 방지)
+      awaitingScreenRef.current = false
+      if (pendingActionsRef.current.length) {
+        console.warn('[voice] 대기 액션 처리 실패, 폐기:', pendingActionsRef.current.splice(0))
+      }
+      return
+    }
+    drainTimerRef.current = setTimeout(() => {
+      const before = pendingActionsRef.current.length
+      drainVoiceActions()
+      // 여전히 남아있고 아직 대기 중이면 다음 시도 예약
+      if (pendingActionsRef.current.length && pendingActionsRef.current.length === before
+          && awaitingScreenRef.current) {
+        scheduleDrainRetry(attempt + 1)
+      }
+    }, 50)
+  }
+
+  // AI 액션 → 한국어 알림 메시지
+  function actionToMsg(a) {
+    const menuName = a.name || (appCartRef.current.find(c => c.id === a.menu_id)?.name) || `메뉴#${a.menu_id}`
+    const catLabel = { recommended: '추천메뉴', burger: '버거', side: '사이드', drink: '음료수' }
+    const screenLabel = { start: '시작', orderType: '주문유형', menu: '메뉴', cart: '장바구니', complete: '완료' }
+    switch (a.type) {
+      case 'add_item':        return `장바구니 추가: ${menuName} ${a.quantity || 1}개`
+      case 'update_qty':      return `수량 변경: ${a.quantity}개`
+      case 'remove_item':     return `삭제: ${menuName}`
+      case 'update_item':     return `옵션 변경: ${menuName}`
+      case 'clear_cart':      return '장바구니 전체 삭제'
+      case 'navigate':        return `화면 이동: ${screenLabel[a.screen] || a.screen}`
+      case 'checkout':        return '장바구니로 이동'
+      case 'order_type':      return a.value === 'dine-in' ? '매장 식사 선택' : '포장 선택'
+      case 'select_category': return `카테고리: ${catLabel[a.value] || a.value}`
+      case 'menu_page':       return a.value === 'next' ? '다음 페이지' : '이전 페이지'
+      case 'open_item':       return `메뉴 상세 열기`
+      case 'update_modal':    return `팝업 수정: ${a.field} → ${a.value}`
+      case 'start_checkout':  return '결제 시작'
+      case 'points':          return a.value === 'yes' ? '포인트 적립' : '포인트 미적립'
+      case 'points_phone':    return `전화번호: ${a.phone || ''}`
+      case 'payment_method':  return `결제 수단: ${{ card:'카드', cash:'현금', pay:'간편결제' }[a.value] || a.value}`
+      case 'set_language':    return `언어 변경: ${a.value}`
+      case 'set_gesture':     return `손동작 ${a.value === 'on' ? 'ON' : 'OFF'}`
+      case 'set_camera':      return `카메라 ${a.value === 'on' ? 'ON' : 'OFF'}`
+      default:                return null
+    }
+  }
+
+  function showVoiceToast(msg) {
+    if (!msg) return
+    clearTimeout(voiceToastTimer.current)
+    setVoiceToast({ msg, key: Date.now() })
+    voiceToastTimer.current = setTimeout(() => setVoiceToast(null), 2500)
+  }
+
+  // 음성 액션 디스패처 — 큐에 넣고 즉시 드레인 시도
+  function handleVoiceAction(a) {
+    showVoiceToast(actionToMsg(a))
+    pendingActionsRef.current.push(a)
+    drainVoiceActions()
+  }
+
+  // 화면 전환 후(자식 화면 브릿지 등록 effect가 먼저 실행됨) 남은 액션 이어서 처리
+  useEffect(() => {
+    awaitingScreenRef.current = false   // 새 화면 마운트 완료 → 대기 해제
+    if (pendingActionsRef.current.length) drainVoiceActions()
+  }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
+
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, chatOpen }
 
@@ -386,8 +702,8 @@ export default _isCollect ? CollectTool : function App() {
   const screens = {
     start:       <StartScreen {...startProps} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
-    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} />,
-    cart:        <CartScreen {...props} />,
+    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
+    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
     cardPayment: <CardPaymentScreen {...props} />,
@@ -396,8 +712,29 @@ export default _isCollect ? CollectTool : function App() {
   }
 
   return (
-    <LocaleProvider>
-      <>
+    <>
+        {/* ── AI 동작 토스트 알림 ── */}
+        {voiceToast && (
+          <div key={voiceToast.key} style={{
+            position: 'fixed',
+            bottom: chatOpen ? 'calc(33vh + 72px)' : 80,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(116,64,50,0.92)',
+            color: '#fff',
+            padding: '10px 22px',
+            borderRadius: 24,
+            fontSize: 15,
+            fontWeight: 600,
+            pointerEvents: 'none',
+            zIndex: 9050,
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+          }}>
+            AI: {voiceToast.msg}
+          </div>
+        )}
+
         {/* ── 테스트 HUD (좌측 하단) ── */}
         {gestureHud && (
           <div style={{
@@ -504,7 +841,7 @@ export default _isCollect ? CollectTool : function App() {
             {screens[screen] ?? screens.start}
           </div>
 
-          {/* 채팅 패널 — 하단에서 슬라이드업 */}
+          {/* 채팅 패널 — 항상 마운트(백그라운드 모델 프리로드), CSS로 열고 닫음 */}
           <div style={{
             flexShrink: 0,
             height: chatOpen ? '33vh' : 0,
@@ -513,7 +850,15 @@ export default _isCollect ? CollectTool : function App() {
             background: '#e0e0e0',
             borderTop: chatOpen ? '1.5px solid #bbb' : 'none',
           }}>
-            {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+            <ChatPanel
+              onClose={() => setChatOpen(false)}
+              isOpen={chatOpen}
+              cart={cartForLLM}
+              screen={screen}
+              orderType={orderType}
+              modalStateRef={modalStateRef}
+              onAction={handleVoiceAction}
+            />
           </div>
         </div>
 
@@ -543,6 +888,13 @@ export default _isCollect ? CollectTool : function App() {
           </button>
         )}
       </>
+  )
+}
+
+export default _isCollect ? CollectTool : function App() {
+  return (
+    <LocaleProvider>
+      <AppContent />
     </LocaleProvider>
   )
 }

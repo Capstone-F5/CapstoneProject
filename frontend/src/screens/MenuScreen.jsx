@@ -24,7 +24,7 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
@@ -34,6 +34,10 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   const [modalItem, setModalItem] = useState(null)
   const [modalStep, setModalStep] = useState(null)   // 'singleSet' | 'detail'
   const [modalType, setModalType] = useState('single')
+  // 음성 주문 시 AI 선택 옵션 (ItemDetailModal 초기값 + 자동 확인용)
+  const [voiceOpts, setVoiceOpts] = useState(null)
+  // ItemDetailModal 인스턴스 ref — AI가 현재 선택 내용을 읽고 수정하는 데 사용
+  const modalDetailRef = useRef(null)
   const swipeStartX  = useRef(null)
   const lastNavRef   = useRef(-Infinity)
   const NAV_COOLDOWN = 800  // ms
@@ -59,7 +63,27 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     setModalStep(null)
   }
 
-  const closeModal = () => { setModalItem(null); setModalStep(null) }
+  const closeModal = () => {
+    setModalItem(null); setModalStep(null); setVoiceOpts(null)
+    if (modalStateRef) modalStateRef.current = null
+  }
+
+  // 모달 열림/닫힘 시 App.jsx의 modalStateRef 갱신 (LLM 컨텍스트용)
+  useEffect(() => {
+    if (!modalStateRef) return
+    if (modalItem && modalStep === 'detail') {
+      // 실제 선택값은 modalDetailRef.current.getState()에서 실시간으로 읽음
+      modalStateRef.current = {
+        open: true,
+        menu_id:   modalItem.id,
+        name:      modalItem.name,
+        item_type: modalType,
+        getState:  () => modalDetailRef.current?.getState() ?? null,
+      }
+    } else {
+      modalStateRef.current = null
+    }
+  }, [modalStateRef, modalItem, modalStep, modalType])
 
   const itemsPerPage = chatOpen ? COLS : 2 * COLS
   const items        = menuData ? (menuData.menuItems?.[catId] ?? []) : []
@@ -114,6 +138,86 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       }
     }
   }, [swipeRef, page, totalPages, catId, menuData, itemsPerPage])
+
+  // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
+  useEffect(() => {
+    if (!voiceRef) return
+    voiceRef.current = (a) => {
+      switch (a.type) {
+        case 'select_category': {
+          const valid = (menuData?.categories ?? []).some(c => c.id === a.value)
+          if (!valid) return false
+          setCatId(a.value)
+          setPage(0)
+          return true
+        }
+        case 'menu_page':
+          swipeRef?.current?.(a.value === 'next' ? 'left' : 'right')
+          return true
+        case 'open_item': {
+          const all  = menuData ? Object.values(menuData.menuItems ?? {}).flat() : []
+          const item = all.find(i => i.id === a.menu_id)
+          if (!item) return false
+          if (a.item_type === 'set' && item.hasSet) {
+            // 세트 사이드/음료 질문 시 → ItemDetailModal 바로 표시
+            setVoiceOpts(null)
+            setModalItem(item)
+            setModalType('set')
+            setModalStep('detail')
+          } else if (a.item_type === 'single') {
+            setVoiceOpts(null)
+            setModalItem(item)
+            setModalType('single')
+            setModalStep('detail')
+          } else {
+            handleItemTap(item)  // item_type 미지정: 기본 SingleSetModal
+          }
+          return true
+        }
+        case 'update_modal': {
+          // 팝업이 열려 있을 때 AI가 선택 내용을 수정
+          if (!modalDetailRef.current) return false
+          modalDetailRef.current.setOption(a.field, a.value)
+          return true
+        }
+        case 'add_item': {
+          if (!menuData) return false
+          const allItems = Object.values(menuData.menuItems ?? {}).flat()
+          const item = allItems.find(i => i.id === a.menu_id)
+          if (!item) return false
+
+          // 해당 메뉴의 카테고리로 이동
+          const catEntry = Object.entries(menuData.menuItems ?? {})
+            .find(([, list]) => list.some(i => i.id === a.menu_id))
+          if (catEntry) { setCatId(catEntry[0]); setPage(0) }
+
+          // AI 선택 옵션 저장 (ItemDetailModal 초기값 + 자동 확인)
+          const opts = {
+            qty:        a.quantity   ?? 1,
+            exclusion:  a.exclusion  ?? null,
+            sideName:   a.side       ?? null,
+            drinkName:  a.drink      ?? null,
+          }
+          setVoiceOpts(opts)
+
+          // 모달 열기
+          handleItemTap(item)
+
+          if (item.hasSet) {
+            // SingleSetModal 0.7초 표시 후 단품/세트 자동 선택
+            setTimeout(() => {
+              handleTypeSelect(a.item_type === 'set' ? 'set' : 'single')
+            }, 700)
+          }
+          // ItemDetailModal은 autoConfirmMs=1500으로 자동 확인됨 (handleAdd 호출)
+          return true
+        }
+        default:
+          return false
+      }
+    }
+    return () => { if (voiceRef) voiceRef.current = null }
+  }, [voiceRef, swipeRef, menuData])
 
   if (isLoading) {
     return (
@@ -342,6 +446,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
       {modalItem && modalStep === 'detail' && (
         <ItemDetailModal
+          ref={modalDetailRef}
           item={modalItem}
           type={modalType}
           onAdd={handleAdd}
@@ -349,6 +454,11 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           setSides={setSides}
           setDrinks={setDrinks}
           setSurcharge={setSurcharge}
+          initialQty={voiceOpts?.qty ?? null}
+          initialExclusion={voiceOpts?.exclusion ?? null}
+          initialSideName={voiceOpts?.sideName ?? null}
+          initialDrinkName={voiceOpts?.drinkName ?? null}
+          autoConfirmMs={voiceOpts ? 1500 : 0}
         />
       )}
 

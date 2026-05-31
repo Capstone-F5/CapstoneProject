@@ -29,7 +29,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, voiceRef }) {
   const t = useT()
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
   const [showPointsPopup,  setShowPointsPopup]  = useState(false)
@@ -77,12 +77,15 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setShowPaymentPopup(true)
   }
 
-  const handlePointsConfirm = async () => {
-    const d = pointsInput.replace(/\D/g, '')
+  const handlePointsConfirm = async (phoneArg) => {
+    // 음성 입력(phoneArg)이 있으면 우선 사용 — setState 비동기로 stale 읽는 문제 회피.
+    // onClick 핸들러로 호출되면 이벤트 객체가 들어오므로 문자열일 때만 사용.
+    const raw = (typeof phoneArg === 'string' ? phoneArg : null) ?? pointsInput
+    const d = raw.replace(/\D/g, '')
     if (!d.length)       { setPointsError(t('phoneError1')); return }
     if (d.length !== 11) { setPointsError(t('phoneError2')); return }
     const { name } = await lookupCustomer(d)
-    openPayment(formatPhone(pointsInput), name)
+    openPayment(formatPhone(raw), name)
   }
 
   const goPayment = (dest) => {
@@ -93,6 +96,38 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     else if (dest === 'cashPayment') setShowCashPayment(true)
     else if (dest === 'payPayment')  setShowPayPayment(true)
   }
+
+  // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
+  useEffect(() => {
+    if (!voiceRef) return
+    voiceRef.current = (a) => {
+      switch (a.type) {
+        case 'start_checkout':
+          handlePayClick()
+          return true
+        case 'points':
+          setShowPointPrompt(false)
+          if (a.value === 'yes') setShowPointsPopup(true)
+          else openPayment()
+          return true
+        case 'points_phone':
+          setShowPointsPopup(true)
+          setPointsInput(a.phone ?? '')
+          handlePointsConfirm(a.phone ?? '')
+          return true
+        case 'payment_method': {
+          const destMap = { card: 'cardPayment', cash: 'cashPayment', pay: 'payPayment' }
+          const dest = destMap[a.value]
+          if (!dest) return false
+          goPayment(dest)
+          return true
+        }
+        default:
+          return false
+      }
+    }
+    return () => { if (voiceRef) voiceRef.current = null }
+  }, [voiceRef, cart, total])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleComplete = async () => {
     if (isCompletingRef.current) return
