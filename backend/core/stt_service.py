@@ -1,20 +1,53 @@
 """
-OpenAI Whisper STT 비동기 래퍼.
+OpenAI STT 비동기 래퍼.
 
-- Zero-shot 자동 언어 감지: language 파라미터 미지정.
-- response_format="verbose_json" → 감지된 언어(detected_language) 반환.
-- AsyncOpenAI 클라이언트 사용해 FastAPI 이벤트 루프를 막지 않음.
+- gpt-4o-mini-transcribe / gpt-4o-transcribe / whisper-1 모두 지원.
+- verbose_json 우선 시도 → 미지원 모델은 json 포맷으로 폴백.
+- 메뉴 어휘 힌트(prompt)로 고유명사 전사 정확도 향상.
 """
 from __future__ import annotations
 
 import io
+import logging
 import os
 from typing import Any
 
 from openai import AsyncOpenAI
 
+from ai_modules.llm.menu_catalog import render_vocab_for_stt
+
+logger = logging.getLogger(__name__)
 
 _client: AsyncOpenAI | None = None
+
+# 메뉴 어휘 힌트 — 모듈 로드 시 1회 생성(정적)
+_STT_PROMPT = render_vocab_for_stt()
+
+
+def _detect_language(text: str) -> str | None:
+    """전사 텍스트의 문자 구성으로 언어 추론.
+
+    gpt-4o-mini-transcribe 등 language 필드를 반환하지 않는 모델용.
+    지원: ko / ja / zh / en
+    """
+    if not text:
+        return None
+    total = len(text.replace(" ", "")) or 1
+    korean  = sum(1 for c in text if "가" <= c <= "힣")
+    hiragana = sum(1 for c in text if "぀" <= c <= "ヿ")
+    cjk     = sum(1 for c in text if "一" <= c <= "鿿")
+    latin   = sum(1 for c in text if c.isascii() and c.isalpha())
+
+    if korean / total > 0.15:
+        return "ko"
+    if hiragana / total > 0.10:
+        return "ja"
+    if cjk / total > 0.15:
+        return "zh"
+    if latin / total > 0.25:
+        return "en"
+    # 짧은 발화나 숫자 위주면 기본 한국어
+    return "ko"
 
 
 def _get_client() -> AsyncOpenAI:
@@ -32,25 +65,35 @@ async def transcribe_bytes(
     filename: str = "audio.webm",
 ) -> dict[str, Any]:
     """
-    오디오 바이트 → Whisper 전사.
+    오디오 바이트 → STT 전사.
 
     Returns:
-        { "text": str, "language": str, "duration": float | None }
+        { "text": str, "language": str | None, "duration": float | None }
     """
-    model = os.getenv("OPENAI_STT_MODEL", "whisper-1")
+    model = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
     client = _get_client()
 
     buf = io.BytesIO(audio_bytes)
-    buf.name = filename  # openai SDK 가 확장자로 mime 추론
+    buf.name = filename  # SDK가 확장자로 mime 추론
+
+    # whisper-1은 verbose_json으로 언어 감지.
+    # 신규 모델(gpt-4o-*-transcribe)은 json/text만 지원 → 텍스트 문자 기반 언어 추론.
+    use_verbose = model == "whisper-1"
 
     resp = await client.audio.transcriptions.create(
         model=model,
         file=buf,
-        response_format="verbose_json",  # 감지된 언어 반환
+        response_format="verbose_json" if use_verbose else "json",
+        prompt=_STT_PROMPT,
     )
+    text = (getattr(resp, "text", None) or "").strip()
+    if use_verbose:
+        language = getattr(resp, "language", None)
+    else:
+        language = _detect_language(text)
 
     return {
-        "text": (resp.text or "").strip(),
-        "language": getattr(resp, "language", None),
-        "duration": getattr(resp, "duration", None),
+        "text": text,
+        "language": language,
+        "duration": getattr(resp, "duration", None) if use_verbose else None,
     }

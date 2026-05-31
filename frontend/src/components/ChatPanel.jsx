@@ -26,17 +26,26 @@ const INIT_MESSAGES = [
   },
 ]
 
+const SESSION_KEY = 'kiosk_llm_session_id'
+const LANG_KEY    = 'kiosk_detected_lang'
+
 function getSessionId() {
-  const KEY = 'kiosk_llm_session_id'
-  let sid = sessionStorage.getItem(KEY)
+  // 페이지 로드마다 새 세션 — beforeunload 에서 삭제해 새로고침 시 초기화
+  let sid = sessionStorage.getItem(SESSION_KEY)
   if (!sid) {
     sid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    sessionStorage.setItem(KEY, sid)
+    sessionStorage.setItem(SESSION_KEY, sid)
   }
   return sid
 }
 
-export default function ChatPanel({ onClose, isOpen = true }) {
+// 페이지 새로고침/닫기 시 세션·언어 초기화 (다음 로드에서 새 세션 시작)
+window.addEventListener('beforeunload', () => {
+  sessionStorage.removeItem(SESSION_KEY)
+  sessionStorage.removeItem(LANG_KEY)
+})
+
+export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction }) {
   const { setLocale } = useLocale()
 
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
@@ -48,9 +57,26 @@ export default function ChatPanel({ onClose, isOpen = true }) {
   const isTypingRef     = useRef(false)
   const sessionIdRef    = useRef(getSessionId())
   const audioRef        = useRef(null)    // 재생 중 Audio — 정리용
+  // 스트리밍 TTS 큐: LLM 토큰이 쌓이는 동안 문장 단위로 TTS를 순차 재생
+  const ttsQueueRef  = useRef([])   // 재생 대기 중인 텍스트 청크
+  const ttsBusyRef   = useRef(false) // 현재 TTS 재생 중 여부
+  const ttsBufRef    = useRef('')    // 아직 TTS에 보내지 않은 토큰 버퍼
+  // 발화 직렬화: STT 진행 중(isProcessingRef) 또는 LLM 생성 중(isTypingRef) 동안
+  // 새 발화는 pendingTextRef에 저장했다가 완료 후 처리
+  const isProcessingRef = useRef(false)  // STT fetch 진행 중 플래그 (isTypingRef gap 차단)
+  const pendingTextRef  = useRef(null)   // 대기 중인 발화 텍스트 (최신 1개 보관)
   // 첫 발화 감지 언어 — sessionStorage 연동으로 채팅 닫았다 열어도 유지
   // nav('start') 시 App에서 sessionStorage 항목 삭제 → 새 손님은 null로 시작
-  const detectedLangRef = useRef(sessionStorage.getItem('kiosk_detected_lang') || null)
+  const detectedLangRef = useRef(sessionStorage.getItem(LANG_KEY) || null)
+  // props(cart/screen/onAction)는 speechEndHandlerRef의 stale closure 안에서 참조되므로 ref로 유지
+  const cartRef       = useRef(cart)
+  const screenRef2    = useRef(screen)
+  const orderTypeRef  = useRef(orderType)
+  const onActionRef   = useRef(onAction)
+  cartRef.current     = cart
+  screenRef2.current  = screen
+  orderTypeRef.current = orderType
+  onActionRef.current  = onAction
 
   // onSpeechEnd를 ref로 관리 → VAD 옵션이 재생성되지 않도록
   const speechEndHandlerRef = useRef(null)
@@ -72,12 +98,17 @@ export default function ChatPanel({ onClose, isOpen = true }) {
     positiveSpeechThreshold: 0.8,
     negativeSpeechThreshold: 0.35,
     minSpeechFrames: 4,
-    preSpeechPadFrames: 1,
+    preSpeechPadFrames: 4,   // 첫 음절 잘림 방지 (1→4, ~128ms 선행 패딩)
     redemptionFrames: 10,
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
     onSpeechStart: () => {
-      if (activeRef.current && !isTypingRef.current) setListening(true)
+      if (activeRef.current && !isTypingRef.current) {
+        setListening(true)
+        window.dispatchEvent(new Event('gesture-activity'))  // 말하는 순간 idle 타이머 리셋
+        // 끼어들기: 재생 중인 TTS와 대기 큐 모두 즉시 취소
+        clearTtsQueue()
+      }
     },
     onSpeechEnd: (audio) => speechEndHandlerRef.current?.(audio),
     onVADMisfire: () => setListening(false),
@@ -89,11 +120,17 @@ export default function ChatPanel({ onClose, isOpen = true }) {
   // speechEndHandlerRef 업데이트 — isTyping·detectedLang 등 최신 상태 참조
   speechEndHandlerRef.current = useCallback(async (audio) => {
     setListening(false)
-    if (!activeRef.current || isTypingRef.current) return
+    if (!activeRef.current) return
+
+    // LLM 생성 중이거나 STT 처리 중이면 → 오디오 버림 (텍스트가 없어 큐 불가)
+    if (isTypingRef.current || isProcessingRef.current) return
 
     // Float32Array(16 kHz) → WAV Blob → 백엔드 Whisper
     const wavBlob = new Blob([utils.encodeWAV(audio)], { type: 'audio/wav' })
     if (wavBlob.size < 2000) return   // 너무 짧으면 무시 (VAD misfire 보험)
+
+    // STT 구간 시작 — 이 플래그로 동일 구간에 다른 발화가 끼어드는 것을 차단
+    isProcessingRef.current = true
 
     const form = new FormData()
     form.append('audio', wavBlob, 'audio.wav')
@@ -108,17 +145,30 @@ export default function ChatPanel({ onClose, isOpen = true }) {
         const raw    = data.language.slice(0, 2).toLowerCase()
         const locale = langToLocale(raw)   // ko/zh/ja 외 → 'en'
         detectedLangRef.current = locale
-        sessionStorage.setItem('kiosk_detected_lang', locale)
+        sessionStorage.setItem(LANG_KEY, locale)
         setLocale(locale)
       }
 
       if (text) {
         window.dispatchEvent(new Event('gesture-activity'))  // idle 타이머 리셋
         setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
-        handleBotReply(text)
+
+        // 시작 화면에서 뭔 말을 하든 → 주문 화면으로 자동 이동
+        if (screenRef2.current === 'start') {
+          onActionRef.current?.({ type: 'navigate', screen: 'orderType' })
+        }
+
+        // STT 완료 시점에 LLM이 이미 다른 응답을 생성 중이면 큐에 저장
+        if (isTypingRef.current) {
+          pendingTextRef.current = text   // 최신 발화 1개 보관 (이전 대기 발화는 덮어씀)
+        } else {
+          handleBotReply(text)  // handleBotReply가 isTypingRef를 즉시 true로 설정
+        }
       }
     } catch (e) {
       console.error('[ChatPanel] STT error:', e)
+    } finally {
+      isProcessingRef.current = false   // STT 구간 종료
     }
   }, [setLocale])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -199,13 +249,74 @@ export default function ChatPanel({ onClose, isOpen = true }) {
     audioRef.current = null
   }
 
+  // ─── 스트리밍 TTS 큐 ─────────────────────────────────────────────────────────
+  // LLM 응답과 동시에 문장 단위로 TTS를 순차 재생해 체감 지연을 줄인다.
+
+  // 문장 경계 패턴 (한국어 포함)
+  const TTS_BOUNDARY = /[.!?。\n]/
+
+  // 큐 초기화 (새 요청 시작 또는 끼어들기)
+  function clearTtsQueue() {
+    ttsQueueRef.current = []
+    ttsBusyRef.current  = false
+    ttsBufRef.current   = ''
+    if (audioRef.current) {
+      try { audioRef.current.pause() } catch {}
+      audioRef.current = null
+    }
+  }
+
+  // 큐에서 꺼내 순차 재생
+  async function drainTtsQueue() {
+    if (!activeRef.current || ttsQueueRef.current.length === 0) {
+      ttsBusyRef.current = false
+      return
+    }
+    ttsBusyRef.current = true
+    const chunk = ttsQueueRef.current.shift()
+    try { await playTts(chunk) } catch {}
+    if (activeRef.current) drainTtsQueue()
+    else ttsBusyRef.current = false
+  }
+
+  // 텍스트를 큐에 추가하고 재생 시작
+  function pushTts(text) {
+    const t = (text ?? '').trim()
+    if (t.length < 5) return   // 너무 짧은 청크는 무시
+    ttsQueueRef.current.push(t)
+    if (!ttsBusyRef.current) drainTtsQueue()
+  }
+
+  // 토큰 버퍼에서 완성된 문장을 TTS로 플러시
+  // force=true: 남은 버퍼 전체를 즉시 보냄 (LLM 완료 시)
+  function flushTtsBuf(force = false) {
+    const buf = ttsBufRef.current
+    if (!buf) return
+    if (force) {
+      pushTts(buf)
+      ttsBufRef.current = ''
+      return
+    }
+    // 마지막 문장 경계 위치 탐색
+    let lastBound = -1
+    for (let i = 0; i < buf.length; i++) {
+      if (TTS_BOUNDARY.test(buf[i])) lastBound = i
+    }
+    if (lastBound >= 0) {
+      pushTts(buf.slice(0, lastBound + 1))
+      ttsBufRef.current = buf.slice(lastBound + 1).trimStart()
+    }
+  }
+
   // ─── LLM: SSE 스트리밍 ───────────────────────────────────────────────────────
 
   async function handleBotReply(userText) {
+    // 이전 TTS 큐/오디오 정리 후 새 응답 시작
+    clearTtsQueue()
     setIsTyping(true)
     isTypingRef.current = true
-    window.dispatchEvent(new Event('gesture-activity'))  // 봇 응답도 idle 타이머 리셋
-    vadRef.current?.pause()   // 봇 응답 중 VAD 일시 정지
+    window.dispatchEvent(new Event('gesture-activity'))
+    vadRef.current?.pause()   // LLM 생성 중 VAD 일시 정지
 
     const msgId = `bot-${Date.now()}`
     setMessages(prev => [...prev, { id: msgId, role: 'bot', text: '' }])
@@ -219,6 +330,16 @@ export default function ChatPanel({ onClose, isOpen = true }) {
           session_id: sessionIdRef.current,
           input: userText,
           language: detectedLangRef.current ?? undefined,
+          screen: screenRef2.current ?? undefined,
+          order_type: orderTypeRef.current ?? undefined,
+          cart: cartRef.current.length ? cartRef.current : undefined,
+          modal_state: (() => {
+            const ms = modalStateRef?.current
+            if (!ms?.open) return undefined
+            const s = ms.getState?.()
+            return s ? { menu_id: s.menu_id, name: s.name, item_type: s.item_type,
+                         qty: s.qty, exclusion: s.exclusion, side: s.side, drink: s.drink } : undefined
+          })(),
         }),
       })
 
@@ -243,12 +364,18 @@ export default function ChatPanel({ onClose, isOpen = true }) {
             const data = JSON.parse(line.slice(6))
             if (data.token) {
               replyText += data.token
+              ttsBufRef.current += data.token   // ← 토큰을 TTS 버퍼에 누적
+              flushTtsBuf()                      // ← 문장 경계 감지 시 TTS 발행
               setMessages(prev =>
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
               )
             }
+            if (data.action) {
+              onActionRef.current?.(data.action)
+            }
             if (data.done && data.output) {
               replyText = data.output
+              flushTtsBuf(true)                  // ← 잔여 버퍼 강제 플러시
               setMessages(prev =>
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
               )
@@ -258,6 +385,7 @@ export default function ChatPanel({ onClose, isOpen = true }) {
       }
     } catch (e) {
       replyText = '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.'
+      flushTtsBuf(true)
       setMessages(prev =>
         prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
       )
@@ -269,12 +397,21 @@ export default function ChatPanel({ onClose, isOpen = true }) {
 
     if (!activeRef.current) return
 
-    await playTts(replyText)
+    // LLM 완료 → VAD 재개
+    setTimeout(() => vadRef.current?.start(), 100)
 
-    // TTS 재생 완료 후 VAD 재개
-    if (activeRef.current) {
-      setTimeout(() => vadRef.current?.start(), 300)
+    // 대기 중인 발화가 있으면 이어서 처리
+    const pending = pendingTextRef.current
+    if (pending) {
+      pendingTextRef.current = null
+      setMessages(prev => {
+        // 이미 메시지 목록에 있는지 확인 (중복 방지)
+        const exists = prev.some(m => m.role === 'user' && m.text === pending)
+        return exists ? prev : [...prev, { id: Date.now(), role: 'user', text: pending }]
+      })
+      handleBotReply(pending)
     }
+    // TTS는 drainTtsQueue()가 비동기로 처리
   }
 
   // ─── 채팅 열림/닫힘 → VAD start/pause ───────────────────────────────────────
@@ -295,6 +432,18 @@ export default function ChatPanel({ onClose, isOpen = true }) {
     }
   }, [isOpen, vad.loading])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─── 채팅 열릴 때 인사말 TTS (VAD 유지 → 끼어들기 가능) ───────────────────────
+
+  useEffect(() => {
+    if (!isOpen) return
+    const timer = setTimeout(() => {
+      if (!activeRef.current) return
+      // VAD를 멈추지 않고 재생 — onSpeechStart에서 TTS 중단 처리
+      playTts('안녕하세요! F버거 주문 도우미입니다. 메뉴 추천, 주문 방법 등 궁금한 점을 말씀해 주세요.')
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [isOpen])  // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── 세션 리셋 이벤트 (nav('start') 호출 시) ─────────────────────────────────
 
   useEffect(() => {
@@ -308,7 +457,7 @@ export default function ChatPanel({ onClose, isOpen = true }) {
       // 새 세션 ID 발급
       const newSid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
       sessionIdRef.current = newSid
-      sessionStorage.setItem('kiosk_llm_session_id', newSid)
+      sessionStorage.setItem(SESSION_KEY, newSid)
 
       // 프론트 상태 초기화
       detectedLangRef.current = null

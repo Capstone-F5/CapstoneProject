@@ -1,12 +1,72 @@
-import { useState } from 'react'
+import { useState, useEffect, useImperativeHandle, forwardRef } from 'react'
 import useT from '../i18n/useT'
 
-export default function ItemDetailModal({ item, type, onClose, onAdd, setSides = [], setDrinks = [], setSurcharge = 0 }) {
+const ItemDetailModal = forwardRef(function ItemDetailModal({
+  item, type, onClose, onAdd,
+  setSides = [], setDrinks = [], setSurcharge = 0,
+  // 음성 주문 시 AI가 선택한 초기값
+  initialQty        = null,
+  initialExclusion  = null,
+  initialSideName   = null,
+  initialDrinkName  = null,
+  // 0이면 수동 확인, 양수면 해당 ms 후 자동 확인 (음성 주문 시 사용)
+  autoConfirmMs     = 0,
+}) {
   const t = useT()
-  const [qty,       setQty]       = useState(1)
-  const [exclusion, setExclusion] = useState(item?.exclusions?.[0] ?? '없음')
-  const [side,      setSide]      = useState(setSides[0])
-  const [drink,     setDrink]     = useState(setDrinks[0])
+
+  const initSide  = setSides.find(s => s.name === initialSideName) ?? setSides[0]
+  const initDrink = setDrinks.find(d => d.name === initialDrinkName) ?? setDrinks[0]
+  const initExcl  = item?.exclusions?.includes(initialExclusion)
+    ? initialExclusion
+    : (item?.exclusions?.[0] ?? '없음')
+
+  const [qty,       setQty]       = useState(initialQty ?? 1)
+  const [exclusion, setExclusion] = useState(initExcl)
+  const [side,      setSide]      = useState(initSide)
+  const [drink,     setDrink]     = useState(initDrink)
+
+  // 음성 주문: 지정 시간 후 자동 확인
+  useEffect(() => {
+    if (!autoConfirmMs) return
+    const timer = setTimeout(() => handleAdd(), autoConfirmMs)
+    return () => clearTimeout(timer)
+  }, [autoConfirmMs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // AI가 현재 선택 상태를 읽거나 수정할 수 있도록 ref 노출
+  useImperativeHandle(ref, () => ({
+    getState: () => ({
+      menu_id:   item?.id,
+      name:      item?.name,
+      item_type: type,
+      qty,
+      exclusion,
+      side:  side?.name  ?? null,
+      drink: drink?.name ?? null,
+    }),
+    setOption: (field, value) => {
+      switch (field) {
+        case 'qty': {
+          const n = parseInt(value, 10)
+          if (!isNaN(n) && n >= 1) setQty(n)
+          break
+        }
+        case 'exclusion':
+          if (item?.exclusions?.includes(value)) setExclusion(value)
+          break
+        case 'side': {
+          const s = setSides.find(s => s.name === value)
+          if (s) setSide(s)
+          break
+        }
+        case 'drink': {
+          const d = setDrinks.find(d => d.name === value)
+          if (d) setDrink(d)
+          break
+        }
+        default: break
+      }
+    },
+  }), [item, type, qty, exclusion, side, drink, setSides, setDrinks]) // eslint-disable-line
 
   if (!item) return null
 
@@ -188,7 +248,7 @@ export default function ItemDetailModal({ item, type, onClose, onAdd, setSides =
       </div>
     </div>
   )
-}
+})   // forwardRef 닫기
 
 function OptionSection({ label, children }) {
   return (
@@ -269,3 +329,5 @@ function CircleBtn({ label, onClick }) {
     </button>
   )
 }
+
+export default ItemDetailModal
