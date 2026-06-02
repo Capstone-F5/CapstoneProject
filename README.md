@@ -72,6 +72,7 @@ npm run dev
 - **조직**: 동양미래대학교 인공지능소프트웨어학과 3-QA (팀명: F5)
 - **GitHub**: [https://github.com/Capstone-F5](https://github.com/Capstone-F5)
 - **Notion**: [Notion(F5_캡스톤디자인)](https://jewel-flock-61a.notion.site/5081121f427f8269b90f81736fb291f6?pvs=73)
+- **회의록(Notion)**: [회의록 모음](https://app.notion.com/p/e6a1121f427f8390a48e0100cc786def?source=copy_link)
 
 ---
 
@@ -137,8 +138,8 @@ npm run dev
 - [x] 손동작 인식 모듈 구현 (MediaPipe — 스와이프, OK, 손가락 개수)
 - [x] FastAPI 백엔드 서버 구축 (WebSocket 제스처 API)
 - [x] STT 모듈 구현 (OpenAI Whisper API 연동)
-- [ ] STT 백엔드 REST 엔드포인트 구현
-- [ ] LLM (GPT) 연동 및 대화 파이프라인 구축
+- [x] STT 백엔드 REST 엔드포인트 구현
+- [x] LLM (GPT) 연동 및 대화 파이프라인 구축
 - [ ] DB 설계 및 구축
 
 ---
