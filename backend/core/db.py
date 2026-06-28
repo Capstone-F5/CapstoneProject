@@ -1,15 +1,39 @@
 """
 SQLAlchemy 비동기 엔진 / 세션 / Base.
-DB URL 은 .env 의 DATABASE_URL (기본: sqlite+aiosqlite:///./kiosk.db)
+DB 접속 정보는 .env의 개별 환경변수로 관리한다.
+  DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+단일 URL이 필요하면 DATABASE_URL로 오버라이드 가능.
 """
 import os
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./kiosk.db")
+def _build_database_url() -> str:
+    # DATABASE_URL이 직접 지정된 경우 우선 사용
+    if url := os.getenv("DATABASE_URL"):
+        return url
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+    host     = os.getenv("DB_HOST",     "localhost")
+    port     = os.getenv("DB_PORT",     "3306")
+    user     = os.getenv("DB_USER",     "root")
+    password = os.getenv("DB_PASSWORD", "")
+    name     = os.getenv("DB_NAME",     "kiosk_db")
+
+    return f"mysql+aiomysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
+
+
+DATABASE_URL = _build_database_url()
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,   # idle 상태에서 끊긴 커넥션 자동 감지
+    pool_size=10,
+    max_overflow=20,
+)
+
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
@@ -18,14 +42,14 @@ class Base(DeclarativeBase):
 
 
 async def get_session() -> AsyncSession:
-    """FastAPI Depends 용 세션 컨텍스트."""
+    """FastAPI Depends용 세션 컨텍스트."""
     async with SessionLocal() as session:
         yield session
 
 
 async def init_db() -> None:
     """앱 시작 시 테이블 생성 + 메뉴 시드."""
-    from . import models  # noqa: F401 (모델 등록)
+    from . import models  # noqa: F401
     from .seed import seed_menu
 
     async with engine.begin() as conn:
