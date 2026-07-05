@@ -10,6 +10,8 @@ POST /ai_modules/llm/stream
 """
 from __future__ import annotations
 
+from ai_modules.llm.action_context import set_session_id
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -55,6 +57,9 @@ class LLMRequest(BaseModel):
 @router.post("/llm")
 async def llm(req: LLMRequest):
     try:
+        # 🌟 [지연 수정] 에이전트 실행 직전 세션 ID 주입
+        set_session_id(req.session_id)
+
         cart_dicts = [c.model_dump() for c in req.cart]
         return await run_agent(
             req.session_id,
@@ -75,6 +80,9 @@ async def llm(req: LLMRequest):
 async def llm_stream(req: LLMRequest):
     """SSE 스트리밍 엔드포인트 — 토큰 단위로 text/event-stream 반환."""
     try:
+        # 🌟 [지연 수정] 스트리밍 에이전트 실행 직전에도 세션 ID 주입
+        set_session_id(req.session_id)
+
         cart_dicts = [c.model_dump() for c in req.cart]
         return StreamingResponse(
             run_agent_stream(
