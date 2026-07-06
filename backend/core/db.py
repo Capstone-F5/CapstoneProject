@@ -5,6 +5,12 @@ DB 접속 정보는 .env의 개별 환경변수로 관리한다.
 단일 URL이 필요하면 DATABASE_URL로 오버라이드 가능.
 """
 import os
+from dotenv import load_dotenv
+
+# 프로젝트 루트 경로의 .env 파일을 확실하게 로드합니다.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(_project_root, ".env"))
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 

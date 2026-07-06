@@ -23,3 +23,12 @@ def render_vocab_for_stt() -> str:
     """
     menu_str = ", ".join(_VOCAB_ITEMS)
     return f"햄버거 키오스크 주문. 세트, 단품, 결제. 메뉴: {menu_str}."
+
+# 백엔드 모듈(stt_service.py 등)과의 하위 호환성을 유지하기 위한 레거시 스텁 변수
+MENU_CATALOG: list = []
+SET_DRINKS: list = []
+SET_SIDES: list = []
+
+def render_catalog_for_prompt() -> str:
+    """agent.py 등 레거시 프롬프트 템플릿 포맷팅 대응을 위한 스텁 함수"""
+    return ""
