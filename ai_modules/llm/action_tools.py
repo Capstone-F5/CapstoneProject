@@ -207,6 +207,139 @@ def navigate(screen: str) -> str:
     push_action({"type": "navigate", "screen": screen})
     return f"{screen} 화면으로 이동"
 
+
+@tool
+def checkout(method: str | None = None) -> str:
+    """결제를 진행한다. 장바구니가 비어 있으면 거부한다.
+
+    Args:
+        method: 결제 수단 ('card' | 'cash' | 'pay'). 생략 가능.
+    """
+    session_id = get_session_id()
+    try:
+        cart = _run(api_client.get_cart(session_id))
+    except Exception as e:
+        return f"오류: 장바구니 확인 실패 — {e}"
+
+    if not cart.get("items"):
+        return "담긴 메뉴가 없어요. 먼저 메뉴를 선택해 주세요."
+
+    action: dict = {"type": "checkout"}
+    if method:
+        action["method"] = method
+    push_action(action)
+    return "결제 화면(장바구니)으로 이동합니다."
+
+
+@tool
+def confirm_order(user_phone: str | None = None) -> str:
+    """장바구니의 메뉴로 주문을 확정하고 DB에 주문을 생성한다.
+
+    Args:
+        user_phone: 포인트 적립용 전화번호 (선택). 예: 01012345678
+    """
+    session_id = get_session_id()
+    try:
+        result = _run(api_client.create_order(session_id, user_phone))
+    except Exception as e:
+        return f"오류: 주문 생성 실패 — {e}"
+
+    order_id = result.get("order_id", "")
+    push_action({"type": "confirm_order", "order_id": order_id})
+    return f"주문이 완료되었습니다! 주문 번호: {order_id}"
+
+
+# ── ui_action: 화면 조작 범용 도구 ──────────────────────────────────────────
+# action 별 허용 value 화이트리스트. None = value 불필요.
+_UI_ACTION_SPEC: dict[str, set[str] | None] = {
+    "update_modal": None,
+    "order_type": {"dine-in", "takeout"},
+    "select_category": {"recommended", "burger", "side", "drink"},
+    "menu_page": {"next", "prev"},
+    "open_item": None,
+    "start_checkout": None,
+    "points": {"yes", "no"},
+    "points_phone": None,
+    "payment_method": {"card", "cash", "pay"},
+    "set_language": {"ko", "en", "zh", "ja"},
+    "set_gesture": {"on", "off"},
+    "set_camera": {"on", "off"},
+}
+
+_UI_ACTION_MSG: dict[str, str] = {
+    "update_modal": "팝업 선택 변경",
+    "order_type": "주문 유형 선택",
+    "select_category": "메뉴 카테고리 이동",
+    "menu_page": "메뉴 페이지 이동",
+    "open_item": "메뉴 상세 열기",
+    "start_checkout": "결제 시작",
+    "points": "포인트 적립 선택",
+    "points_phone": "전화번호 입력",
+    "payment_method": "결제 수단 선택",
+    "set_language": "언어 변경",
+    "set_gesture": "제스처 설정",
+    "set_camera": "카메라 미리보기 설정",
+}
+
+
+@tool
+def ui_action(
+    action: str,
+    value: str | None = None,
+    item_type: str | None = None,
+    field: str | None = None,
+    field_value: str | None = None,
+) -> str:
+    """화면 UI를 조작하는 범용 도구. 현재 화면에 맞는 action만 호출한다.
+
+    action 종류와 파라미터:
+      - update_modal (field: qty|exclusion|side|drink, field_value: 변경값)
+      - order_type (value: dine-in | takeout)
+      - select_category (value: recommended|burger|side|drink)
+      - menu_page (value: next | prev)
+      - open_item (value: 메뉴 UUID)
+      - start_checkout
+      - points (value: yes | no)
+      - points_phone (value: 전화번호)
+      - payment_method (value: card | cash | pay)
+      - set_language (value: ko | en | zh | ja)
+      - set_gesture (value: on | off)
+      - set_camera (value: on | off)
+    """
+    if action not in _UI_ACTION_SPEC:
+        return f"오류: 지원하지 않는 action '{action}' 입니다."
+
+    allowed = _UI_ACTION_SPEC[action]
+    if allowed is not None:
+        if value not in allowed:
+            return f"오류: action '{action}' 의 value 는 {sorted(allowed)} 중 하나여야 합니다."
+    elif action in ("open_item", "points_phone") and not value:
+        return f"오류: action '{action}' 은 value 가 필요합니다."
+
+    payload: dict = {"type": action}
+    if action == "update_modal":
+        _MODAL_FIELDS = {"qty", "exclusion", "side", "drink"}
+        if not field or field not in _MODAL_FIELDS:
+            return f"오류: update_modal 의 field 는 {sorted(_MODAL_FIELDS)} 중 하나여야 합니다."
+        if not field_value:
+            return "오류: update_modal 에는 field_value 가 필요합니다."
+        payload["field"] = field
+        payload["value"] = field_value
+    elif action == "open_item":
+        payload["menu_item_id"] = value
+        if item_type in ("single", "set"):
+            payload["item_type"] = item_type
+    elif action == "points_phone":
+        payload["phone"] = value
+    elif value is not None:
+        payload["value"] = value
+
+    push_action(payload)
+    label = _UI_ACTION_MSG.get(action, action)
+    detail = f" ({field}={field_value})" if action == "update_modal" else (f" ({value})" if value else "")
+    return f"{label} 완료{detail}"
+
+
 # 에이전트가 인식할 최종 도구 리스트 등록
 ACTION_TOOLS = [
     add_item,
@@ -216,4 +349,7 @@ ACTION_TOOLS = [
     clear_cart,
     check_user_points,
     navigate,
+    checkout,
+    confirm_order,
+    ui_action,
 ]
