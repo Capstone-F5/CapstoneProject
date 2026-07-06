@@ -121,3 +121,18 @@ async def create_order(session_id: str, user_phone: str = None) -> dict:
         res = await client.post(f"{API_BASE_URL}/api/orders", json=payload)
         res.raise_for_status()
         return res.json()
+
+
+# ── 지시서 1단계 수록 명세 함수명 매핑 호환용 별칭 (Alias) ──
+
+async def fetch_menu_items() -> list[dict]:
+    """GET /api/menu → items 목록 반환 (지시서 스펙 명칭 매핑)."""
+    return await get_menu()
+
+async def post_cart_add(session_id: str, payload: dict) -> dict:
+    """POST /api/cart/{session_id}/items (지시서 스펙 명칭 매핑)."""
+    return await add_cart_item(session_id, payload)
+
+async def delete_cart_item(session_id: str, cart_item_id: str) -> None:
+    """DELETE /api/cart/{session_id}/items/{cart_item_id} (지시서 스펙 명칭 매핑)."""
+    await remove_cart_item(session_id, cart_item_id)
