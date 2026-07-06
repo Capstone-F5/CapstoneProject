@@ -5,7 +5,7 @@ import asyncio
 import concurrent.futures
 from langchain_core.tools import tool
 
-# 지연님이 세팅한 세션 및 API 클라이언트 불러오기
+# 세션 및 API 클라이언트 불러오기
 from .action_context import push_action, get_session_id
 from . import api_client
 
@@ -40,7 +40,7 @@ def add_item(
     session_id = get_session_id()
 
     try:
-        # 지연님이 만든 단건 조회 기능 사용
+        # 단건 조회 API 호출
         item = _run(api_client.fetch_menu_item_by_id(menu_item_id))
     except Exception as e:
         return f"오류: 메뉴 조회 실패 — {e}"
@@ -75,7 +75,7 @@ def add_item(
     }
 
     try:
-        # 지연님이 연동한 장바구니 추가 API 호출
+        # 장바구니 추가 API 호출
         result = _run(api_client.add_cart_item(session_id, payload))
     except Exception as e:
         return f"오류: 장바구니 추가 실패 — {e}"

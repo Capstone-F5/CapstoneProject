@@ -57,7 +57,7 @@ class LLMRequest(BaseModel):
 @router.post("/llm")
 async def llm(req: LLMRequest):
     try:
-        # 🌟 [지연 수정] 에이전트 실행 직전 세션 ID 주입
+        # 에이전트 실행 직전 세션 ID 주입
         set_session_id(req.session_id)
 
         cart_dicts = [c.model_dump() for c in req.cart]
@@ -80,7 +80,7 @@ async def llm(req: LLMRequest):
 async def llm_stream(req: LLMRequest):
     """SSE 스트리밍 엔드포인트 — 토큰 단위로 text/event-stream 반환."""
     try:
-        # 🌟 [지연 수정] 스트리밍 에이전트 실행 직전에도 세션 ID 주입
+        # 스트리밍 에이전트 실행 직전에도 세션 ID 주입
         set_session_id(req.session_id)
 
         cart_dicts = [c.model_dump() for c in req.cart]
