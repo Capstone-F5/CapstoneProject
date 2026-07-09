@@ -1,26 +1,16 @@
 from pydantic import BaseModel
-from typing import Optional
 
+class UserPointsOut(BaseModel):
+    user_id: str
+    phone_number: str
+    current_points: int
+    tier: str | None  # BASIC | SILVER | GOLD
 
-class UserPointsResponse(BaseModel):
-    phone: str
-    points: int
-    membership_grade: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class UserCreateRequest(BaseModel):
-    phone: str
-    name: Optional[str] = None
-
-
-class UserResponse(BaseModel):
-    id: str
-    phone: str
-    name: Optional[str] = None
-    points: int = 0
-
-    class Config:
-        from_attributes = True
+class CouponOut(BaseModel):
+    user_coupon_id: str
+    coupon_code: str
+    discount_type: str
+    discount_value: float
+    min_order_amount: float
+    is_used: bool
+    valid_until: str | None

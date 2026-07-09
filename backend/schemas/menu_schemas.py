@@ -1,38 +1,42 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from decimal import Decimal
 
-
-class MenuOptionSchema(BaseModel):
+class MenuOptionOut(BaseModel):
     id: str
-    name: str
-    price: int
-    option_group: Optional[str] = None
+    name_ko: str
+    name_en: str
+    additional_price: Decimal
+    is_available: bool
+    display_order: int
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
-
-class MenuItemSchema(BaseModel):
+class MenuItemOut(BaseModel):
     id: str
-    name: str
-    description: Optional[str] = None
-    price: int
-    image_url: Optional[str] = None
-    is_available: bool = True
-    options: List[MenuOptionSchema] = []
+    name_ko: str
+    name_en: str
+    base_price: Decimal
+    description: str
+    image_url: str | None
+    is_available: bool
+    is_popular: bool
+    is_new: bool
+    display_order: int
+    options: list[MenuOptionOut] = []
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
-
-class CategorySchema(BaseModel):
+class CategoryOut(BaseModel):
     id: str
-    name: str
-    items: List[MenuItemSchema] = []
+    name_ko: str
+    name_en: str
+    display_order: int
+    is_visible: bool
+    image_url: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
-
+# GET /api/menu 응답 최상위 구조
 class MenuResponse(BaseModel):
-    categories: List[CategorySchema]
+    categories: list[CategoryOut]
+    menu_items: dict[str, list[MenuItemOut]]  # category_slug → items

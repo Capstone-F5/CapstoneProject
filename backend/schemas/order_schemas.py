@@ -1,39 +1,29 @@
 from pydantic import BaseModel
-from typing import List, Optional
-from enum import Enum
+from decimal import Decimal
 
+class OrderIn(BaseModel):
+    session_id: str
+    order_type: str = "TAKE_OUT"   # EAT_IN | TAKE_OUT
+    phone: str | None = None        # 포인트 적립용 (비회원도 전화번호로 적립 가능)
+    points_to_use: int = 0
+    coupon_code: str | None = None
 
-class OrderStatus(str, Enum):
-    pending = "pending"
-    confirmed = "confirmed"
-    preparing = "preparing"
-    completed = "completed"
-    cancelled = "cancelled"
-
-
-class OrderItemSchema(BaseModel):
+class OrderItemOut(BaseModel):
     menu_item_id: str
-    menu_item_name: str
+    name_ko: str
     quantity: int
-    unit_price: int
-    subtotal: int
+    unit_price: Decimal
+    total_price: Decimal
+    selected_options: list
+    special_note: str | None
 
-    class Config:
-        from_attributes = True
-
-
-class OrderCreateRequest(BaseModel):
-    session_id: str
-    user_phone: Optional[str] = None
-
-
-class OrderResponse(BaseModel):
-    id: str
-    session_id: str
-    status: OrderStatus
-    items: List[OrderItemSchema] = []
-    total_price: int
-    created_at: str
-
-    class Config:
-        from_attributes = True
+class OrderOut(BaseModel):
+    order_id: str
+    order_number: str
+    order_type: str
+    subtotal: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    points_used: int
+    points_earned: int
+    items: list[OrderItemOut]

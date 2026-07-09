@@ -1,37 +1,32 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from decimal import Decimal
 
-
-class CartItemOptionSchema(BaseModel):
+class SelectedOption(BaseModel):
     option_id: str
-    option_name: str
-    price: int
+    name: str
 
-
-class CartItemAddRequest(BaseModel):
+class CartItemIn(BaseModel):
     menu_item_id: str
     quantity: int = 1
-    selected_options: List[str] = []
+    selected_options: list[SelectedOption] = []
+    special_note: str | None = None
 
-
-class CartItemSchema(BaseModel):
-    id: str
+class CartItemOut(BaseModel):
+    cart_item_id: str
     menu_item_id: str
-    menu_item_name: str
+    name_ko: str
     quantity: int
-    unit_price: int
-    options: List[CartItemOptionSchema] = []
-    subtotal: int
+    unit_price: Decimal
+    selected_options: list[SelectedOption]
+    special_note: str | None
 
-    class Config:
-        from_attributes = True
+class CartItemUpdateIn(BaseModel):
+    quantity: int | None = None
+    selected_options: list[SelectedOption] | None = None
+    special_note: str | None = None
 
-
-class CartItemUpdateRequest(BaseModel):
-    quantity: int
-
-
-class CartResponse(BaseModel):
+class CartOut(BaseModel):
+    cart_id: str
     session_id: str
-    items: List[CartItemSchema] = []
-    total_price: int = 0
+    items: list[CartItemOut]
+    total: Decimal

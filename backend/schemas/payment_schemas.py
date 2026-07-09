@@ -1,35 +1,17 @@
 from pydantic import BaseModel
-from typing import Optional
-from enum import Enum
+from decimal import Decimal
 
-
-class PaymentMethod(str, Enum):
-    card = "card"
-    cash = "cash"
-    points = "points"
-
-
-class PaymentStatus(str, Enum):
-    pending = "pending"
-    completed = "completed"
-    failed = "failed"
-    refunded = "refunded"
-
-
-class PaymentCreateRequest(BaseModel):
+class PaymentIn(BaseModel):
     order_id: str
-    method: PaymentMethod
-    amount: int
-    use_points: int = 0
+    method: str            # CARD | SAMSUNG_PAY | QR_PAY | CASH
+    amount: Decimal
+    pg_transaction_id: str | None = None
+    pg_provider: str | None = None
 
-
-class PaymentResponse(BaseModel):
-    id: str
+class PaymentOut(BaseModel):
+    payment_id: str
     order_id: str
-    method: PaymentMethod
-    status: PaymentStatus
-    amount: int
-    created_at: str
-
-    class Config:
-        from_attributes = True
+    method: str
+    amount: Decimal
+    status: str
+    paid_at: str | None
