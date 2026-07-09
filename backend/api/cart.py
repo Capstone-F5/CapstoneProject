@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
-from core.db import get_db
+from core.db import get_session
 from dao.cart_dao import (
     get_or_create_cart, get_cart_with_items,
     add_cart_item, update_cart_item, delete_cart_item, clear_cart
@@ -12,7 +12,7 @@ from schemas.cart_schemas import CartItemIn, CartItemOut, CartItemUpdateIn, Cart
 router = APIRouter(prefix="/api/cart", tags=["cart"])
 
 @router.get("/{session_id}", response_model=CartOut)
-async def get_cart(session_id: str, db: AsyncSession = Depends(get_db)):
+async def get_cart(session_id: str, db: AsyncSession = Depends(get_session)):
     cart = await get_cart_with_items(db, session_id)
     if cart is None:
         # 빈 장바구니 반환 (에러 X)
@@ -35,7 +35,7 @@ async def get_cart(session_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{session_id}/items")
 async def add_item_to_cart(
-    session_id: str, body: CartItemIn, db: AsyncSession = Depends(get_db)
+    session_id: str, body: CartItemIn, db: AsyncSession = Depends(get_session)
 ):
     menu_item = await get_menu_item_by_id(db, body.menu_item_id)
     if menu_item is None:
@@ -63,7 +63,7 @@ async def add_item_to_cart(
 @router.patch("/{session_id}/items/{cart_item_id}")
 async def update_item(
     session_id: str, cart_item_id: str, body: CartItemUpdateIn,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_session)
 ):
     item = await update_cart_item(
         db, cart_item_id,
@@ -78,7 +78,7 @@ async def update_item(
 
 @router.delete("/{session_id}/items/{cart_item_id}")
 async def remove_item(
-    session_id: str, cart_item_id: str, db: AsyncSession = Depends(get_db)
+    session_id: str, cart_item_id: str, db: AsyncSession = Depends(get_session)
 ):
     deleted = await delete_cart_item(db, cart_item_id)
     if not deleted:
@@ -87,7 +87,7 @@ async def remove_item(
     return {"ok": True}
 
 @router.delete("/{session_id}")
-async def clear_cart_endpoint(session_id: str, db: AsyncSession = Depends(get_db)):
+async def clear_cart_endpoint(session_id: str, db: AsyncSession = Depends(get_session)):
     await clear_cart(db, session_id)
     await db.commit()
     return {"ok": True}

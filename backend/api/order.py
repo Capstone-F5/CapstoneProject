@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
-from core.db import get_db
+from core.db import get_session
 from dao.cart_dao import get_cart_with_items
 from dao.order_dao import create_order_from_cart, create_order_items_from_cart_items, get_order_by_id
 from schemas.order_schemas import OrderIn, OrderOut
@@ -9,7 +9,7 @@ from schemas.order_schemas import OrderIn, OrderOut
 router = APIRouter(prefix="/api/orders", tags=["order"])
 
 @router.post("", response_model=OrderOut)
-async def create_order(body: OrderIn, db: AsyncSession = Depends(get_db)):
+async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
     cart = await get_cart_with_items(db, body.session_id)
     if cart is None or not cart.items:
         raise HTTPException(status_code=400, detail="장바구니가 비어있습니다")
@@ -44,7 +44,7 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_db)):
     )
 
 @router.get("/{order_id}")
-async def get_order(order_id: str, db: AsyncSession = Depends(get_db)):
+async def get_order(order_id: str, db: AsyncSession = Depends(get_session)):
     order = await get_order_by_id(db, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
