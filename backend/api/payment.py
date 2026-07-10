@@ -27,4 +27,4 @@ async def process_payment(body: PaymentIn, db: AsyncSession = Depends(get_sessio
             paid_at=str(payment.paid_at) if payment.paid_at else None
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail="결제 처리 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=400, detail=f"결제 오류 원인: {str(e)}")
