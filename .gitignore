@@ -37,3 +37,13 @@ Thumbs.db
 # Project Specific
 assets/raw_data/
 temp/
+
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+
+# Environment variables
+.env
