@@ -43,8 +43,8 @@ async def fetch_menu_item_by_id(item_id: str) -> dict | None:
 async def add_cart_item(session_id: str, payload: dict) -> dict:
     """
     POST /api/cart/{session_id}/items
-    장바구니 항목 추가. 
-    성원님의 툴에서 패키징한 payload(menu_item_id, quantity, selected_options 등)를 그대로 전송합니다.
+    장바구니 항목 추가.
+    action_tools.py에서 패키징한 payload(menu_item_id, quantity, selected_options 등)를 그대로 전송합니다.
     """
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{API_BASE_URL}/api/cart/{session_id}/items", json=payload)
@@ -115,7 +115,7 @@ async def create_order(session_id: str, user_phone: str = None) -> dict:
     """
     payload = {"session_id": session_id}
     if user_phone:
-        payload["user_phone"] = user_phone
+        payload["phone"] = user_phone
         
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{API_BASE_URL}/api/orders", json=payload)

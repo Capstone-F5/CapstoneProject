@@ -22,6 +22,23 @@ def _run(coro):
         return asyncio.run(coro)
 
 @tool
+def list_menu() -> str:
+    """판매 중인 메뉴 목록을 menu_item_id와 함께 조회한다. add_item 호출 전 menu_item_id 확인용으로 사용."""
+    try:
+        items = _run(api_client.fetch_menu_items())
+    except Exception as e:
+        return f"오류: 메뉴 조회 실패 — {e}"
+
+    if not items:
+        return "조회된 메뉴가 없습니다."
+
+    lines = ["[메뉴 목록]"]
+    for item in items:
+        status = " [품절]" if not item.get("is_available", True) else ""
+        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){status}")
+    return "\n".join(lines)
+
+@tool
 def add_item(
     menu_item_id: str,
     quantity: int = 1,
@@ -161,14 +178,14 @@ def get_cart_status() -> str:
     lines = ["[현재 장바구니]"]
     for item in items:
         opts = ", ".join(o["name"] for o in item.get("selected_options", []))
-        line = f"- {item['name_ko']} x{item['quantity']} ({int(item['unit_price'])}원)"
+        line = f"- {item['name_ko']} x{item['quantity']} ({int(float(item['unit_price']))}원)"
         if opts:
             line += f" [{opts}]"
         if item.get("special_note"):
             line += f" [{item['special_note']}]"
         line += f" (cart_item_id: {item['cart_item_id']})"
         lines.append(line)
-    lines.append(f"합계: {int(cart.get('total', 0))}원")
+    lines.append(f"합계: {int(float(cart.get('total', 0)))}원")
     return "\n".join(lines)
 
 @tool
@@ -342,6 +359,7 @@ def ui_action(
 
 # 에이전트가 인식할 최종 도구 리스트 등록
 ACTION_TOOLS = [
+    list_menu,
     add_item,
     remove_item,
     update_item_options,
