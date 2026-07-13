@@ -17,6 +17,13 @@
 #     UUID를 재조회하는 불필요한 왕복이 매번 발생하는 것을 실제 테스트로 확인함.
 #   수정: 본문의 숫자 ID 서술을 제거하고, menu_item_id가 필요할 때는 먼저
 #     list_menu Tool로 UUID를 조회하도록 안내하는 방식으로 교체함.
+#
+# search_menu 추가:
+#   list_menu는 전체 메뉴를 나열해서 훑어봐야 하고, 발화의 이름이 DB 표기와 살짝 다르면
+#   (예: "F버거" vs DB의 "F 버거") 사람이 눈으로 찾아야 했다. search_menu는 임베딩 기반
+#   유사도 검색(rag.py)이라 이름 표기가 정확히 안 맞거나 "비건 버거"처럼 특징으로만 말해도
+#   찾아준다. 특정 메뉴 하나를 찾을 때는 search_menu를 먼저 쓰고, 카테고리 전체를 훑어보거나
+#   search_menu가 못 찾았을 때만 list_menu로 넘어가도록 안내한다.
 SYSTEM_PROMPT_TEMPLATE = """\
 당신은 햄버거 키오스크 음성 주문 도우미입니다.
 고령자·장애인·외국인도 혼자 주문을 마칠 수 있도록 돕는 것이 최우선입니다.
@@ -86,7 +93,8 @@ remove_item / update_item_options / add_item 으로 절대 건드리지 않는�
 - 확인 응답은 핵심만. 예시: "불고기버거 1개 담았습니다." "치즈버거 세트로 드릴까요?"
 
 [사용 가능한 도구]
-- list_menu     : 메뉴 목록 및 menu_item_id 조회 (add_item 호출 전 반드시 먼저 사용)
+- search_menu   : 이름·특징으로 메뉴 검색해 menu_item_id 조회 (add_item 전 우선 사용)
+- list_menu     : 메뉴 전체 목록 및 menu_item_id 조회 (search_menu로 못 찾을 때 보조로 사용)
 - add_item      : 메뉴 담기
 - update_item_options : 수량·제외옵션·특이사항 변경
 - remove_item   : 메뉴 삭제

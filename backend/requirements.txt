@@ -23,3 +23,6 @@ faiss-cpu>=1.7.4
 # DB
 SQLAlchemy>=2.0.30
 aiomysql>=0.2.0
+
+# AI 모듈 → 백엔드 API 호출
+httpx>=0.27.0

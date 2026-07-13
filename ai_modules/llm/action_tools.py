@@ -3,23 +3,54 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import httpx
 from langchain_core.tools import tool
 
 # 세션 및 API 클라이언트 불러오기
-from .action_context import push_action, get_session_id
+# ★ get_session_id는 action_context.py 가 아니라 session_context.py 에서 가져온다.
+#   session_context.py 는 ContextVar 기반이라 요청마다 격리되어 안전하다.
+#   action_context.py 에 있던 전역 변수(_session_id) 방식은 동시 요청 시 서로 다른 세션의
+#   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
+#   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
+from .action_context import push_action
+from .session_context import get_session_id
 from . import api_client
+from .rag import search_menu as _rag_search_menu
 
 def _run(coro):
-    """LangChain 동기 tool에서 비동기(async) API 클라이언트를 호출하기 위한 헬퍼."""
+    """LangChain 동기 tool에서 비동기(async) API 클라이언트를 호출하기 위한 헬퍼.
+
+    coro는 한 번만 await 가능하므로 재실행을 시도하지 않는다. 이전 구현은 실행 중 예외가
+    나면(예: httpx 404/409) "이미 소비된 코루틴을 asyncio.run으로 재실행"을 시도해
+    RuntimeError로 원래 예외를 덮어써버려서, 품절/재고 등 실제 오류 메시지가 전부
+    "처리 중 오류가 발생했습니다" 류의 무의미한 문자열로 뭉개지는 버그가 있었다.
+    """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, coro)
-                return future.result()
-        return loop.run_until_complete(coro)
-    except Exception:
+        asyncio.get_running_loop()
+    except RuntimeError:
         return asyncio.run(coro)
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
+
+
+def _friendly_error(prefix: str, e: Exception) -> str:
+    """httpx 오류는 backend/api/* 가 detail 필드에 담아 보내는 한국어 메시지를 그대로 꺼내 쓴다.
+
+    이 문자열은 TTS 로 그대로 낭독되므로 str(e) 같은 raw exception 문구를 노출하지 않는다.
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        try:
+            detail = e.response.json().get("detail")
+        except Exception:
+            detail = None
+        if detail:
+            return f"{prefix}: {detail}"
+        return f"{prefix}: 서버 처리 중 오류가 발생했습니다."
+    if isinstance(e, httpx.RequestError):
+        return f"{prefix}: 서버에 연결할 수 없습니다."
+    return f"{prefix}: 처리 중 오류가 발생했습니다."
 
 @tool
 def list_menu() -> str:
@@ -27,7 +58,7 @@ def list_menu() -> str:
     try:
         items = _run(api_client.fetch_menu_items())
     except Exception as e:
-        return f"오류: 메뉴 조회 실패 — {e}"
+        return _friendly_error("메뉴 조회 실패", e)
 
     if not items:
         return "조회된 메뉴가 없습니다."
@@ -36,6 +67,31 @@ def list_menu() -> str:
     for item in items:
         status = " [품절]" if not item.get("is_available", True) else ""
         lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){status}")
+    return "\n".join(lines)
+
+@tool
+def search_menu(query: str, k: int = 5) -> str:
+    """메뉴 이름·특징으로 검색해 실제 menu_item_id를 찾는다. list_menu보다 이걸 우선 쓴다.
+
+    발화에 나온 이름이 DB 표기와 살짝 다르거나(예: "F버거" vs DB의 "F 버거"), "비건 버거"처럼
+    특징으로만 말했을 때도 임베딩 기반 유사도 검색(rag.py)으로 정확한 항목을 찾아준다.
+
+    Args:
+        query: 메뉴 이름이나 특징 (예: 'F버거', '치즈 많은 버거', '비건').
+        k: 반환할 후보 개수.
+    """
+    try:
+        hits = _run(_rag_search_menu(query, k=k))
+    except Exception as e:
+        return _friendly_error("메뉴 검색 실패", e)
+
+    if not hits:
+        return "일치하는 메뉴를 찾지 못했습니다. list_menu로 전체 목록을 확인하세요."
+
+    lines = ["[검색 결과]"]
+    for h in hits:
+        avail = "" if h.get("is_available", True) else " [품절]"
+        lines.append(f"- {h['name_ko']} (menu_item_id: {h['id']}) {int(float(h['base_price']))}원{avail}")
     return "\n".join(lines)
 
 @tool
@@ -60,7 +116,7 @@ def add_item(
         # 단건 조회 API 호출
         item = _run(api_client.fetch_menu_item_by_id(menu_item_id))
     except Exception as e:
-        return f"오류: 메뉴 조회 실패 — {e}"
+        return _friendly_error("메뉴 조회 실패", e)
 
     if item is None:
         return f"오류: 해당 ID의 메뉴를 찾을 수 없습니다 ({menu_item_id})"
@@ -95,7 +151,7 @@ def add_item(
         # 장바구니 추가 API 호출
         result = _run(api_client.add_cart_item(session_id, payload))
     except Exception as e:
-        return f"오류: 장바구니 추가 실패 — {e}"
+        return _friendly_error("장바구니 추가 실패", e)
 
     cart_item_id = result.get("cart_item_id")
 
@@ -128,7 +184,7 @@ def remove_item(cart_item_id: str) -> str:
     try:
         _run(api_client.remove_cart_item(session_id, cart_item_id))
     except Exception as e:
-        return f"오류: 삭제 실패 — {e}"
+        return _friendly_error("삭제 실패", e)
 
     push_action({"type": "remove_item", "cart_item_id": cart_item_id})
     return "항목을 장바구니에서 삭제했습니다."
@@ -157,7 +213,7 @@ def update_item_options(
     try:
         _run(api_client.patch_cart_item(session_id, cart_item_id, payload))
     except Exception as e:
-        return f"오류: 수정 실패 — {e}"
+        return _friendly_error("수정 실패", e)
 
     push_action({"type": "update_item", "cart_item_id": cart_item_id, **payload})
     return "장바구니 항목을 수정했습니다."
@@ -169,7 +225,7 @@ def get_cart_status() -> str:
     try:
         cart = _run(api_client.get_cart(session_id))
     except Exception as e:
-        return f"오류: 장바구니 조회 실패 — {e}"
+        return _friendly_error("장바구니 조회 실패", e)
 
     items = cart.get("items", [])
     if not items:
@@ -195,7 +251,7 @@ def clear_cart() -> str:
     try:
         _run(api_client.delete_cart(session_id))
     except Exception as e:
-        return f"오류: 초기화 실패 — {e}"
+        return _friendly_error("초기화 실패", e)
     push_action({"type": "clear_cart"})
     return "장바구니를 비웠습니다."
 
@@ -208,7 +264,7 @@ def check_user_points(phone: str) -> str:
     try:
         data = _run(api_client.get_user_points(phone))
     except Exception as e:
-        return f"오류: 포인트 조회 실패 — {e}"
+        return _friendly_error("포인트 조회 실패", e)
 
     if data is None:
         return "등록된 회원 정보가 없습니다. 주문 후 포인트 적립이 가능합니다."
@@ -236,7 +292,7 @@ def checkout(method: str | None = None) -> str:
     try:
         cart = _run(api_client.get_cart(session_id))
     except Exception as e:
-        return f"오류: 장바구니 확인 실패 — {e}"
+        return _friendly_error("장바구니 확인 실패", e)
 
     if not cart.get("items"):
         return "담긴 메뉴가 없어요. 먼저 메뉴를 선택해 주세요."
@@ -259,7 +315,7 @@ def confirm_order(user_phone: str | None = None) -> str:
     try:
         result = _run(api_client.create_order(session_id, user_phone))
     except Exception as e:
-        return f"오류: 주문 생성 실패 — {e}"
+        return _friendly_error("주문 생성 실패", e)
 
     order_id = result.get("order_id", "")
     push_action({"type": "confirm_order", "order_id": order_id})
@@ -360,6 +416,7 @@ def ui_action(
 # 에이전트가 인식할 최종 도구 리스트 등록
 ACTION_TOOLS = [
     list_menu,
+    search_menu,
     add_item,
     remove_item,
     update_item_options,
