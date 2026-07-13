@@ -38,3 +38,16 @@ def push_action(action: dict) -> None:
 
 def get_actions() -> list:
     return _actions.get()
+
+
+#  세션 ID 전역 관리 스토리지 추가
+_session_id: str = "default"
+
+def set_session_id(sid: str) -> None:
+    """FastAPI 진입점에서 사용자의 session_id를 주입하기 위한 함수"""
+    global _session_id
+    _session_id = sid
+
+def get_session_id() -> str:
+    """action_tools.py 내 Tool들이 현재 세션 ID를 조회하기 위한 함수"""
+    return _session_id
