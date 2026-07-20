@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS orders (
     order_number    VARCHAR(32)    NOT NULL UNIQUE,
     order_type      ENUM('EAT_IN','TAKE_OUT') NOT NULL DEFAULT 'TAKE_OUT',
     table_number    INT            NULL,
+    status          ENUM('RECEIVED','COOKING','READY','COMPLETED','CANCELLED') NOT NULL DEFAULT 'RECEIVED',
+    user_coupon_id  VARCHAR(36)    NULL,
     subtotal        DECIMAL(12, 2) NOT NULL DEFAULT 0,
     discount_amount DECIMAL(12, 2) NOT NULL DEFAULT 0,
     final_amount    DECIMAL(12, 2) NOT NULL DEFAULT 0,
@@ -172,7 +174,8 @@ CREATE TABLE IF NOT EXISTS orders (
     points_earned   INT            NOT NULL DEFAULT 0,
     created_at      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id),
-    CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES carts (id)
+    CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES carts (id),
+    CONSTRAINT fk_orders_user_coupon FOREIGN KEY (user_coupon_id) REFERENCES user_coupons (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 12. ORDER_ITEMS
@@ -203,6 +206,18 @@ CREATE TABLE IF NOT EXISTS payments (
     refunded_at        DATETIME       NULL,
     created_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_payments_order FOREIGN KEY (order_id) REFERENCES orders (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 14. ADMIN_USERS
+CREATE TABLE IF NOT EXISTS admin_users (
+    id             VARCHAR(36)  NOT NULL PRIMARY KEY,
+    username       VARCHAR(64)  NOT NULL UNIQUE,
+    password_hash  VARCHAR(255) NOT NULL,
+    display_name   VARCHAR(64)  NOT NULL,
+    role           ENUM('OWNER','STAFF') NOT NULL DEFAULT 'STAFF',
+    is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    last_login_at  DATETIME     NULL,
+    created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

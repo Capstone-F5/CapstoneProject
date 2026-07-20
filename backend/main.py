@@ -34,6 +34,9 @@ from api.cart import router as cart_router
 from api.order import router as order_router
 from api.payment import router as payment_router
 from api.user import router as user_router
+from api.admin.auth import router as admin_auth_router
+from api.admin.menu import router as admin_menu_router
+from api.admin.users import router as admin_users_router
 
 from core.db import init_db
 
@@ -64,6 +67,9 @@ app.include_router(cart_router)
 app.include_router(order_router)
 app.include_router(payment_router)
 app.include_router(user_router)
+app.include_router(admin_auth_router)
+app.include_router(admin_menu_router)
+app.include_router(admin_users_router)
 
 
 @app.get("/health")
