@@ -24,8 +24,17 @@ function stripNamePrefix(desc) {
 }
 
 function adaptItem(i, locale) {
-  const name = locale === 'en' ? i.name_en : i.name_ko
-  const exclusions = ['없음', ...i.options.filter(o => o.option_group === 'EXCLUDE').map(o => o.name_ko)]
+  // 백엔드엔 한국어/영어 표기만 있음(중국어·일본어 번역 데이터 없음) — 한국어가 아니면
+  // 전부 영어로 표기한다("외국어면 영어 메뉴로 표기").
+  const isKo = locale === 'ko'
+  const name = isKo ? i.name_ko : i.name_en
+  // '없음'은 "제외 옵션 없음"을 나타내는 내부 값으로 앱 전역에서 그대로 비교되므로
+  // (App.jsx/ItemDetailModal.jsx/CartScreen.jsx 등) 언어와 무관하게 항상 이 문자열을 쓴다.
+  // 화면에 보여줄 때만 각 화면에서 로캘에 맞게 표시 문구로 바꾼다.
+  const exclusions = [
+    '없음',
+    ...i.options.filter(o => o.option_group === 'EXCLUDE').map(o => (isKo ? o.name_ko : o.name_en)),
+  ]
   const hasSet = i.options.some(o => o.option_group === 'SET_UPGRADE')
   return {
     id: i.id,

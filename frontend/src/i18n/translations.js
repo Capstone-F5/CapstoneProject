@@ -11,6 +11,7 @@ const translations = {
     cat_burger: '버거',
     cat_side: '사이드',
     cat_drink: '음료',
+    noExclusion: '없음',
 
     // CartScreen columns
     colMenu: '메뉴',
@@ -88,6 +89,7 @@ const translations = {
     cat_burger: 'Burger',
     cat_side: 'Side',
     cat_drink: 'Drink',
+    noExclusion: 'None',
     colMenu: 'Item',
     colQty: 'Qty',
     colPrice: 'Price',
@@ -151,6 +153,7 @@ const translations = {
     cat_burger: '汉堡',
     cat_side: '小食',
     cat_drink: '饮料',
+    noExclusion: '无',
     colMenu: '菜品',
     colQty: '数量',
     colPrice: '金额',
@@ -214,6 +217,7 @@ const translations = {
     cat_burger: 'バーガー',
     cat_side: 'サイド',
     cat_drink: 'ドリンク',
+    noExclusion: 'なし',
     colMenu: '商品',
     colQty: '数量',
     colPrice: '金額',

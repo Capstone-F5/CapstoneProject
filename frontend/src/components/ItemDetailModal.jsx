@@ -187,7 +187,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {item.exclusions.map(ex => (
                 <Chip
-                  key={ex} label={ex}
+                  key={ex} label={ex === '없음' ? t('noExclusion') : ex}
                   active={exclusion === ex}
                   onClick={() => setExclusion(ex)}
                   won={t('won')}
