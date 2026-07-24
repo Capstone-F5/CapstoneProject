@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Computed,
     Date,
     DateTime,
     Enum as SAEnum,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -217,10 +219,23 @@ class Cart(Base):
     status: Mapped[str] = mapped_column(
         SAEnum("ACTIVE", "COMPLETED", "ABANDONED", name="cart_status"), default="ACTIVE"
     )
+    # session_id 당 ACTIVE 카트가 동시에 여러 개 생기는 것을 DB 차원에서 막기 위한 생성 컬럼.
+    # ACTIVE 상태일 때만 session_id 값을 갖고 그 외엔 NULL(MySQL 유니크 인덱스는 NULL을 여러 개
+    # 허용하므로 완료/폐기된 카트가 여러 개 쌓이는 건 문제없음) — 한 발화에서 여러 개의
+    # add_item 툴이 동시 호출돼 같은 세션에 ACTIVE 카트가 중복 생성되던 버그(경쟁 상태) 수정.
+    active_session_key: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed("CASE WHEN status = 'ACTIVE' THEN session_id ELSE NULL END", persisted=True),
+        nullable=True,
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("active_session_key", name="uq_carts_active_session"),
     )
 
     items: Mapped[list["CartItem"]] = relationship(

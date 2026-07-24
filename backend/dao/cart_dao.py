@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from decimal import Decimal
 from core.models import Cart, CartItem, MenuItem, MenuOption
@@ -11,10 +12,25 @@ async def get_or_create_cart(db: AsyncSession, session_id: str) -> Cart:
         .where(Cart.status == "ACTIVE")
     )
     cart = result.scalar_one_or_none()
-    if cart is None:
-        cart = Cart(session_id=session_id)
-        db.add(cart)
+    if cart is not None:
+        return cart
+
+    # 한 발화에서 여러 add_item 툴이 동시에 호출되면 이 지점에서 동시에 "없음"을 보고
+    # 각자 새 카트를 만들려는 경쟁 상태가 발생할 수 있다. DB의 uq_carts_active_session
+    # 유니크 제약이 두 번째 이후 INSERT를 막아주므로, 그 경우 롤백 후 먼저 커밋된
+    # 카트를 다시 조회해 반환한다.
+    cart = Cart(session_id=session_id)
+    db.add(cart)
+    try:
         await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        result = await db.execute(
+            select(Cart)
+            .where(Cart.session_id == session_id)
+            .where(Cart.status == "ACTIVE")
+        )
+        cart = result.scalar_one()
     return cart
 
 async def get_cart_with_items(db: AsyncSession, session_id: str) -> Cart | None:

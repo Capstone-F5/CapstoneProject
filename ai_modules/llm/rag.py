@@ -86,24 +86,29 @@ async def _build_index() -> FAISS:
     if not api_key:
         # API 키가 설정되지 않은 경우 모의 임베딩 또는 예외 우회 처리
         api_key = "dummy_key_for_local_health_check"
-        
+
     embeddings = OpenAIEmbeddings(
         model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
         api_key=api_key,
     )
     # FAISS.from_documents 는 동기 호출 → 스레드로 오프로드
     try:
-        _index = await asyncio.to_thread(FAISS.from_documents, docs, embeddings)
+        index = await asyncio.to_thread(FAISS.from_documents, docs, embeddings)
+        _index = index  # 성공했을 때만 전역 캐시에 반영
+        return index
     except Exception as e:
-        # 로컬 헬스 체크 중 인덱스 빌드 실패 방어
+        # 로컬 헬스 체크(API 키 미설정) 또는 일시적 API 오류(레이트리밋 등) 방어.
         print(f"[RAG 경고] 인덱스 빌드 건너뜀 (API Key 유효성 이슈): {e}")
         # 빈 인덱스로 헬스 체크 통과 유도
-        from langchain_community.vectorstores import FAISS
+        # (FAISS는 이미 상단에서 import됨 — 여기서 재import하면 함수 전체에서 지역변수로
+        #  취급되어 위 try 블록의 FAISS.from_documents 호출이 UnboundLocalError가 나던 버그 수정)
         from langchain_core.embeddings import FakeEmbeddings
         fake_emb = FakeEmbeddings(size=1536)
-        _index = await asyncio.to_thread(FAISS.from_documents, docs[:1], fake_emb)
-        
-    return _index
+        # ★ 전역 _index 캐시에는 반영하지 않는다 — 여기서 캐시해버리면 한 번의 일시적 오류로
+        #   전체 메뉴 중 1개짜리 가짜 임베딩 인덱스가 서버 재시작 전까지 영구 고정되어
+        #   search_menu가 항상 엉뚱한 결과만 반환하는 문제가 있었음. 다음 호출에서 실제
+        #   임베딩으로 다시 빌드를 시도하도록 _index는 None 상태로 남겨둔다.
+        return await asyncio.to_thread(FAISS.from_documents, docs[:1], fake_emb)
 
 
 async def get_index() -> FAISS:
@@ -111,7 +116,9 @@ async def get_index() -> FAISS:
     if _index is None:
         async with _build_lock:
             if _index is None:
-                await _build_index()
+                # _build_index()가 실패 시 전역 _index를 None으로 남겨두므로(다음 호출에서
+                # 재시도하기 위함), 이번 호출에서 쓸 인덱스는 반환값에서 직접 받는다.
+                return await _build_index()
     return _index  # type: ignore[return-value]
 
 
