@@ -105,14 +105,23 @@ def add_item(
     menu_item_id: str,
     quantity: int = 1,
     upgrade_to_set: bool = False,
+    side: str | None = None,
+    drink: str | None = None,
     exclusions: list[str] | None = None,
     special_note: str | None = None,
 ) -> str:
     """장바구니에 메뉴를 담는다.
+
+    ⚠️ upgrade_to_set=True(세트)이면 side와 drink를 반드시 함께 지정해야 한다.
+    아직 고객에게 사이드·음료를 확인하지 않았다면 이 도구를 호출하지 말고 먼저 질문한다
+    (질문 없이 담으면 이 도구가 오류를 반환하며, 임의로 아무 사이드·음료나 골라 담으면 안 된다).
+
     Args:
         menu_item_id: DB의 메뉴 UUID. 숫자가 아닌 문자열 UUID 형태임.
         quantity: 담을 수량 (1 이상).
-        upgrade_to_set: True이면 세트 업그레이드 옵션 자동 추가.
+        upgrade_to_set: True이면 세트 업그레이드 옵션 추가. True일 땐 side·drink 필수.
+        side: 세트 사이드 이름(예: "치즈스틱"). upgrade_to_set=True일 때만 사용.
+        drink: 세트 음료 이름(예: "콜라"). upgrade_to_set=True일 때만 사용.
         exclusions: 제외할 재료 이름 목록. 예: ["양파", "양상추"]
         special_note: 주방 전달 비정형 요구사항. 예: "반으로 잘라주세요"
     """
@@ -135,14 +144,34 @@ def add_item(
     options = item.get("options", [])
 
     if upgrade_to_set:
-        set_opt = next((o for o in options if "세트" in o["name_ko"]), None)
-        if set_opt:
-            selected_options.append({"option_id": set_opt["id"], "name": set_opt["name_ko"]})
-        else:
+        set_opt = next((o for o in options if o.get("option_group") == "SET_UPGRADE"), None)
+        if set_opt is None:
             return f"오류: {item['name_ko']}는 세트 주문이 불가합니다."
+        if not side or not drink:
+            return (
+                "오류: 세트는 사이드와 음료를 먼저 확인해야 담을 수 있습니다. "
+                "고객에게 사이드와 음료를 물어본 뒤 side·drink 값을 채워 다시 호출하세요."
+            )
+        side_opt = next(
+            (o for o in options if o.get("option_group") == "SET_SIDE" and side in o["name_ko"]), None
+        )
+        drink_opt = next(
+            (o for o in options if o.get("option_group") == "SET_DRINK" and drink in o["name_ko"]), None
+        )
+        if side_opt is None:
+            return f"오류: 사이드 '{side}'를 찾을 수 없습니다. 감자튀김, 치즈스틱, 치킨너겟, 양념감자튀김 중에서 다시 확인하세요."
+        if drink_opt is None:
+            return f"오류: 음료 '{drink}'를 찾을 수 없습니다. 콜라, 제로콜라, 사이다, 제로사이다, 생수, 뽀로로음료, 오렌지주스 중에서 다시 확인하세요."
+        selected_options.append({"option_id": set_opt["id"], "name": set_opt["name_ko"]})
+        selected_options.append({"option_id": side_opt["id"], "name": side_opt["name_ko"]})
+        selected_options.append({"option_id": drink_opt["id"], "name": drink_opt["name_ko"]})
 
     for excl in (exclusions or []):
-        opt = next((o for o in options if excl in o["name_ko"] and o.get("is_available", True)), None)
+        opt = next(
+            (o for o in options
+             if excl in o["name_ko"] and o.get("option_group") == "EXCLUDE" and o.get("is_available", True)),
+            None,
+        )
         if opt:
             selected_options.append({"option_id": opt["id"], "name": opt["name_ko"]})
 
@@ -161,19 +190,24 @@ def add_item(
 
     cart_item_id = result.get("cart_item_id")
 
-    # 프론트엔드 액션 큐 반영 (화면 업데이트용)
+    # 프론트엔드 액션 큐 반영 (화면 업데이트용) — side/drink 누락 시 MenuScreen의 음성
+    # 워크스루가 세트 옵션을 채우지 못하던 버그 수정.
     push_action({
         "type": "add_item",
         "menu_item_id": menu_item_id,
         "name": item["name_ko"],
         "quantity": quantity,
         "upgrade_to_set": upgrade_to_set,
+        "side": side,
+        "drink": drink,
         "exclusions": exclusions or [],
         "cart_item_id": cart_item_id,
     })
 
     type_label = "세트" if upgrade_to_set else "단품"
     msg = f"{item['name_ko']}({type_label}) {quantity}개 담음"
+    if upgrade_to_set:
+        msg += f" [사이드: {side}, 음료: {drink}]"
     if exclusions:
         msg += f" [{', '.join(exclusions)} 제외]"
     if special_note:
@@ -199,6 +233,8 @@ def remove_item(cart_item_id: str) -> str:
 def update_item_options(
     cart_item_id: str,
     quantity: int | None = None,
+    side: str | None = None,
+    drink: str | None = None,
     exclusions: list[str] | None = None,
     special_note: str | None = None,
 ) -> str:
@@ -206,6 +242,8 @@ def update_item_options(
     Args:
         cart_item_id: 변경할 장바구니 항목 UUID.
         quantity: 새 수량.
+        side: 새 세트 사이드 이름(세트 항목에만 해당). 예: "치즈스틱"
+        drink: 새 세트 음료 이름(세트 항목에만 해당). 예: "콜라"
         exclusions: 새 제외 옵션 목록.
         special_note: 새 특이사항.
     """
@@ -216,10 +254,10 @@ def update_item_options(
     if special_note is not None:
         payload["special_note"] = special_note
 
-    if exclusions is not None:
-        # exclusions 인자가 그동안 payload에 전혀 반영되지 않아 "재료 빼줘" 후속 요청이
-        # 조용히 무시되던 버그 수정. 세트업그레이드/사이드/음료 선택은 유지하고
-        # EXCLUDE 그룹만 새로 지정한 exclusions 로 교체한다.
+    if exclusions is not None or side is not None or drink is not None:
+        # exclusions/side/drink 가 그동안 payload에 전혀 반영되지 않아 "재료 빼줘",
+        # "사이드 바꿔줘" 같은 후속 요청이 조용히 무시되던 버그 수정. 지정되지 않은
+        # 그룹(세트업그레이드 등)의 기존 선택은 그대로 유지하고 해당 그룹만 교체한다.
         try:
             cart = _run(api_client.get_cart(session_id))
             cart_item = next(
@@ -233,20 +271,40 @@ def update_item_options(
 
         options = (menu_item or {}).get("options", [])
         option_by_id = {o["id"]: o for o in options}
+        replace_groups = set()
+        if exclusions is not None:
+            replace_groups.add("EXCLUDE")
+        if side is not None:
+            replace_groups.add("SET_SIDE")
+        if drink is not None:
+            replace_groups.add("SET_DRINK")
+
         kept = [
             sel for sel in cart_item.get("selected_options", [])
-            if option_by_id.get(sel["option_id"], {}).get("option_group") != "EXCLUDE"
+            if option_by_id.get(sel["option_id"], {}).get("option_group") not in replace_groups
         ]
-        new_excludes = []
-        for excl in exclusions:
+
+        new_selected = []
+        for excl in (exclusions or []):
             opt = next(
                 (o for o in options
                  if excl in o["name_ko"] and o.get("option_group") == "EXCLUDE" and o.get("is_available", True)),
                 None,
             )
             if opt:
-                new_excludes.append({"option_id": opt["id"], "name": opt["name_ko"]})
-        payload["selected_options"] = kept + new_excludes
+                new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})
+        if side is not None:
+            opt = next((o for o in options if o.get("option_group") == "SET_SIDE" and side in o["name_ko"]), None)
+            if opt is None:
+                return f"오류: 사이드 '{side}'를 찾을 수 없습니다."
+            new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})
+        if drink is not None:
+            opt = next((o for o in options if o.get("option_group") == "SET_DRINK" and drink in o["name_ko"]), None)
+            if opt is None:
+                return f"오류: 음료 '{drink}'를 찾을 수 없습니다."
+            new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})
+
+        payload["selected_options"] = kept + new_selected
 
     try:
         _run(api_client.patch_cart_item(session_id, cart_item_id, payload))
