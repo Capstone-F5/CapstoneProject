@@ -32,7 +32,7 @@ const GESTURE_LABELS = {
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
 // 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
-const CONTROL_BAR_HEIGHT = 40
+const CONTROL_BAR_HEIGHT = 58
 
 // 메뉴 원본(options 포함)에서 특정 그룹의 옵션을 이름으로 찾는다.
 // name이 없으면(SET_UPGRADE처럼 단일 옵션인 경우) 그룹만으로 찾는다.
@@ -841,11 +841,12 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 모든 화면에서 항상 고정 표시 ── */}
+        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 항상 화면 맨 아래 고정
+             (음성인식 UI가 열려도 그 아래에 그대로 고정 — 위로 밀려 올라가지 않음) ── */}
         <div
           style={{
             position: 'fixed',
-            bottom: chatOpen ? '33vh' : 0,
+            bottom: 0,
             left: 0, right: 0,
             zIndex: 500,
             height: CONTROL_BAR_HEIGHT,
@@ -857,28 +858,31 @@ function AppContent() {
             justifyContent: 'center',
             gap: 40,
             fontSize: 14,
-            transition: 'bottom 0.35s ease',
           }}
         >
-          <ControlText onClick={() => setChatOpen(o => !o)}>
-            음성인식 {chatOpen ? 'ON' : 'OFF'}
-          </ControlText>
-          <ControlText onClick={() => setGestureEnabled(v => !v)}>
-            제스처 {gestureEnabled ? 'ON' : 'OFF'}
-          </ControlText>
+          <ControlText
+            onClick={() => setChatOpen(o => !o)}
+            ko={`음성인식 ${chatOpen ? 'ON' : 'OFF'}`}
+            en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
+          />
+          <ControlText
+            onClick={() => setGestureEnabled(v => !v)}
+            ko={`제스처 ${gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Gesture ${gestureEnabled ? 'ON' : 'OFF'}`}
+          />
           <ControlText
             disabled={!gestureEnabled}
             onClick={() => gestureEnabled && setPipEnabled(v => !v)}
-          >
-            카메라 {pipEnabled && gestureEnabled ? 'ON' : 'OFF'}
-          </ControlText>
+            ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+          />
         </div>
       </>
   )
 }
 
-// 접근성 컨트롤 바의 텍스트 버튼 — 모든 화면에서 재사용
-function ControlText({ onClick, disabled = false, children }) {
+// 접근성 컨트롤 바의 텍스트 버튼 — 한국어(위, 크게) + 영어(아래, 작게) 동시 표기
+function ControlText({ onClick, disabled = false, ko, en }) {
   return (
     <button
       onClick={onClick}
@@ -887,13 +891,17 @@ function ControlText({ onClick, disabled = false, children }) {
         background: 'none',
         border: 'none',
         color: disabled ? 'rgba(255,255,255,0.4)' : '#fff',
-        fontSize: 14,
-        fontWeight: 600,
         cursor: disabled ? 'not-allowed' : 'pointer',
         padding: '4px 0',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+        lineHeight: 1.3,
       }}
     >
-      {children}
+      <span style={{ fontSize: 15, fontWeight: 700 }}>{ko}</span>
+      <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.75 }}>{en}</span>
     </button>
   )
 }
