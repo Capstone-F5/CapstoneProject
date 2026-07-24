@@ -76,6 +76,31 @@ def list_menu() -> str:
     return "\n".join(lines)
 
 @tool
+def list_popular_menu() -> str:
+    """추천메뉴/인기메뉴만 조회한다. '뭐가 맛있어요', '인기메뉴 뭐예요' 류의 질문에는
+    list_menu 대신 반드시 이 도구를 사용한다.
+
+    이 도구는 서버에서 이미 인기 메뉴만 걸러서 반환하므로, 반환된 항목을 그대로 안내하면 되고
+    LLM이 별도로 어떤 메뉴가 인기인지 판단하거나 목록에 다른 메뉴를 추가하면 안 된다.
+    """
+    try:
+        items = _run(api_client.fetch_menu_items())
+    except Exception as e:
+        return _friendly_error("메뉴 조회 실패", e)
+
+    popular_items = [i for i in items if i.get("is_popular") and i.get("is_available", True)]
+    if not popular_items:
+        return "현재 등록된 추천 메뉴가 없습니다."
+
+    lines = ["[추천 메뉴 — 이 목록에 있는 항목만 안내할 것]"]
+    for item in popular_items:
+        allergens = item.get("allergens") or []
+        allergen_tag = f" [알레르기: {', '.join(a['name_ko'] for a in allergens)}]" if allergens else ""
+        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){allergen_tag}")
+    return "\n".join(lines)
+
+
+@tool
 def search_menu(query: str, k: int = 5) -> str:
     """메뉴 이름·특징으로 검색해 실제 menu_item_id를 찾는다. list_menu보다 이걸 우선 쓴다.
 
@@ -521,6 +546,7 @@ def ui_action(
 # 에이전트가 인식할 최종 도구 리스트 등록
 ACTION_TOOLS = [
     list_menu,
+    list_popular_menu,
     search_menu,
     add_item,
     remove_item,

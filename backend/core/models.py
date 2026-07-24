@@ -146,6 +146,8 @@ class MenuItem(Base):
     base_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     description: Mapped[str] = mapped_column(Text, default="")
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 세트로 담을 때 보여줄 이미지(버거+사이드+음료 구성 사진). 없으면 image_url로 대체.
+    set_image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     is_popular: Mapped[bool] = mapped_column(Boolean, default=False)
     is_new: Mapped[bool] = mapped_column(Boolean, default=False)

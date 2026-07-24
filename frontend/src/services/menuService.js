@@ -1,5 +1,4 @@
 import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
-import { lookupImage, lookupSetImage } from '../data/imageMap'
 
 // ─────────────────────────────────────────────────────────────────
 // GET /api/menu?locale=ko → { categories: [CategoryOut], menu_items: { burger|side|beverage: [MenuItemOut] } }
@@ -44,8 +43,10 @@ function adaptItem(i, locale) {
     desc: stripNamePrefix(i.description),
     hasSet,
     exclusions,
-    image: lookupImage(i.name_ko),
-    setImage: lookupSetImage(i.name_ko) ?? lookupImage(i.name_ko),
+    // 이미지는 DB(menu_items.image_url/set_image_url) 매칭을 그대로 사용 — 관리자 대시보드에서
+    // 나중에 이 필드를 직접 관리할 수 있도록 프론트에 하드코딩된 이름 매핑을 두지 않는다.
+    image: i.image_url ?? null,
+    setImage: i.set_image_url ?? i.image_url ?? null,
     isPopular: i.is_popular,
     // 원본 options 보존 — App.jsx가 담기/카트 복원 시 selected_options 조립에 재사용
     options: i.options,

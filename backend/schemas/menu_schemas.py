@@ -26,6 +26,7 @@ class MenuItemOut(BaseModel):
     base_price: Decimal
     description: str
     image_url: str | None
+    set_image_url: str | None
     is_available: bool
     is_popular: bool
     is_new: bool
@@ -74,6 +75,8 @@ class MenuItemIn(BaseModel):
     name_en: str
     base_price: Decimal
     description: str = ""
+    image_url: str | None = None
+    set_image_url: str | None = None
     is_available: bool = True
     is_popular: bool = False
     is_new: bool = False
@@ -87,6 +90,7 @@ class MenuItemPatchIn(BaseModel):
     base_price: Decimal | None = None
     description: str | None = None
     image_url: str | None = None
+    set_image_url: str | None = None
     is_available: bool | None = None
     is_popular: bool | None = None
     is_new: bool | None = None

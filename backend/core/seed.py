@@ -128,6 +128,37 @@ _SET_DRINKS = [
 # 추천메뉴 탭(is_popular) — frontend mock 의 recommended 3종과 동일
 _POPULAR_SLUGS = {"burger_f", "burger_crab", "burger_vegan"}
 
+# 메뉴 slug → (단품 이미지 경로, 세트 이미지 경로). frontend/public/images/ 아래 정적 파일을 가리킨다.
+# (image_url, set_image_url) 모두 DB 컬럼이므로 이미지 교체·추가는 이제 이 값만 바꾸면 된다.
+_IMAGES: dict[str, tuple[str | None, str | None]] = {
+    "burger_f": ("/images/burgers/F버거.webp", "/images/sets/F버거 세트.webp"),
+    "burger_grilled_beef": ("/images/burgers/그릴드비프버거.webp", "/images/sets/그릴드비프버거 세트.webp"),
+    "burger_mozzarella": ("/images/burgers/모짜렐라버거.webp", "/images/sets/모짜렐라버거 세트.webp"),
+    "burger_vegan": ("/images/burgers/비건버거.webp", "/images/sets/비건버거 세트.webp"),
+    "burger_crab": ("/images/burgers/게살버거.webp", "/images/sets/게살버거 세트.webp"),
+    "burger_chicken_thigh": ("/images/burgers/치킨다릿살버거.webp", "/images/sets/치킨다릿살버거 세트.webp"),
+    "burger_double_bulgogi": ("/images/burgers/더블불고기버거.webp", "/images/sets/더블불고기버거 세트.webp"),
+    "burger_double_cheese": (None, None),  # 대응하는 이미지 에셋이 아직 없음
+    "burger_chicken_breast": ("/images/burgers/치킨가슴살버거.webp", "/images/sets/치킨가슴살버거 세트.webp"),
+    "burger_shrimp": ("/images/burgers/새우버거.webp", "/images/sets/새우버거 세트.webp"),
+    "burger_bulgogi": ("/images/burgers/불고기버거.webp", "/images/sets/불고기버거 세트.webp"),
+    "burger_cheese": ("/images/burgers/치즈버거.webp", "/images/sets/치즈버거 세트.webp"),
+    "burger_teri": ("/images/burgers/데리버거.webp", "/images/sets/데리버거 세트.webp"),
+    "side_seasoned_fries": ("/images/sides/양념감튀.webp", None),
+    "side_nuggets": ("/images/sides/너겟.webp", None),
+    "side_cheese_sticks": ("/images/sides/치즈스틱.webp", None),
+    "side_fries_m": ("/images/sides/감튀.webp", None),
+    "side_corn_salad": ("/images/sides/콘샐러드.webp", None),
+    "side_coleslaw": ("/images/sides/코울슬로.webp", None),
+    "bev_orange_juice": ("/images/drinks/오렌지주스.webp", None),
+    "bev_coke_m": ("/images/drinks/콜라.webp", None),
+    "bev_zero_coke_m": ("/images/drinks/콜라.webp", None),
+    "bev_sprite_m": ("/images/drinks/사이다.webp", None),
+    "bev_zero_sprite_m": ("/images/drinks/사이다.webp", None),
+    "bev_pororo": ("/images/drinks/뽀로로음료.webp", None),
+    "bev_water": ("/images/drinks/생수.webp", None),
+}
+
 # 식품위생법 표시 대상 알레르기 유발물질 19종 (code, name_ko, name_en)
 _ALLERGENS = [
     ("EGG", "난류", "Egg"),
@@ -220,12 +251,15 @@ async def seed_menu(session: AsyncSession) -> None:
 
     # 메뉴 + 옵션
     for slug, cat_slug, name_ko, name_en, price, desc, excludes, has_set in _MENU:
+        image_url, set_image_url = _IMAGES.get(slug, (None, None))
         item = MenuItem(
             category_id=cat_map[cat_slug],
             name_ko=name_ko,
             name_en=name_en,
             base_price=Decimal(str(price)),
             description=desc,
+            image_url=image_url,
+            set_image_url=set_image_url,
             is_popular=slug in _POPULAR_SLUGS,
         )
         session.add(item)
