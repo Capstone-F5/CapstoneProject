@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocale } from '../i18n/LocaleContext'
 import useT from '../i18n/useT'
 import IdleOverlay from '../components/IdleOverlay'
+import { fetchStartScreenImages } from '../services/settingsService'
 
 const LANGS = [
   { code: 'ko', label: '한글' },
@@ -10,11 +11,34 @@ const LANGS = [
   { code: 'ja', label: '日本語' },
 ]
 
+// 대기화면 배경 — DB(GET /api/settings/start-screen-images)에서 받아온 목록을 5초 간격으로
+// 부드럽게 크로스페이드 순환한다. 관리자가 나중에 이미지를 교체/추가하면 코드 수정 없이 반영된다.
+// 한 장뿐이면 그냥 고정 배경으로 표시되고 순환 타이머 자체가 돌지 않는다.
+const BG_INTERVAL_MS = 5000
+const BG_FADE_MS = 1200
+
 export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
+  const [bgImages, setBgImages] = useState(['/bg.png'])
+  const [bgIndex, setBgIndex] = useState(0)
 
   useEffect(() => { setLocale('ko') }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchStartScreenImages().then(urls => { if (!cancelled) setBgImages(urls) })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    setBgIndex(0)
+    if (bgImages.length < 2) return
+    const timer = setInterval(() => {
+      setBgIndex(i => (i + 1) % bgImages.length)
+    }, BG_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [bgImages])
 
   return (
     <>
@@ -22,10 +46,7 @@ export default function StartScreen({ nav }) {
       onClick={() => nav('orderType')}
       style={{
         height: '100%',
-        backgroundImage: "url('/bg.png')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center center',
-        backgroundRepeat: 'no-repeat',
+        position: 'relative',
         overflow: 'hidden',
         userSelect: 'none',
         display: 'flex',
@@ -35,10 +56,45 @@ export default function StartScreen({ nav }) {
         padding: '0 36px 78px',
       }}
     >
+      {/* 배경 이미지 크로스페이드 스택 */}
+      {bgImages.map((src, i) => (
+        <div
+          key={src}
+          style={{
+            position: 'absolute', inset: 0,
+            backgroundImage: `url('${src}')`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center',
+            backgroundRepeat: 'no-repeat',
+            opacity: i === bgIndex ? 1 : 0,
+            transition: `opacity ${BG_FADE_MS}ms ease-in-out`,
+          }}
+        />
+      ))}
+
+      {/* 회원가입 — 주문 흐름과 완전히 분리된 별도 화면으로 이동. 눈에 띄지 않게 우측 상단에 배치 */}
+      <button
+        onClick={e => { e.stopPropagation(); nav('signup') }}
+        style={{
+          position: 'absolute', top: 20, right: 20, zIndex: 1,
+          background: 'rgba(0,0,0,0.35)',
+          border: '1.5px solid rgba(255,255,255,0.6)',
+          borderRadius: 20,
+          color: '#fff',
+          fontSize: 15,
+          fontWeight: 700,
+          padding: '9px 18px',
+          cursor: 'pointer',
+        }}
+      >
+        회원가입
+      </button>
+
       {/* 주문 시작 버튼 */}
       <button
         onClick={e => { e.stopPropagation(); nav('orderType') }}
         style={{
+          position: 'relative',
           width: '100%',
           maxWidth: 480,
           padding: '19px 0',
@@ -57,7 +113,7 @@ export default function StartScreen({ nav }) {
       </button>
 
       {/* 언어 선택 */}
-      <div style={{ display: 'flex', gap: 36 }}>
+      <div style={{ position: 'relative', display: 'flex', gap: 36 }}>
         {LANGS.map(({ code, label }) => (
           <button
             key={code}

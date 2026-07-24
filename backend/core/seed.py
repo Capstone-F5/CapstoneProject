@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Allergen, Category, MenuItem, MenuItemAllergen, MenuOption
+from .models import Allergen, Category, MenuItem, MenuItemAllergen, MenuOption, StartScreenImage
 
 
 _CATEGORIES = [
@@ -323,5 +323,24 @@ async def seed_menu(session: AsyncSession) -> None:
             session.add(
                 MenuItemAllergen(menu_item_id=item.id, allergen_id=allergen_code_map[allergen_code])
             )
+
+    await session.commit()
+
+
+# 대기화면 배경 슬라이드 초기값 — 여러 장 추가하려면 관리자가 DB에 행을 더 넣으면 된다
+# (프론트는 GET /api/settings/start-screen-images 로 display_order 순으로 받아와 순환 표시)
+_START_SCREEN_IMAGES = [
+    ("/bg.png", 0),
+]
+
+
+async def seed_start_screen_images(session: AsyncSession) -> None:
+    """이미 시드되어 있으면 skip."""
+    existing = (await session.execute(select(StartScreenImage))).first()
+    if existing:
+        return
+
+    for image_url, display_order in _START_SCREEN_IMAGES:
+        session.add(StartScreenImage(image_url=image_url, display_order=display_order))
 
     await session.commit()

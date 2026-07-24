@@ -7,6 +7,17 @@ class UserPointsOut(BaseModel):
     current_points: int
     tier: str | None  # BASIC | SILVER | GOLD
 
+class UserRegisterIn(BaseModel):
+    phone: str
+    name: str | None = None
+
+class UserRegisterOut(BaseModel):
+    user_id: str
+    phone_number: str
+    name: str | None
+    current_points: int
+    already_member: bool  # 가입 시도 전에 이미 정식 회원이었는지 여부
+
 class CouponOut(BaseModel):
     user_coupon_id: str
     coupon_code: str

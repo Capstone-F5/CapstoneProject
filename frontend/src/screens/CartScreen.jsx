@@ -3,7 +3,10 @@ import Logo from '../components/Logo'
 import { lookupCustomer } from '../services/pointsService'
 import { createOrder, validateCoupon } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
+import { triggerHardwareAction } from '../services/hardwareService'
 import IdleOverlay from '../components/IdleOverlay'
+import CouponScanModal from '../components/CouponScanModal'
+import CameraPreview from '../components/CameraPreview'
 import useT from '../i18n/useT'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
@@ -49,6 +52,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [emptyCartNotice,  setEmptyCartNotice]  = useState(false)
   const [couponInfo,       setCouponInfo]       = useState(null)   // { valid, message, discountAmount? }
   const [couponChecking,   setCouponChecking]   = useState(false)
+  const [showCouponScan,   setShowCouponScan]   = useState(false)
 
   const isCompletingRef = useRef(false)
 
@@ -105,8 +109,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     openPayment(formatPhone(raw), name, registered)
   }
 
-  const handleCheckCoupon = async () => {
-    const code = couponCode.trim()
+  const handleCheckCoupon = async (codeArg) => {
+    const code = (typeof codeArg === 'string' ? codeArg : couponCode).trim()
     if (!code) return
     setCouponChecking(true)
     try {
@@ -119,14 +123,29 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
 
+  // QR/바코드 스캔 또는 모달 내 수동 입력 완료 시 호출됨
+  const handleCouponDetected = (code) => {
+    setShowCouponScan(false)
+    setCouponCode(code)
+    handleCheckCoupon(code)
+  }
+
   const goPayment = (dest) => {
     setShowPaymentPopup(false)
     setPaymentError('')
     const methodMap = { cardPayment: 'card', cashPayment: 'cash', payPayment: 'pay' }
     setPaymentMethod(methodMap[dest] ?? 'card')
-    if (dest === 'cardPayment') setShowCardPayment(true)
-    else if (dest === 'cashPayment') setShowCashPayment(true)
-    else if (dest === 'payPayment')  setShowPayPayment(true)
+    if (dest === 'cardPayment') {
+      setShowCardPayment(true)
+      // 카드/삼성페이 결제 대기 화면 진입 시 물리적 카드리더 동작 트리거(현재는 시뮬레이션).
+      // ★ 아두이노 등 실제 장치 연동 확장 지점 — hardwareService.js 참고.
+      triggerHardwareAction('card_payment')
+    } else if (dest === 'cashPayment') {
+      setShowCashPayment(true)
+      triggerHardwareAction('cash_payment')
+    } else if (dest === 'payPayment') {
+      setShowPayPayment(true)
+    }
   }
 
   // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
@@ -293,11 +312,13 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
             <OrderTypeChip
               label={t('dineIn')}
+              image="/images/sets/F버거 세트.webp"
               active={orderType === 'dine-in'}
               onClick={() => setOrderType('dine-in')}
             />
             <OrderTypeChip
               label={t('takeout')}
+              image="/images/etc/Takeout.webp"
               active={orderType === 'takeout'}
               onClick={() => setOrderType('takeout')}
             />
@@ -366,18 +387,19 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {/* ── 결제 수단 선택 팝업 ── */}
       {showPaymentPopup && (
         <ModalBase onClose={() => setShowPaymentPopup(false)} minHeight="clamp(500px,76vh,700px)">
-          {/* 인사말 + 금액 */}
+          {/* 인사말 + 금액 — 회원+이름 / 회원인데 이름없음 / 미회원(주문 시 자동 임시 등록) 3가지 상태 표시 */}
           <div style={{ marginBottom: 28 }}>
-            {confirmedName ? (
+            {confirmedRegistered !== null && (
               <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
                 안녕하세요,{' '}
-                <span style={{ color: '#744032' }}>{confirmedName}</span>님
+                <span style={{ color: '#744032' }}>
+                  {confirmedRegistered
+                    ? (confirmedName || '이름없음')
+                    : '고객님(미가입)'}
+                </span>
+                {confirmedRegistered ? '님' : ''}
               </div>
-            ) : confirmedRegistered === false ? (
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#888', marginBottom: 2 }}>
-                비회원 계정입니다
-              </div>
-            ) : null}
+            )}
             <div style={{ fontSize: 13, color: '#aaa', fontWeight: 600, marginBottom: 6 }}>
               {t('selectPayMethod')}
             </div>
@@ -386,30 +408,19 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             </div>
           </div>
 
-          {/* 쿠폰 코드 입력 (선택) — 결제 전에 미리 검증해 할인 금액을 보여준다 */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <input
-              type="text"
-              value={couponCode}
-              onChange={e => { setCouponCode(e.target.value); setCouponInfo(null) }}
-              placeholder="쿠폰 코드 (선택)"
-              style={{
-                flex: 1, boxSizing: 'border-box', border: '1.5px solid #e0e0e0',
-                borderRadius: 10, padding: '12px 14px', fontSize: 15,
-              }}
-            />
-            <button
-              onClick={handleCheckCoupon}
-              disabled={!couponCode.trim() || couponChecking}
-              style={{
-                border: 'none', borderRadius: 10, padding: '0 20px',
-                background: couponCode.trim() ? '#744032' : '#e0e0e0',
-                color: couponCode.trim() ? '#fff' : '#999',
-                fontSize: 14, fontWeight: 700,
-                cursor: couponCode.trim() ? 'pointer' : 'default',
-              }}
-            >{couponChecking ? '확인 중' : '확인'}</button>
-          </div>
+          {/* 쿠폰 (선택) — QR/바코드 스캔 또는 수동 입력, 결제 전에 미리 검증해 할인 금액을 보여준다 */}
+          <button
+            onClick={() => { setCouponInfo(null); setShowCouponScan(true) }}
+            disabled={couponChecking}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              width: '100%', boxSizing: 'border-box', border: '1.5px solid #e0e0e0',
+              borderRadius: 10, padding: '12px 14px', fontSize: 15, fontWeight: 700,
+              background: '#fafafa', color: '#744032', cursor: 'pointer', marginBottom: 6,
+            }}
+          >
+            📷 {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
+          </button>
           {couponInfo && (
             <p style={{
               fontSize: 13, fontWeight: 700, marginTop: 0, marginBottom: 18,
@@ -522,8 +533,22 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onComplete={handleComplete}
           error={paymentError}
         >
-          <BarcodeIllustration />
+          {/* 간편결제 QR/바코드 인식을 흉내내기 위해 실제 카메라를 켠다(결제 자체는 시뮬레이션) */}
+          <div style={{ position: 'relative', width: '100%', maxWidth: 240, aspectRatio: '1 / 1' }}>
+            <CameraPreview style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 12 }} />
+            <div style={{
+              position: 'absolute', inset: '12%', border: '3px solid #F5B800',
+              borderRadius: 10, pointerEvents: 'none',
+            }} />
+          </div>
         </PayWaitPopup>
+      )}
+
+      {showCouponScan && (
+        <CouponScanModal
+          onDetect={handleCouponDetected}
+          onClose={() => setShowCouponScan(false)}
+        />
       )}
 
       <IdleOverlay onExpire={() => { clearCart(); nav('start') }} />
@@ -651,37 +676,6 @@ function CashIllustration() {
   )
 }
 
-/* ── 일러스트: 바코드 ── */
-function BarcodeIllustration() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
-      <div style={{ position: 'relative' }}>
-        <div style={{
-          width: 72, height: 110, borderRadius: 10, border: '3px solid #bbb', background: '#f5f5f5',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          padding: 8, overflow: 'hidden',
-        }}>
-          <div style={{ fontSize: 8, color: '#aaa', marginBottom: 4 }}>10:00</div>
-          <div style={{ display: 'flex', gap: 1, alignItems: 'flex-end', height: 40 }}>
-            {[3,5,2,4,3,5,2,4,3,5,2,4,3,5,2,4].map((h, i) => (
-              <div key={i} style={{ width: 2, height: h * 6, background: '#222' }} />
-            ))}
-          </div>
-          <div style={{ fontSize: 7, color: '#555', marginTop: 3, letterSpacing: 0.5 }}>1234567890</div>
-          <div style={{ position: 'absolute', left: 8, right: 8, top: '52%', height: 1.5, background: '#f00', opacity: 0.8 }} />
-        </div>
-        <div style={{ textAlign: 'center', fontSize: 30, marginTop: -4 }}>✊</div>
-      </div>
-      <div style={{
-        width: 64, height: 64, borderRadius: 8, background: '#424242',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#ef5350', boxShadow: '0 0 8px rgba(239,83,80,0.6)' }} />
-      </div>
-    </div>
-  )
-}
-
 /* ── CartItem ── */
 function CartItem({ item, onUpdateQty }) {
   const t = useT()
@@ -790,15 +784,28 @@ function PayBadge({ bg, color, small, children }) {
   )
 }
 
-function OrderTypeChip({ label, active, onClick }) {
+function OrderTypeChip({ label, image, active, onClick }) {
   return (
     <button onClick={onClick} style={{
-      flex: 1, padding: '18px 0', borderRadius: 12,
-      border: active ? '2px solid #744032' : '1.5px solid #ddd',
-      background: active ? '#744032' : '#fff',
-      color: active ? '#fff' : '#555',
-      fontSize: 16, fontWeight: 800, cursor: 'pointer',
-    }}>{label}</button>
+      flex: 1, padding: '14px 8px 12px', borderRadius: 14,
+      border: active ? '2.5px solid #744032' : '1.5px solid #ddd',
+      background: active ? '#fbf3f0' : '#fff',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+      cursor: 'pointer',
+    }}>
+      <img
+        src={image}
+        alt={label}
+        style={{
+          width: '100%', maxWidth: 120, aspectRatio: '1 / 1',
+          objectFit: 'contain', borderRadius: 10,
+        }}
+      />
+      <span style={{
+        fontSize: 16, fontWeight: 800,
+        color: active ? '#744032' : '#555',
+      }}>{label}</span>
+    </button>
   )
 }
 

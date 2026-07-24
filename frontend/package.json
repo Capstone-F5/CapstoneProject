@@ -13,6 +13,8 @@
   "dependencies": {
     "@mediapipe/hands": "^0.4.1675469240",
     "@ricky0123/vad-react": "^0.0.22",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
     "onnxruntime-web": "^1.18.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

@@ -154,8 +154,12 @@ class MenuItem(Base):
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # display_order로 정렬 — UUID PK라 정렬을 지정하지 않으면 반환 순서가 삽입 순서와
+    # 무관해져서(InnoDB는 PK 순으로 반환), "감자튀김"/"양념감자튀김"처럼 이름이 서로의 부분
+    # 문자열인 옵션끼리 순서가 뒤섞여 음성 주문의 이름 매칭이 비결정적으로 틀리는 문제가 있었다.
     options: Mapped[list["MenuOption"]] = relationship(
-        "MenuOption", back_populates="menu_item", cascade="all,delete-orphan"
+        "MenuOption", back_populates="menu_item", cascade="all,delete-orphan",
+        order_by="MenuOption.display_order",
     )
     category: Mapped["Category"] = relationship("Category")
     allergen_links: Mapped[list["MenuItemAllergen"]] = relationship(
@@ -392,4 +396,19 @@ class AdminUser(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# --- START_SCREEN_IMAGES ---------------------------------------------------
+class StartScreenImage(Base):
+    """대기화면(StartScreen) 배경 슬라이드 — 여러 장이면 프론트가 순서대로 크로스페이드 순환한다.
+
+    관리자가 나중에 이미지를 교체/추가/비활성화할 수 있도록 DB로 관리한다(코드 수정 불필요).
+    """
+    __tablename__ = "start_screen_images"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    image_url: Mapped[str] = mapped_column(String(255))
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -301,6 +301,11 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       }}>
         {categories.map(cat => {
           const active = cat.id === catId
+          // 알려진 4개 탭(추천메뉴/버거/사이드/음료)은 기존 큐레이션된 아이콘+번역을 그대로 쓰고,
+          // 관리자가 새로 추가한 카테고리는 DB의 image_url/name을 그대로 표시한다(폴백).
+          const i18nKey = CAT_I18N_KEY[cat.id]
+          const label = i18nKey ? t(i18nKey) : (cat.name ?? cat.id)
+          const iconSrc = CAT_IMAGE[cat.id] ?? cat.image
           return (
             <button
               key={cat.id}
@@ -312,23 +317,32 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 cursor: 'pointer',
               }}
             >
-              <img
-                src={CAT_IMAGE[cat.id]}
-                alt={cat.name}
-                style={{
-                  width: 'clamp(72px, 20vw, 92px)',
-                  height: 'clamp(72px, 20vw, 92px)',
-                  objectFit: 'cover',
+              {iconSrc ? (
+                <img
+                  src={iconSrc}
+                  alt={label}
+                  style={{
+                    width: 'clamp(72px, 20vw, 92px)',
+                    height: 'clamp(72px, 20vw, 92px)',
+                    objectFit: 'cover',
+                    filter: active ? 'none' : 'grayscale(1) opacity(0.4)',
+                    transform: active ? 'scale(1.1)' : 'scale(1)',
+                    transition: 'all 0.18s',
+                  }}
+                />
+              ) : (
+                <span style={{
+                  fontSize: 'clamp(40px, 12vw, 56px)',
                   filter: active ? 'none' : 'grayscale(1) opacity(0.4)',
                   transform: active ? 'scale(1.1)' : 'scale(1)',
                   transition: 'all 0.18s',
-                }}
-              />
+                }}>{cat.emoji ?? '🍽️'}</span>
+              )}
               <span style={{
                 fontSize: 'clamp(18px, 4.8vw, 22px)',
                 fontWeight: active ? 700 : 400,
                 color: active ? '#1a1a1a' : '#aaa',
-              }}>{t(CAT_I18N_KEY[cat.id] ?? cat.id)}</span>
+              }}>{label}</span>
             </button>
           )
         })}

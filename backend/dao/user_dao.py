@@ -17,11 +17,38 @@ async def get_user_by_phone(db: AsyncSession, phone: str) -> User | None:
 
 
 async def create_guest_user(db: AsyncSession, phone: str) -> User:
-    """전화번호로 포인트 적립을 신청했지만 회원 레코드가 없는 경우 자동 가입시킨다."""
-    user = User(phone_number=phone, is_guest=False, current_points=0)
+    """전화번호로 포인트 적립만 요청했을 뿐 정식 회원가입은 하지 않은 경우.
+
+    ★ is_guest=True 로 남긴다 — 전화번호를 한 번 입력했다고 회원가입이 되는 것은 아니다.
+    이 레코드는 포인트를 전화번호 기준으로 누적 추적하기 위한 것일 뿐, 실제 회원 여부는
+    register_user()로 별도 회원가입을 마쳐야 is_guest=False 로 바뀐다.
+    """
+    user = User(phone_number=phone, is_guest=True, current_points=0)
     db.add(user)
     await db.flush()
     return user
+
+
+async def register_user(db: AsyncSession, phone: str, name: str | None) -> tuple[User, bool]:
+    """정식 회원가입. 이미 포인트 추적용으로 생성된 비회원(is_guest=True) 레코드가 있으면
+    그 레코드를 정식 회원으로 전환(포인트 유지)하고, 없으면 새로 만든다.
+
+    Returns:
+        (user, already_member): already_member 는 가입 시도 전에 이미 정식 회원이었는지 여부.
+    """
+    user = await get_user_by_phone(db, phone)
+    if user is None:
+        user = User(phone_number=phone, name=name, is_guest=False, current_points=0)
+        db.add(user)
+        await db.flush()
+        return user, False
+
+    already_member = not user.is_guest
+    user.is_guest = False
+    if name:
+        user.name = name
+    await db.flush()
+    return user, already_member
 
 async def get_membership(db: AsyncSession, user_id: str) -> Membership | None:
     result = await db.execute(

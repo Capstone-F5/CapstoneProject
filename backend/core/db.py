@@ -56,7 +56,7 @@ async def get_session() -> AsyncSession:
 async def init_db() -> None:
     """앱 시작 시 테이블 생성 + 메뉴 시드."""
     from . import models  # noqa: F401
-    from .seed import seed_menu
+    from .seed import seed_menu, seed_start_screen_images
     from .admin_seed import seed_admin
 
     async with engine.begin() as conn:
@@ -65,3 +65,4 @@ async def init_db() -> None:
     async with SessionLocal() as session:
         await seed_menu(session)
         await seed_admin(session)
+        await seed_start_screen_images(session)

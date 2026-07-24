@@ -4,6 +4,7 @@ import { LocaleProvider, useLocale } from './i18n/LocaleContext'
 import * as cartService from './services/cartService'
 import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
+import SignupScreen from './screens/SignupScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
 import MenuScreen from './screens/MenuScreen'
 import CartScreen from './screens/CartScreen'
@@ -679,6 +680,7 @@ function AppContent() {
 
   const screens = {
     start:       <StartScreen {...props} />,
+    signup:      <SignupScreen nav={nav} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,

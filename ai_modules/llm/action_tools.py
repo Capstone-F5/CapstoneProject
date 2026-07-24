@@ -52,6 +52,27 @@ def _friendly_error(prefix: str, e: Exception) -> str:
         return f"{prefix}: 서버에 연결할 수 없습니다."
     return f"{prefix}: 처리 중 오류가 발생했습니다."
 
+
+def _find_option_by_name(
+    options: list[dict], group: str, name: str, available_only: bool = False
+) -> dict | None:
+    """옵션 그룹 내에서 이름으로 옵션을 찾는다. 정확히 일치하는 이름을 항상 먼저 확인하고,
+    없을 때만 부분 일치로 폴백한다.
+
+    "감자튀김"은 "양념감자튀김"의 부분 문자열이고 "콜라"/"사이다"도 각각 "제로콜라"/
+    "제로사이다"의 부분 문자열이다. 옵션 목록은 정렬이 보장되지 않으므로(UUID PK 순서는
+    삽입 순서와 무관) 부분 일치만으로 고르면 반환 순서에 따라 "감자튀김"을 요청했는데
+    "양념감자튀김"이 선택되는 등 비결정적으로 엉뚱한 옵션이 골라질 수 있었다.
+    """
+    candidates = [
+        o for o in options
+        if o.get("option_group") == group and (not available_only or o.get("is_available", True))
+    ]
+    exact = next((o for o in candidates if o["name_ko"] == name), None)
+    if exact:
+        return exact
+    return next((o for o in candidates if name in o["name_ko"]), None)
+
 @tool
 def list_menu() -> str:
     """판매 중인 메뉴 목록을 menu_item_id와 함께 조회한다. add_item 호출 전 menu_item_id 확인용으로 사용."""
@@ -184,12 +205,8 @@ def add_item(
                 "오류: 세트는 사이드와 음료를 먼저 확인해야 담을 수 있습니다. "
                 "고객에게 사이드와 음료를 물어본 뒤 side·drink 값을 채워 다시 호출하세요."
             )
-        side_opt = next(
-            (o for o in options if o.get("option_group") == "SET_SIDE" and side in o["name_ko"]), None
-        )
-        drink_opt = next(
-            (o for o in options if o.get("option_group") == "SET_DRINK" and drink in o["name_ko"]), None
-        )
+        side_opt = _find_option_by_name(options, "SET_SIDE", side)
+        drink_opt = _find_option_by_name(options, "SET_DRINK", drink)
         if side_opt is None:
             return f"오류: 사이드 '{side}'를 찾을 수 없습니다. 감자튀김, 치즈스틱, 치킨너겟, 양념감자튀김 중에서 다시 확인하세요."
         if drink_opt is None:
@@ -199,11 +216,7 @@ def add_item(
         selected_options.append({"option_id": drink_opt["id"], "name": drink_opt["name_ko"]})
 
     for excl in (exclusions or []):
-        opt = next(
-            (o for o in options
-             if excl in o["name_ko"] and o.get("option_group") == "EXCLUDE" and o.get("is_available", True)),
-            None,
-        )
+        opt = _find_option_by_name(options, "EXCLUDE", excl, available_only=True)
         if opt:
             selected_options.append({"option_id": opt["id"], "name": opt["name_ko"]})
 
@@ -318,20 +331,16 @@ def update_item_options(
 
         new_selected = []
         for excl in (exclusions or []):
-            opt = next(
-                (o for o in options
-                 if excl in o["name_ko"] and o.get("option_group") == "EXCLUDE" and o.get("is_available", True)),
-                None,
-            )
+            opt = _find_option_by_name(options, "EXCLUDE", excl, available_only=True)
             if opt:
                 new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})
         if side is not None:
-            opt = next((o for o in options if o.get("option_group") == "SET_SIDE" and side in o["name_ko"]), None)
+            opt = _find_option_by_name(options, "SET_SIDE", side)
             if opt is None:
                 return f"오류: 사이드 '{side}'를 찾을 수 없습니다."
             new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})
         if drink is not None:
-            opt = next((o for o in options if o.get("option_group") == "SET_DRINK" and drink in o["name_ko"]), None)
+            opt = _find_option_by_name(options, "SET_DRINK", drink)
             if opt is None:
                 return f"오류: 음료 '{drink}'를 찾을 수 없습니다."
             new_selected.append({"option_id": opt["id"], "name": opt["name_ko"]})

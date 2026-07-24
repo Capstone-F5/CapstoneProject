@@ -7,10 +7,14 @@ import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
 
 const API_BASE = import.meta.env.VITE_API_URL
 
-// 백엔드 카테고리 키(name_en.lower()) → 프론트 카테고리 id
+// 백엔드 카테고리 키(name_en.lower()) → 프론트 카테고리 id.
+// 여기 없는 카테고리는 name_en.lower() 값을 그대로 id로 쓴다 — 관리자가 새 카테고리를
+// 추가해도(예: "디저트") 코드 수정 없이 그대로 새 탭으로 나타난다.
 const CAT_KEY_MAP = { burger: 'burger', side: 'side', beverage: 'drink' }
-const CAT_NAME_KO = { recommended: '추천메뉴', burger: '버거', side: '사이드', drink: '음료수' }
-const CAT_EMOJI   = { recommended: '🍱', burger: '🍔', side: '🍟', drink: '🥤' }
+// "추천메뉴"는 DB에 없는 가상 탭(is_popular 필터)이라 다국어 라벨을 여기서 직접 관리한다.
+const RECOMMENDED_NAME = { ko: '추천메뉴', en: 'Recommended', zh: '推荐菜单', ja: 'おすすめ' }
+const CAT_EMOJI = { recommended: '🍱', burger: '🍔', side: '🍟', drink: '🥤' }
+const DEFAULT_CAT_EMOJI = '🍽️'
 
 function parseKcal(desc) {
   const m = desc.match(/(\d+)\s*kcal/)
@@ -65,9 +69,23 @@ export async function fetchMenuData(locale = 'ko') {
   }
   menuItems.recommended = Object.values(menuItems).flat().filter(i => i.isPopular)
 
-  const categories = ['recommended', 'burger', 'side', 'drink']
-    .filter(id => id === 'recommended' || menuItems[id])
-    .map(id => ({ id, name: CAT_NAME_KO[id], emoji: CAT_EMOJI[id] }))
+  // DB의 실제 카테고리 목록을 그대로 반영 — 관리자가 카테고리를 추가/이름변경/순서변경/숨김
+  // 처리하면(is_visible) 코드 수정 없이 그대로 반영된다. "추천메뉴"만 DB에 없는 가상 탭이라
+  // 맨 앞에 직접 붙인다. 백엔드가 이미 display_order 순 + is_visible 필터링해서 내려준다.
+  const dbCategories = (raw.categories || []).map(c => {
+    const id = CAT_KEY_MAP[c.name_en.toLowerCase()] ?? c.name_en.toLowerCase()
+    return {
+      id,
+      name: locale === 'ko' ? c.name_ko : c.name_en,
+      image: c.image_url ?? null,
+      emoji: CAT_EMOJI[id] ?? DEFAULT_CAT_EMOJI,
+    }
+  })
+
+  const categories = [
+    { id: 'recommended', name: RECOMMENDED_NAME[locale] ?? RECOMMENDED_NAME.en, image: null, emoji: CAT_EMOJI.recommended },
+    ...dbCategories,
+  ]
 
   return {
     categories,
