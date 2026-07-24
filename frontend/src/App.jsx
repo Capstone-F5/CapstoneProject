@@ -31,6 +31,9 @@ const GESTURE_LABELS = {
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
+// 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
+const CONTROL_BAR_HEIGHT = 40
+
 // 메뉴 원본(options 포함)에서 특정 그룹의 옵션을 이름으로 찾는다.
 // name이 없으면(SET_UPGRADE처럼 단일 옵션인 경우) 그룹만으로 찾는다.
 function findOption(menu, group, name) {
@@ -674,14 +677,8 @@ function AppContent() {
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen }
 
-  const startProps = {
-    ...props,
-    gestureEnabled, setGestureEnabled,
-    pipEnabled,     setPipEnabled,
-  }
-
   const screens = {
-    start:       <StartScreen {...startProps} />,
+    start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
@@ -816,6 +813,7 @@ function AppContent() {
           display: 'flex', flexDirection: 'column',
           height: '100dvh', minHeight: '100vh',
           overflow: 'hidden',
+          paddingBottom: CONTROL_BAR_HEIGHT,
         }}>
           {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
@@ -843,32 +841,60 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── 채팅 FAB — 항상 최상단에 고정 ── */}
-        {screen === 'start' && (
-          <button
-            onClick={() => setChatOpen(o => !o)}
-            style={{
-              position: 'fixed',
-              bottom: chatOpen ? 'calc(33vh + 20px)' : 20,
-              right: 20,
-              zIndex: 500,
-              width: 60, height: 60,
-              borderRadius: '50%',
-              border: '2px solid rgba(255,255,255,0.65)',
-              background: chatOpen ? 'rgba(50,50,50,0.92)' : 'rgba(116,64,50,0.92)',
-              color: '#fff',
-              fontSize: chatOpen ? 20 : 24,
-              cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.38)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'bottom 0.35s ease, background 0.2s',
-            }}
-            title={chatOpen ? '채팅 닫기' : '대화형 주문 도우미'}
+        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 모든 화면에서 항상 고정 표시 ── */}
+        <div
+          style={{
+            position: 'fixed',
+            bottom: chatOpen ? '33vh' : 0,
+            left: 0, right: 0,
+            zIndex: 500,
+            height: CONTROL_BAR_HEIGHT,
+            boxSizing: 'border-box',
+            background: '#000',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 40,
+            fontSize: 14,
+            transition: 'bottom 0.35s ease',
+          }}
+        >
+          <ControlText onClick={() => setChatOpen(o => !o)}>
+            음성인식 {chatOpen ? 'ON' : 'OFF'}
+          </ControlText>
+          <ControlText onClick={() => setGestureEnabled(v => !v)}>
+            제스처 {gestureEnabled ? 'ON' : 'OFF'}
+          </ControlText>
+          <ControlText
+            disabled={!gestureEnabled}
+            onClick={() => gestureEnabled && setPipEnabled(v => !v)}
           >
-            {chatOpen ? '✕' : '💬'}
-          </button>
-        )}
+            카메라 {pipEnabled && gestureEnabled ? 'ON' : 'OFF'}
+          </ControlText>
+        </div>
       </>
+  )
+}
+
+// 접근성 컨트롤 바의 텍스트 버튼 — 모든 화면에서 재사용
+function ControlText({ onClick, disabled = false, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: disabled ? 'rgba(255,255,255,0.4)' : '#fff',
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        padding: '4px 0',
+      }}
+    >
+      {children}
+    </button>
   )
 }
 
