@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
-from dao.user_dao import get_user_by_phone, get_membership, get_unused_coupons
+from dao.user_dao import get_user_by_phone, get_membership, get_unused_coupons, expire_old_points
 from schemas.user_schemas import UserPointsOut, CouponOut
 
 router = APIRouter(prefix="/api/user", tags=["user"])
@@ -11,10 +11,13 @@ async def get_user_points(phone: str, db: AsyncSession = Depends(get_session)):
     user = await get_user_by_phone(db, phone)
     if user is None:
         raise HTTPException(status_code=404, detail="등록된 회원이 아닙니다")
+    if await expire_old_points(db, user):
+        await db.commit()
     membership = await get_membership(db, user.id)
     return UserPointsOut(
         user_id=user.id,
         phone_number=user.phone_number,
+        name=user.name,
         current_points=user.current_points,
         tier=membership.tier if membership else None,
     )

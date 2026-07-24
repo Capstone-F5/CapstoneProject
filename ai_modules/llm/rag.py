@@ -58,14 +58,17 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             "description": item.description,
             "options": options,
             "is_available": item.is_available,
+            "is_popular": item.is_popular,
         }
         meta_map[item.id] = meta
 
         # 검색 텍스트: 한국어/영어 이름 + 설명 모두 포함
+        # 인기 메뉴는 "추천메뉴/인기메뉴" 문구를 섞어 넣어 관련 질의("추천해줘", "인기메뉴 뭐야")로도 검색되게 한다.
+        popular_tag = "\n추천메뉴, 인기메뉴" if item.is_popular else ""
         searchable = (
             f"{item.name_ko} ({item.name_en})\n"
             f"가격: {meta['base_price']}원\n"
-            f"{item.description}"
+            f"{item.description}{popular_tag}"
         )
         docs.append(Document(page_content=searchable, metadata={"menu_item_id": item.id}))
 

@@ -53,7 +53,7 @@ async def get_order_by_id(db: AsyncSession, order_id: str) -> Order | None:
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
-        .options(selectinload(Order.items))
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
     )
     return result.scalar_one_or_none()
 

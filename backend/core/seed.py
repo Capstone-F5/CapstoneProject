@@ -107,6 +107,28 @@ _MENU = [
 ]
 
 
+# 세트 사이드/음료 선택 옵션 — frontend/src/data/menuData.js 의 SET_SIDES/SET_DRINKS 와
+# 이름을 반드시 동일하게 유지한다(프론트가 이름으로 옵션을 찾아 selected_options 를 조립함).
+_SET_SIDES = [
+    ("감자튀김", "French Fries", 0),
+    ("치즈스틱", "Cheese Sticks", 0),
+    ("치킨너겟", "Chicken Nuggets", 0),
+    ("양념감자튀김", "Seasoned French Fries", 500),
+]
+_SET_DRINKS = [
+    ("콜라", "Coke", 0),
+    ("제로콜라", "Zero Coke", 0),
+    ("사이다", "Sprite", 0),
+    ("제로사이다", "Zero Sprite", 0),
+    ("생수", "Water", 0),
+    ("뽀로로음료", "Pororo Drink", 0),
+    ("오렌지주스", "Orange Juice", 500),
+]
+
+# 추천메뉴 탭(is_popular) — frontend mock 의 recommended 3종과 동일
+_POPULAR_SLUGS = {"burger_f", "burger_crab", "burger_vegan"}
+
+
 async def seed_menu(session: AsyncSession) -> None:
     """이미 시드되어 있으면 skip."""
     existing = (await session.execute(select(MenuItem))).first()
@@ -131,6 +153,7 @@ async def seed_menu(session: AsyncSession) -> None:
             name_en=name_en,
             base_price=Decimal(str(price)),
             description=desc,
+            is_popular=slug in _POPULAR_SLUGS,
         )
         session.add(item)
         await session.flush()
@@ -145,9 +168,36 @@ async def seed_menu(session: AsyncSession) -> None:
                     description="세트 음료 및 사이드(감자튀김 M) 포함",
                     additional_price=Decimal("2000"),
                     display_order=order,
+                    option_group="SET_UPGRADE",
                 )
             )
             order += 1
+            for name_ko_s, name_en_s, extra in _SET_SIDES:
+                session.add(
+                    MenuOption(
+                        menu_item_id=item.id,
+                        name_ko=name_ko_s,
+                        name_en=name_en_s,
+                        description="세트 사이드 선택",
+                        additional_price=Decimal(str(extra)),
+                        display_order=order,
+                        option_group="SET_SIDE",
+                    )
+                )
+                order += 1
+            for name_ko_d, name_en_d, extra in _SET_DRINKS:
+                session.add(
+                    MenuOption(
+                        menu_item_id=item.id,
+                        name_ko=name_ko_d,
+                        name_en=name_en_d,
+                        description="세트 음료 선택",
+                        additional_price=Decimal(str(extra)),
+                        display_order=order,
+                        option_group="SET_DRINK",
+                    )
+                )
+                order += 1
         for veg in excludes:
             session.add(
                 MenuOption(
@@ -157,6 +207,7 @@ async def seed_menu(session: AsyncSession) -> None:
                     description="알레르기 및 고령자 섭취 불편 호소 시 자동 차단 옵션",
                     additional_price=Decimal("0"),
                     display_order=order,
+                    option_group="EXCLUDE",
                 )
             )
             order += 1

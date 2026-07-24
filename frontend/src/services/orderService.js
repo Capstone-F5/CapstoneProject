@@ -1,46 +1,55 @@
-// ─────────────────────────────────────────────────────────────────
-// 주문 서비스 — DB 연동 시 이 파일만 수정하세요.
-//
-// POST /api/orders
-//   Request  : { items, total, orderType, phone }
-//   Response : { orderNum: number, orderId: string }
-//
-// GET /api/orders/:orderId
-//   Response : { orderId, orderNum, status, createdAt }
-// ─────────────────────────────────────────────────────────────────
+import { getSessionId } from './session'
 
 const API_BASE = import.meta.env.VITE_API_URL
+const ORDER_TYPE_MAP = { 'dine-in': 'EAT_IN', takeout: 'TAKE_OUT' }
 
-/**
- * 주문을 생성하고 주문번호를 반환합니다.
- * @param {{ items: object[], total: number, orderType: string|null, phone: string }} params
- * @returns {Promise<{ orderNum: number, orderId: string }>}
- */
-export async function createOrder({ items, total, orderType, phone }) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items, total, orderType, phone }),
-    })
-    if (!res.ok) throw new Error(`주문 생성 실패 (${res.status})`)
-    return res.json() // { orderNum, orderId }
-  }
-
-  const orderNum = Math.floor(Math.random() * 999) + 1
-  return { orderNum, orderId: `LOCAL-${Date.now()}` }
+async function safeDetail(res) {
+  try { return (await res.json()).detail } catch { return null }
 }
 
 /**
- * 주문 상태를 조회합니다.
- * @param {string} orderId
- * @returns {Promise<{ orderId: string, orderNum: number, status: string, createdAt: string }>}
+ * 주문을 생성한다. 서버가 session_id 로 찾은 백엔드 카트(POST /api/cart/*)의
+ * 내용을 그대로 주문으로 전환하므로 items 는 요청에 포함하지 않는다.
  */
-export async function getOrderStatus(orderId) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/orders/${orderId}`)
-    if (!res.ok) throw new Error(`주문 조회 실패 (${res.status})`)
-    return res.json()
+export async function createOrder({ orderType, phone = null, couponCode = null, pointsToUse = 0 }) {
+  const res = await fetch(`${API_BASE}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: getSessionId(),
+      order_type: ORDER_TYPE_MAP[orderType] ?? 'TAKE_OUT',
+      phone: phone || null,
+      points_to_use: pointsToUse || 0,
+      coupon_code: couponCode || null,
+    }),
+  })
+  if (!res.ok) throw new Error((await safeDetail(res)) || `주문 생성 실패 (${res.status})`)
+  const d = await res.json()
+  return {
+    orderId: d.order_id,
+    orderNum: d.order_number,
+    finalAmount: Number(d.final_amount),
+    discountAmount: Number(d.discount_amount),
+    pointsEarned: d.points_earned,
   }
-  return { orderId, status: 'completed', createdAt: new Date().toISOString() }
+}
+
+/**
+ * 결제 진행 전 쿠폰 코드를 미리 검증한다 (주문 생성 없이 할인 금액만 미리 확인).
+ */
+export async function validateCoupon(code, subtotal) {
+  const res = await fetch(`${API_BASE}/api/orders/validate-coupon?code=${encodeURIComponent(code)}&subtotal=${subtotal}`)
+  if (!res.ok) {
+    const message = (await safeDetail(res)) || `쿠폰 확인 실패 (${res.status})`
+    return { valid: false, message }
+  }
+  const d = await res.json()
+  return { valid: true, discountAmount: Number(d.discount_amount), finalAmount: Number(d.final_amount) }
+}
+
+export async function getOrderStatus(orderId) {
+  const res = await fetch(`${API_BASE}/api/orders/${orderId}`)
+  if (!res.ok) throw new Error(`주문 조회 실패 (${res.status})`)
+  const d = await res.json()
+  return { orderId: d.order_id, orderNum: d.order_number, status: d.status, createdAt: d.created_at }
 }

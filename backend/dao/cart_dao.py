@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from decimal import Decimal
-from core.models import Cart, CartItem, MenuItem
+from core.models import Cart, CartItem, MenuItem, MenuOption
 
 async def get_or_create_cart(db: AsyncSession, session_id: str) -> Cart:
     result = await db.execute(
@@ -46,6 +46,15 @@ async def add_cart_item(
     db.add(item)
     await db.flush()
     return item
+
+async def get_cart_item_with_menu(db: AsyncSession, cart_item_id: str) -> CartItem | None:
+    result = await db.execute(
+        select(CartItem)
+        .where(CartItem.id == cart_item_id)
+        .options(selectinload(CartItem.menu_item).selectinload(MenuItem.options))
+    )
+    return result.scalar_one_or_none()
+
 
 async def update_cart_item(
     db: AsyncSession,

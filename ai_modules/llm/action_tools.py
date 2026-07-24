@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
 from .action_context import push_action
-from .session_context import get_session_id
+from .session_context import get_session_id, get_order_type
 from . import api_client
 from .rag import search_menu as _rag_search_menu
 
@@ -66,7 +66,8 @@ def list_menu() -> str:
     lines = ["[메뉴 목록]"]
     for item in items:
         status = " [품절]" if not item.get("is_available", True) else ""
-        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){status}")
+        popular = " [추천메뉴]" if item.get("is_popular") else ""
+        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){status}{popular}")
     return "\n".join(lines)
 
 @tool
@@ -91,7 +92,12 @@ def search_menu(query: str, k: int = 5) -> str:
     lines = ["[검색 결과]"]
     for h in hits:
         avail = "" if h.get("is_available", True) else " [품절]"
-        lines.append(f"- {h['name_ko']} (menu_item_id: {h['id']}) {int(float(h['base_price']))}원{avail}")
+        popular = " [추천메뉴]" if h.get("is_popular") else ""
+        desc = h.get("description") or ""
+        line = f"- {h['name_ko']} (menu_item_id: {h['id']}) {int(float(h['base_price']))}원{avail}{popular}"
+        if desc:
+            line += f"\n  설명: {desc}"
+        lines.append(line)
     return "\n".join(lines)
 
 @tool
@@ -210,6 +216,38 @@ def update_item_options(
     if special_note is not None:
         payload["special_note"] = special_note
 
+    if exclusions is not None:
+        # exclusions 인자가 그동안 payload에 전혀 반영되지 않아 "재료 빼줘" 후속 요청이
+        # 조용히 무시되던 버그 수정. 세트업그레이드/사이드/음료 선택은 유지하고
+        # EXCLUDE 그룹만 새로 지정한 exclusions 로 교체한다.
+        try:
+            cart = _run(api_client.get_cart(session_id))
+            cart_item = next(
+                (ci for ci in cart.get("items", []) if ci["cart_item_id"] == cart_item_id), None
+            )
+            if cart_item is None:
+                return f"오류: 장바구니에서 해당 항목을 찾을 수 없습니다 ({cart_item_id})"
+            menu_item = _run(api_client.fetch_menu_item_by_id(cart_item["menu_item_id"]))
+        except Exception as e:
+            return _friendly_error("옵션 조회 실패", e)
+
+        options = (menu_item or {}).get("options", [])
+        option_by_id = {o["id"]: o for o in options}
+        kept = [
+            sel for sel in cart_item.get("selected_options", [])
+            if option_by_id.get(sel["option_id"], {}).get("option_group") != "EXCLUDE"
+        ]
+        new_excludes = []
+        for excl in exclusions:
+            opt = next(
+                (o for o in options
+                 if excl in o["name_ko"] and o.get("option_group") == "EXCLUDE" and o.get("is_available", True)),
+                None,
+            )
+            if opt:
+                new_excludes.append({"option_id": opt["id"], "name": opt["name_ko"]})
+        payload["selected_options"] = kept + new_excludes
+
     try:
         _run(api_client.patch_cart_item(session_id, cart_item_id, payload))
     except Exception as e:
@@ -269,8 +307,9 @@ def check_user_points(phone: str) -> str:
     if data is None:
         return "등록된 회원 정보가 없습니다. 주문 후 포인트 적립이 가능합니다."
 
+    greeting = f"{data['name']}님, " if data.get("name") else ""
     return (
-        f"안녕하세요! 현재 포인트는 {data['current_points']}점이며, "
+        f"안녕하세요! {greeting}현재 포인트는 {data['current_points']}점이며, "
         f"등급은 {data.get('tier', 'BASIC')}입니다."
     )
 
@@ -312,8 +351,9 @@ def confirm_order(user_phone: str | None = None) -> str:
         user_phone: 포인트 적립용 전화번호 (선택). 예: 01012345678
     """
     session_id = get_session_id()
+    order_type = get_order_type()
     try:
-        result = _run(api_client.create_order(session_id, user_phone))
+        result = _run(api_client.create_order(session_id, user_phone, order_type))
     except Exception as e:
         return _friendly_error("주문 생성 실패", e)
 

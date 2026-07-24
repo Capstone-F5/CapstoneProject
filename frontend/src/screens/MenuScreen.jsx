@@ -58,9 +58,12 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   }
 
   const handleAdd = (cartItem) => {
-    addToCart(cartItem)
+    // 음성 주문으로 연 모달(voiceOpts)이면 백엔드 카트엔 LLM 툴 실행 시점에 이미 담겨 있으므로
+    // 여기서 다시 addToCart 를 호출하지 않는다(중복 담기 방지) — 시각적 확인용으로만 모달을 띄운 것.
+    if (!voiceOpts) addToCart(cartItem)
     setModalItem(null)
     setModalStep(null)
+    setVoiceOpts(null)
   }
 
   const closeModal = () => {

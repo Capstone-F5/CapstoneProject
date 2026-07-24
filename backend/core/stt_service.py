@@ -95,12 +95,25 @@ def _get_client() -> AsyncOpenAI:
     return _client
 
 
+_SUPPORTED_LANGS = {"ko", "en", "ja", "zh"}
+
+
 async def transcribe_bytes(
     audio_bytes: bytes,
     filename: str = "audio.webm",
+    language: str | None = None,
 ) -> dict[str, Any]:
     """
     오디오 바이트 → STT 전사.
+
+    Args:
+        language: 이 세션에서 이미 감지되어 고정된 언어(ko/en/ja/zh). 아직 감지 전(첫 발화)이면 None.
+            - None: 언어 자동감지를 방해하지 않도록 한국어 메뉴 어휘 프롬프트를 주지 않는다.
+              (프롬프트가 한국어로 편향돼 있으면 "hello" 같은 짧은 영어 발화도 한국어로 오인식되는
+              문제가 있었음 — Whisper의 prompt는 스타일/어휘뿐 아니라 언어 자체에도 강하게 영향을 준다)
+            - "ko": 메뉴명 오인식 방지용 어휘 힌트(prompt)를 그대로 사용.
+            - 그 외: 한국어 어휘 힌트가 오히려 방해되므로 프롬프트 없이 전사하고, Whisper에
+              language 를 명시적으로 고정해 재guess(재추측)로 인한 한국어 이탈을 막는다.
 
     Returns:
         { "text": str, "language": str | None, "duration": float | None }
@@ -115,12 +128,22 @@ async def transcribe_bytes(
     # 신규 모델(gpt-4o-*-transcribe)은 json/text만 지원 → 텍스트 문자 기반 언어 추론.
     use_verbose = model == "whisper-1"
 
-    resp = await client.audio.transcriptions.create(
+    lang = language if language in _SUPPORTED_LANGS else None
+    prompt = _STT_PROMPT if lang == "ko" else None
+
+    kwargs: dict[str, Any] = dict(
         model=model,
         file=buf,
         response_format="verbose_json" if use_verbose else "json",
-        prompt=_STT_PROMPT,
     )
+    if prompt:
+        kwargs["prompt"] = prompt
+    if lang:
+        # 이미 언어가 고정된 세션이면 Whisper에 직접 지정 — 매 발화마다 다시 추측하다
+        # 엉뚱한(주로 한국어로) 언어로 튀는 것을 방지하고 정확도도 올라간다.
+        kwargs["language"] = lang
+
+    resp = await client.audio.transcriptions.create(**kwargs)
     text = (getattr(resp, "text", None) or "").strip()
 
     # 무음/잡음에 prompt를 그대로 받아쓴 환각이면 빈 텍스트로 처리 → 프론트에서 무시됨

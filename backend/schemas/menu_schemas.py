@@ -8,6 +8,7 @@ class MenuOptionOut(BaseModel):
     additional_price: Decimal
     is_available: bool
     display_order: int
+    option_group: str  # SET_UPGRADE | EXCLUDE | SET_SIDE | SET_DRINK
 
     model_config = {"from_attributes": True}
 

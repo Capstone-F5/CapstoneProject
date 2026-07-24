@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMicVAD, utils } from '@ricky0123/vad-react'
 import { useLocale } from '../i18n/LocaleContext'
+import { getSessionId, newSessionId } from '../services/session'
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -26,22 +27,11 @@ const INIT_MESSAGES = [
   },
 ]
 
-const SESSION_KEY = 'kiosk_llm_session_id'
-const LANG_KEY    = 'kiosk_detected_lang'
+const LANG_KEY = 'kiosk_detected_lang'
 
-function getSessionId() {
-  // 페이지 로드마다 새 세션 — beforeunload 에서 삭제해 새로고침 시 초기화
-  let sid = sessionStorage.getItem(SESSION_KEY)
-  if (!sid) {
-    sid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    sessionStorage.setItem(SESSION_KEY, sid)
-  }
-  return sid
-}
-
-// 페이지 새로고침/닫기 시 세션·언어 초기화 (다음 로드에서 새 세션 시작)
+// 페이지 새로고침/닫기 시 언어 감지 상태만 초기화 (세션 ID는 카트와 공유되므로 유지 —
+// 새로고침해도 서버에 이미 담긴 카트를 App.jsx 의 refreshCart 가 복원한다)
 window.addEventListener('beforeunload', () => {
-  sessionStorage.removeItem(SESSION_KEY)
   sessionStorage.removeItem(LANG_KEY)
 })
 
@@ -136,6 +126,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
     const form = new FormData()
     form.append('audio', wavBlob, 'audio.wav')
+    // 이미 감지된 언어가 있으면 함께 보내 Whisper가 매번 다시 추측하다 엉뚱한 언어로
+    // 튀는 것을 막는다(특히 한국어 메뉴 어휘 힌트로 인한 오인식 방지 — stt_service.py 참고).
+    if (detectedLangRef.current) form.append('language', detectedLangRef.current)
 
     try {
       const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form })
@@ -456,10 +449,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         await fetch(`/ai_modules/llm/reset?session_id=${oldSid}`, { method: 'POST' })
       } catch {}
 
-      // 새 세션 ID 발급
-      const newSid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      sessionIdRef.current = newSid
-      sessionStorage.setItem(SESSION_KEY, newSid)
+      // 새 세션 ID 발급 (카트 API도 동일 모듈을 통해 이 새 세션을 바라보게 됨)
+      sessionIdRef.current = newSessionId()
 
       // 프론트 상태 초기화
       detectedLangRef.current = null

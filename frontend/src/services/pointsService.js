@@ -1,44 +1,18 @@
 // ─────────────────────────────────────────────────────────────────
-// 포인트/고객 서비스 — 회원 DB 연동 시 이 파일만 수정하세요.
-//
-// GET /api/points/lookup?phone={digits}
-//   Response : { name: string, points: number }
-//
-// POST /api/points/add
-//   Request  : { phone: string, amount: number, orderId: string }
-//   Response : { success: boolean, newTotal: number }
+// GET /api/user/points/{phone} → UserPointsOut{ user_id, phone_number, name, current_points, tier }
+// 포인트 적립은 별도 API 없이 POST /api/orders 생성 시 서버가 자동으로 처리한다.
 // ─────────────────────────────────────────────────────────────────
 
 const API_BASE = import.meta.env.VITE_API_URL
 
 /**
- * 전화번호로 고객 정보를 조회합니다.
- * @param {string} phoneDigits - 숫자만 추출된 전화번호 (11자리)
- * @returns {Promise<{ name: string, points: number }>}
+ * 전화번호로 고객 정보를 조회한다. 미등록 회원(404)이어도 에러를 던지지 않고
+ * registered:false 를 반환한다 — 결제는 그대로 진행되고, 주문 시 자동 회원가입된다.
  */
 export async function lookupCustomer(phoneDigits) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/points/lookup?phone=${phoneDigits}`)
-    if (!res.ok) throw new Error(`고객 조회 실패 (${res.status})`)
-    return res.json() // { name, points }
-  }
-  return { name: '고객', points: 0 }
-}
-
-/**
- * 결제 완료 후 포인트를 적립합니다.
- * @param {{ phone: string, amount: number, orderId: string }} params
- * @returns {Promise<{ success: boolean, newTotal: number }>}
- */
-export async function addPoints({ phone, amount, orderId }) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/points/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, amount, orderId }),
-    })
-    if (!res.ok) throw new Error(`포인트 적립 실패 (${res.status})`)
-    return res.json() // { success, newTotal }
-  }
-  return { success: true, newTotal: 0 }
+  const res = await fetch(`${API_BASE}/api/user/points/${phoneDigits}`)
+  if (res.status === 404) return { name: null, points: null, tier: null, registered: false }
+  if (!res.ok) throw new Error(`고객 조회 실패 (${res.status})`)
+  const d = await res.json()
+  return { name: d.name ?? null, points: d.current_points, tier: d.tier, registered: true }
 }

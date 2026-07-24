@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Logo from '../components/Logo'
-import { lookupCustomer, addPoints } from '../services/pointsService'
-import { createOrder }   from '../services/orderService'
+import { lookupCustomer } from '../services/pointsService'
+import { createOrder, validateCoupon } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
 import IdleOverlay from '../components/IdleOverlay'
 import useT from '../i18n/useT'
@@ -29,8 +29,9 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, voiceRef }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef }) {
   const t = useT()
+  const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
   const [showPointsPopup,  setShowPointsPopup]  = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
@@ -41,12 +42,27 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [pointsError,      setPointsError]      = useState('')
   const [confirmedPhone,   setConfirmedPhone]   = useState('')
   const [confirmedName,    setConfirmedName]    = useState('')
+  const [confirmedRegistered, setConfirmedRegistered] = useState(null)
   const [paymentMethod,    setPaymentMethod]    = useState(null)
+  const [couponCode,       setCouponCode]       = useState('')
+  const [paymentError,     setPaymentError]     = useState('')
+  const [emptyCartNotice,  setEmptyCartNotice]  = useState(false)
+  const [couponInfo,       setCouponInfo]       = useState(null)   // { valid, message, discountAmount? }
+  const [couponChecking,   setCouponChecking]   = useState(false)
 
   const isCompletingRef = useRef(false)
 
   const handlePayClick = () => {
-    if (cart.length === 0) return
+    if (cart.length === 0) {
+      setEmptyCartNotice(true)
+      setTimeout(() => setEmptyCartNotice(false), 2000)
+      return
+    }
+    setShowOrderTypeConfirm(true)
+  }
+
+  const confirmOrderType = () => {
+    setShowOrderTypeConfirm(false)
     setShowPointPrompt(true)
   }
 
@@ -70,9 +86,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setPointsError('')
   }
 
-  const openPayment = (phone = '', name = '') => {
+  const openPayment = (phone = '', name = '', registered = null) => {
     setConfirmedPhone(phone)
     setConfirmedName(name)
+    setConfirmedRegistered(registered)
     closePointsPopup()
     setShowPaymentPopup(true)
   }
@@ -84,12 +101,27 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     const d = raw.replace(/\D/g, '')
     if (!d.length)       { setPointsError(t('phoneError1')); return }
     if (d.length !== 11) { setPointsError(t('phoneError2')); return }
-    const { name } = await lookupCustomer(d)
-    openPayment(formatPhone(raw), name)
+    const { name, registered } = await lookupCustomer(d)
+    openPayment(formatPhone(raw), name, registered)
+  }
+
+  const handleCheckCoupon = async () => {
+    const code = couponCode.trim()
+    if (!code) return
+    setCouponChecking(true)
+    try {
+      const result = await validateCoupon(code, total)
+      setCouponInfo(result)
+    } catch (err) {
+      setCouponInfo({ valid: false, message: err.message || '쿠폰 확인에 실패했습니다' })
+    } finally {
+      setCouponChecking(false)
+    }
   }
 
   const goPayment = (dest) => {
     setShowPaymentPopup(false)
+    setPaymentError('')
     const methodMap = { cardPayment: 'card', cashPayment: 'cash', payPayment: 'pay' }
     setPaymentMethod(methodMap[dest] ?? 'card')
     if (dest === 'cardPayment') setShowCardPayment(true)
@@ -132,22 +164,24 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const handleComplete = async () => {
     if (isCompletingRef.current) return
     isCompletingRef.current = true
-    setShowCardPayment(false)
-    setShowCashPayment(false)
-    setShowPayPayment(false)
+    setPaymentError('')
     try {
-      const { orderNum, orderId } = await createOrder({
-        items: cart, total, orderType, phone: confirmedPhone,
+      const { orderId, orderNum } = await createOrder({
+        orderType,
+        phone: confirmedPhone.replace(/\D/g, '') || null,
+        couponCode: couponCode.trim() || null,
       })
-      await processPayment({ method: paymentMethod, amount: total, orderId, phone: confirmedPhone })
-      if (confirmedPhone) {
-        await addPoints({ phone: confirmedPhone, amount: total, orderId }).catch(() => {})
-      }
+      const { success } = await processPayment({ orderId, method: paymentMethod, amount: total })
+      if (!success) throw new Error('결제가 승인되지 않았습니다')
+      setShowCardPayment(false)
+      setShowCashPayment(false)
+      setShowPayPayment(false)
       setOrderNum(orderNum)
       clearCart()
       nav('complete')
     } catch (err) {
       console.error('결제 중 오류:', err)
+      setPaymentError(err.message || '결제 처리 중 오류가 발생했습니다. 다시 시도해 주세요.')
       isCompletingRef.current = false
     }
   }
@@ -231,12 +265,17 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             {total.toLocaleString()} {t('won')}
           </span>
         </div>
+        {emptyCartNotice && (
+          <p style={{ textAlign: 'right', color: '#e44', fontSize: 14, fontWeight: 700, marginBottom: 10 }}>
+            장바구니가 비어있습니다
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 12 }}>
           <button onClick={() => setShowPointsPopup(true)} style={{
             flex: 1, padding: '22px 0', border: 'none', borderRadius: 12,
             background: '#d0d0d0', color: '#444', fontSize: 22, fontWeight: 700, cursor: 'pointer',
           }}>{t('points')}</button>
-          <button onClick={handlePayClick} disabled={cart.length === 0} style={{
+          <button onClick={handlePayClick} style={{
             flex: 2, padding: '22px 0', border: 'none', borderRadius: 12,
             background: cart.length > 0 ? '#F5B800' : '#ccc',
             color: '#1a1a1a', fontSize: 22, fontWeight: 900,
@@ -244,6 +283,33 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           }}>{t('checkout')}</button>
         </div>
       </div>
+
+      {/* ── 매장/포장 재확인 팝업 ── */}
+      {showOrderTypeConfirm && (
+        <ModalBase onClose={() => setShowOrderTypeConfirm(false)}>
+          <p style={{ fontSize: 20, fontWeight: 900, textAlign: 'center', marginBottom: 20 }}>
+            주문 유형을 확인해 주세요
+          </p>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+            <OrderTypeChip
+              label={t('dineIn')}
+              active={orderType === 'dine-in'}
+              onClick={() => setOrderType('dine-in')}
+            />
+            <OrderTypeChip
+              label={t('takeout')}
+              active={orderType === 'takeout'}
+              onClick={() => setOrderType('takeout')}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <ModalBtn label={t('cancel')} color="#d4d4d4" textColor="#555"
+              onClick={() => setShowOrderTypeConfirm(false)} />
+            <ModalBtn label={t('confirm')} color="#F5B800" textColor="#1a1a1a"
+              onClick={confirmOrderType} />
+          </div>
+        </ModalBase>
+      )}
 
       {/* ── 포인트 적립 확인 팝업 ── */}
       {showPointPrompt && (
@@ -302,12 +368,16 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         <ModalBase onClose={() => setShowPaymentPopup(false)} minHeight="clamp(500px,76vh,700px)">
           {/* 인사말 + 금액 */}
           <div style={{ marginBottom: 28 }}>
-            {confirmedName && (
+            {confirmedName ? (
               <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
                 안녕하세요,{' '}
                 <span style={{ color: '#744032' }}>{confirmedName}</span>님
               </div>
-            )}
+            ) : confirmedRegistered === false ? (
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#888', marginBottom: 2 }}>
+                비회원 계정입니다
+              </div>
+            ) : null}
             <div style={{ fontSize: 13, color: '#aaa', fontWeight: 600, marginBottom: 6 }}>
               {t('selectPayMethod')}
             </div>
@@ -315,6 +385,42 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               {total.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>{t('won')}</span>
             </div>
           </div>
+
+          {/* 쿠폰 코드 입력 (선택) — 결제 전에 미리 검증해 할인 금액을 보여준다 */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <input
+              type="text"
+              value={couponCode}
+              onChange={e => { setCouponCode(e.target.value); setCouponInfo(null) }}
+              placeholder="쿠폰 코드 (선택)"
+              style={{
+                flex: 1, boxSizing: 'border-box', border: '1.5px solid #e0e0e0',
+                borderRadius: 10, padding: '12px 14px', fontSize: 15,
+              }}
+            />
+            <button
+              onClick={handleCheckCoupon}
+              disabled={!couponCode.trim() || couponChecking}
+              style={{
+                border: 'none', borderRadius: 10, padding: '0 20px',
+                background: couponCode.trim() ? '#744032' : '#e0e0e0',
+                color: couponCode.trim() ? '#fff' : '#999',
+                fontSize: 14, fontWeight: 700,
+                cursor: couponCode.trim() ? 'pointer' : 'default',
+              }}
+            >{couponChecking ? '확인 중' : '확인'}</button>
+          </div>
+          {couponInfo && (
+            <p style={{
+              fontSize: 13, fontWeight: 700, marginTop: 0, marginBottom: 18,
+              color: couponInfo.valid ? '#2e7d32' : '#e44',
+            }}>
+              {couponInfo.valid
+                ? `${couponInfo.discountAmount.toLocaleString()}원 할인 적용됩니다 (결제 예정 ${couponInfo.finalAmount.toLocaleString()}원)`
+                : couponInfo.message}
+            </p>
+          )}
+          {!couponInfo && <div style={{ marginBottom: 18 }} />}
 
           {/* 신용카드+삼성페이 | 현금 — 2×1 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
@@ -386,6 +492,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
           <CardIllustration />
         </PayWaitPopup>
@@ -399,6 +506,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
           <CashIllustration />
         </PayWaitPopup>
@@ -412,6 +520,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
           <BarcodeIllustration />
         </PayWaitPopup>
@@ -423,7 +532,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 }
 
 /* ── 결제 대기 팝업 ── */
-function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
+function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error }) {
   const t = useT()
   useEffect(() => {
     const timer = setTimeout(() => onComplete?.(), 5000)
@@ -436,6 +545,13 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
         <div style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.4 }}>
           {title}
         </div>
+
+        {error && (
+          <div style={{
+            background: '#fdecea', color: '#c62828', borderRadius: 8,
+            padding: '10px 14px', fontSize: 14, fontWeight: 600,
+          }}>{error}</div>
+        )}
 
         <div style={{
           background: '#616161', borderRadius: 8,
@@ -671,6 +787,18 @@ function PayBadge({ bg, color, small, children }) {
     }}>
       {children}
     </div>
+  )
+}
+
+function OrderTypeChip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      flex: 1, padding: '18px 0', borderRadius: 12,
+      border: active ? '2px solid #744032' : '1.5px solid #ddd',
+      background: active ? '#744032' : '#fff',
+      color: active ? '#fff' : '#555',
+      fontSize: 16, fontWeight: 800, cursor: 'pointer',
+    }}>{label}</button>
   )
 }
 

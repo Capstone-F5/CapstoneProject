@@ -3,6 +3,7 @@ from pydantic import BaseModel
 class UserPointsOut(BaseModel):
     user_id: str
     phone_number: str
+    name: str | None = None
     current_points: int
     tier: str | None  # BASIC | SILVER | GOLD
 

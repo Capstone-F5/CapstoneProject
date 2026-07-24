@@ -108,7 +108,7 @@ async def get_user_points(phone: str) -> dict | None:
         return res.json()
 
 
-async def create_order(session_id: str, user_phone: str = None) -> dict:
+async def create_order(session_id: str, user_phone: str = None, order_type: str = None) -> dict:
     """
     POST /api/orders
     기존 스텁에 있던 주문 생성 함수 (향후 checkout 툴 연동용 보존)
@@ -116,7 +116,12 @@ async def create_order(session_id: str, user_phone: str = None) -> dict:
     payload = {"session_id": session_id}
     if user_phone:
         payload["phone"] = user_phone
-        
+    if order_type:
+        # 프론트 표기('dine-in'/'takeout') → 백엔드 enum('EAT_IN'/'TAKE_OUT') 매핑.
+        # 이전엔 order_type 자체가 전달되지 않아 음성으로 확정한 주문이 항상 기본값(TAKE_OUT)으로
+        # 생성되던 버그가 있었음(매장 식사를 골랐어도 포장으로 주문됨).
+        payload["order_type"] = "EAT_IN" if order_type == "dine-in" else "TAKE_OUT"
+
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{API_BASE_URL}/api/orders", json=payload)
         res.raise_for_status()

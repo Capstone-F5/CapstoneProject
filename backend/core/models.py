@@ -38,6 +38,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     phone_number: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accessibility_mode: Mapped[str] = mapped_column(
         SAEnum("NORMAL", "VOICE_GUIDE", "HIGH_CONTRAST", "LARGE_TEXT", name="accessibility_mode"),
         default="NORMAL",
@@ -66,6 +67,24 @@ class Membership(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+# --- POINT_EARN_LOGS ------------------------------------------------------
+class PointEarnLog(Base):
+    """포인트 적립 내역 원장 — 적립분마다 한 건씩 남겨 30일 경과 시 만료 처리한다.
+
+    remaining 은 이 적립분 중 아직 사용/만료되지 않고 남은 포인트(FIFO로 소진).
+    """
+    __tablename__ = "point_earn_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    order_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("orders.id"), nullable=True)
+    points: Mapped[int] = mapped_column(Integer)
+    remaining: Mapped[int] = mapped_column(Integer)
+    earned_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 # --- COUPONS -------------------------------------------------------------
@@ -149,6 +168,11 @@ class MenuOption(Base):
     additional_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
+    # 세트 구성 시 옵션이 세트 업그레이드/재료 제외/사이드 선택/음료 선택 중 무엇인지 구분
+    option_group: Mapped[str] = mapped_column(
+        SAEnum("SET_UPGRADE", "EXCLUDE", "SET_SIDE", "SET_DRINK", name="menu_option_group"),
+        default="EXCLUDE",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     menu_item: Mapped["MenuItem"] = relationship("MenuItem", back_populates="options")
