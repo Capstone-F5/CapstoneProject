@@ -12,6 +12,13 @@ class MenuOptionOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class AllergenOut(BaseModel):
+    code: str
+    name_ko: str
+    name_en: str
+
+    model_config = {"from_attributes": True}
+
 class MenuItemOut(BaseModel):
     id: str
     name_ko: str
@@ -24,6 +31,7 @@ class MenuItemOut(BaseModel):
     is_new: bool
     display_order: int
     options: list[MenuOptionOut] = []
+    allergens: list[AllergenOut] = []
 
     model_config = {"from_attributes": True}
 

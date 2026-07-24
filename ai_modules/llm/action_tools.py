@@ -67,7 +67,12 @@ def list_menu() -> str:
     for item in items:
         status = " [품절]" if not item.get("is_available", True) else ""
         popular = " [추천메뉴]" if item.get("is_popular") else ""
-        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){status}{popular}")
+        allergens = item.get("allergens") or []
+        allergen_tag = f" [알레르기: {', '.join(a['name_ko'] for a in allergens)}]" if allergens else ""
+        lines.append(
+            f"- {item['name_ko']} {int(float(item['base_price']))}원 "
+            f"(menu_item_id: {item['id']}){status}{popular}{allergen_tag}"
+        )
     return "\n".join(lines)
 
 @tool
@@ -94,9 +99,11 @@ def search_menu(query: str, k: int = 5) -> str:
         avail = "" if h.get("is_available", True) else " [품절]"
         popular = " [추천메뉴]" if h.get("is_popular") else ""
         desc = h.get("description") or ""
+        allergens = h.get("allergens") or []
         line = f"- {h['name_ko']} (menu_item_id: {h['id']}) {int(float(h['base_price']))}원{avail}{popular}"
         if desc:
             line += f"\n  설명: {desc}"
+        line += f"\n  알레르기: {', '.join(a['name_ko'] for a in allergens) if allergens else '없음'}"
         lines.append(line)
     return "\n".join(lines)
 

@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Category, MenuItem, MenuOption
+from .models import Allergen, Category, MenuItem, MenuItemAllergen, MenuOption
 
 
 _CATEGORIES = [
@@ -128,12 +128,85 @@ _SET_DRINKS = [
 # 추천메뉴 탭(is_popular) — frontend mock 의 recommended 3종과 동일
 _POPULAR_SLUGS = {"burger_f", "burger_crab", "burger_vegan"}
 
+# 식품위생법 표시 대상 알레르기 유발물질 19종 (code, name_ko, name_en)
+_ALLERGENS = [
+    ("EGG", "난류", "Egg"),
+    ("MILK", "우유", "Milk"),
+    ("BUCKWHEAT", "메밀", "Buckwheat"),
+    ("PEANUT", "땅콩", "Peanut"),
+    ("SOY", "대두", "Soybean"),
+    ("WHEAT", "밀", "Wheat"),
+    ("MACKEREL", "고등어", "Mackerel"),
+    ("CRAB", "게", "Crab"),
+    ("SHRIMP", "새우", "Shrimp"),
+    ("PORK", "돼지고기", "Pork"),
+    ("PEACH", "복숭아", "Peach"),
+    ("TOMATO", "토마토", "Tomato"),
+    ("SULFITE", "아황산류", "Sulfites"),
+    ("WALNUT", "호두", "Walnut"),
+    ("CHICKEN", "닭고기", "Chicken"),
+    ("BEEF", "쇠고기", "Beef"),
+    ("SQUID", "오징어", "Squid"),
+    ("SHELLFISH", "조개류", "Shellfish"),
+    ("PINE_NUT", "잣", "Pine Nut"),
+]
+
+# 메뉴 slug → 포함 알레르기 유발물질 코드 목록.
+# ⚠️ 실제 조리법 검증 데이터가 아니라 재료 설명(주요 재료 문구) 기반으로 추정한 예시 데이터.
+# 운영 반영 전 반드시 실제 레시피 기준으로 재검증해야 한다.
+_MENU_ALLERGENS: dict[str, list[str]] = {
+    "burger_f": ["WHEAT", "SOY", "CHICKEN", "BEEF"],
+    "burger_grilled_beef": ["WHEAT", "BEEF", "MILK"],
+    "burger_mozzarella": ["WHEAT", "BEEF", "MILK", "EGG", "TOMATO"],
+    "burger_vegan": ["WHEAT", "SOY"],
+    "burger_crab": ["WHEAT", "CRAB", "EGG"],
+    "burger_chicken_thigh": ["WHEAT", "CHICKEN", "EGG"],
+    "burger_double_bulgogi": ["WHEAT", "BEEF", "SOY"],
+    "burger_double_cheese": ["WHEAT", "BEEF", "MILK"],
+    "burger_chicken_breast": ["WHEAT", "CHICKEN", "MILK", "EGG"],
+    "burger_shrimp": ["WHEAT", "SHRIMP", "EGG"],
+    "burger_bulgogi": ["WHEAT", "BEEF", "SOY"],
+    "burger_cheese": ["WHEAT", "BEEF", "MILK", "TOMATO"],
+    "burger_teri": ["WHEAT", "BEEF", "PORK", "SOY", "EGG"],
+    "side_seasoned_fries": ["WHEAT"],
+    "side_nuggets": ["WHEAT", "CHICKEN", "EGG"],
+    "side_cheese_sticks": ["WHEAT", "MILK", "EGG"],
+    "side_fries_m": [],
+    "side_corn_salad": ["EGG", "MILK"],
+    "side_coleslaw": ["EGG", "MILK"],
+    "bev_orange_juice": [],
+    "bev_coke_m": [],
+    "bev_zero_coke_m": [],
+    "bev_sprite_m": [],
+    "bev_zero_sprite_m": [],
+    "bev_pororo": [],
+    "bev_water": [],
+}
+
+
+async def seed_allergens(session: AsyncSession) -> dict[str, str]:
+    """알레르기 유발물질 마스터 데이터를 시드하고 code → id 매핑을 반환한다."""
+    result = await session.execute(select(Allergen))
+    existing = {a.code: a.id for a in result.scalars().all()}
+    if existing:
+        return existing
+
+    code_map: dict[str, str] = {}
+    for i, (code, name_ko, name_en) in enumerate(_ALLERGENS):
+        allergen = Allergen(code=code, name_ko=name_ko, name_en=name_en, display_order=i)
+        session.add(allergen)
+        await session.flush()
+        code_map[code] = allergen.id
+    return code_map
+
 
 async def seed_menu(session: AsyncSession) -> None:
     """이미 시드되어 있으면 skip."""
     existing = (await session.execute(select(MenuItem))).first()
     if existing:
         return
+
+    allergen_code_map = await seed_allergens(session)
 
     # 카테고리
     cat_map: dict[str, str] = {}
@@ -211,5 +284,10 @@ async def seed_menu(session: AsyncSession) -> None:
                 )
             )
             order += 1
+
+        for allergen_code in _MENU_ALLERGENS.get(slug, []):
+            session.add(
+                MenuItemAllergen(menu_item_id=item.id, allergen_id=allergen_code_map[allergen_code])
+            )
 
     await session.commit()

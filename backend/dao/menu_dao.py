@@ -1,7 +1,14 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from core.models import Category, MenuItem, MenuOption, Order, OrderItem
+from core.models import Category, MenuItem, MenuOption, MenuItemAllergen, Order, OrderItem
+
+# 메뉴 조회 시 항상 함께 로드해야 하는 관계 — 지연 로딩 시 async 컨텍스트에서 오류가 나므로
+# (allergens 프로퍼티가 allergen_links를 동기적으로 읽음) 매번 selectinload로 미리 채운다.
+_MENU_ITEM_LOAD_OPTS = (
+    selectinload(MenuItem.options),
+    selectinload(MenuItem.allergen_links).selectinload(MenuItemAllergen.allergen),
+)
 
 async def get_all_categories(db: AsyncSession) -> list[Category]:
     result = await db.execute(
@@ -18,7 +25,7 @@ async def get_menu_items_by_category(
         select(MenuItem)
         .where(MenuItem.category_id == category_id)
         .where(MenuItem.is_available == True)
-        .options(selectinload(MenuItem.options))
+        .options(*_MENU_ITEM_LOAD_OPTS)
         .order_by(MenuItem.display_order)
     )
     return result.scalars().all()
@@ -27,7 +34,7 @@ async def get_menu_item_by_id(db: AsyncSession, item_id: str) -> MenuItem | None
     result = await db.execute(
         select(MenuItem)
         .where(MenuItem.id == item_id)
-        .options(selectinload(MenuItem.options))
+        .options(*_MENU_ITEM_LOAD_OPTS)
     )
     return result.scalar_one_or_none()
 
@@ -36,7 +43,7 @@ async def get_popular_items(db: AsyncSession) -> list[MenuItem]:
         select(MenuItem)
         .where(MenuItem.is_popular == True)
         .where(MenuItem.is_available == True)
-        .options(selectinload(MenuItem.options))
+        .options(*_MENU_ITEM_LOAD_OPTS)
     )
     return result.scalars().all()
 
@@ -85,7 +92,7 @@ async def delete_category(db: AsyncSession, category: Category) -> None:
 async def get_all_menu_items_admin(db: AsyncSession) -> list[MenuItem]:
     result = await db.execute(
         select(MenuItem)
-        .options(selectinload(MenuItem.options))
+        .options(*_MENU_ITEM_LOAD_OPTS)
         .order_by(MenuItem.category_id, MenuItem.display_order)
     )
     return result.scalars().all()

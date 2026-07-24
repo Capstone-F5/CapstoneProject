@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.core.db import SessionLocal
-from backend.core.models import MenuItem
+from backend.core.models import MenuItem, MenuItemAllergen
 
 
 _index: FAISS | None = None
@@ -34,7 +34,10 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
     """DB 에서 메뉴 + 옵션을 읽어 Document 와 메타맵을 만든다."""
     async with SessionLocal() as session:
         result = await session.execute(
-            select(MenuItem).options(selectinload(MenuItem.options))
+            select(MenuItem).options(
+                selectinload(MenuItem.options),
+                selectinload(MenuItem.allergen_links).selectinload(MenuItemAllergen.allergen),
+            )
         )
         items = result.scalars().all()
 
@@ -50,6 +53,10 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             }
             for opt in item.options
         ]
+        allergens = [
+            {"code": link.allergen.code, "name_ko": link.allergen.name_ko, "name_en": link.allergen.name_en}
+            for link in item.allergen_links
+        ]
         meta = {
             "id": item.id,
             "name_ko": item.name_ko,
@@ -59,16 +66,18 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             "options": options,
             "is_available": item.is_available,
             "is_popular": item.is_popular,
+            "allergens": allergens,
         }
         meta_map[item.id] = meta
 
         # 검색 텍스트: 한국어/영어 이름 + 설명 모두 포함
         # 인기 메뉴는 "추천메뉴/인기메뉴" 문구를 섞어 넣어 관련 질의("추천해줘", "인기메뉴 뭐야")로도 검색되게 한다.
         popular_tag = "\n추천메뉴, 인기메뉴" if item.is_popular else ""
+        allergen_tag = f"\n알레르기 유발물질: {', '.join(a['name_ko'] for a in allergens)}" if allergens else "\n알레르기 유발물질 없음"
         searchable = (
             f"{item.name_ko} ({item.name_en})\n"
             f"가격: {meta['base_price']}원\n"
-            f"{item.description}{popular_tag}"
+            f"{item.description}{popular_tag}{allergen_tag}"
         )
         docs.append(Document(page_content=searchable, metadata={"menu_item_id": item.id}))
 

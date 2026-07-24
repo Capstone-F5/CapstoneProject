@@ -156,6 +156,15 @@ class MenuItem(Base):
         "MenuOption", back_populates="menu_item", cascade="all,delete-orphan"
     )
     category: Mapped["Category"] = relationship("Category")
+    allergen_links: Mapped[list["MenuItemAllergen"]] = relationship(
+        "MenuItemAllergen", back_populates="menu_item", cascade="all,delete-orphan"
+    )
+
+    @property
+    def allergens(self) -> list["Allergen"]:
+        """MenuItemOut(from_attributes) 이 조인 테이블을 몰라도 바로 쓸 수 있도록 평탄화.
+        allergen_links가 selectinload로 미리 로드되어 있어야 한다(지연 로딩 시 비동기 오류)."""
+        return [link.allergen for link in self.allergen_links]
 
 
 # --- MENU_OPTIONS --------------------------------------------------------
@@ -178,6 +187,35 @@ class MenuOption(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     menu_item: Mapped["MenuItem"] = relationship("MenuItem", back_populates="options")
+
+
+# --- ALLERGENS -------------------------------------------------------------
+class Allergen(Base):
+    """식품위생법 표시 대상 알레르기 유발물질 19종 마스터 테이블."""
+    __tablename__ = "allergens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    code: Mapped[str] = mapped_column(String(32), unique=True)  # 예: EGG, MILK, WHEAT
+    name_ko: Mapped[str] = mapped_column(String(32))
+    name_en: Mapped[str] = mapped_column(String(32))
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --- MENU_ITEM_ALLERGENS -----------------------------------------------------
+class MenuItemAllergen(Base):
+    """메뉴-알레르기 유발물질 매핑(다대다 조인 테이블)."""
+    __tablename__ = "menu_item_allergens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    menu_item_id: Mapped[str] = mapped_column(String(36), ForeignKey("menu_items.id"))
+    allergen_id: Mapped[str] = mapped_column(String(36), ForeignKey("allergens.id"))
+
+    menu_item: Mapped["MenuItem"] = relationship("MenuItem", back_populates="allergen_links")
+    allergen: Mapped["Allergen"] = relationship("Allergen")
+
+    __table_args__ = (
+        UniqueConstraint("menu_item_id", "allergen_id", name="uq_menu_item_allergen"),
+    )
 
 
 # --- DISCOUNTS -----------------------------------------------------------
