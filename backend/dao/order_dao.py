@@ -56,3 +56,19 @@ async def get_order_by_id(db: AsyncSession, order_id: str) -> Order | None:
         .options(selectinload(Order.items))
     )
     return result.scalar_one_or_none()
+
+
+async def get_recent_orders_by_user(
+    db: AsyncSession, user_id: str, limit: int = 5
+) -> list[Order]:
+    result = await db.execute(
+        select(Order)
+        .where(Order.user_id == user_id)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.payments),
+        )
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()

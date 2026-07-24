@@ -27,3 +27,19 @@ class OrderOut(BaseModel):
     points_used: int
     points_earned: int
     items: list[OrderItemOut]
+
+
+class OrderAdminOut(BaseModel):
+    order_id: str
+    order_number: str
+    order_type: str
+    status: str
+    table_number: int | None
+    subtotal: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    points_used: int
+    points_earned: int
+    created_at: str
+    items: list[OrderItemOut]
+    payment_status: str | None  # 연결된 Payment.status, 결제 전이면 None

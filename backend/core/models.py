@@ -238,6 +238,14 @@ class Order(Base):
         SAEnum("EAT_IN", "TAKE_OUT", name="order_type"), default="TAKE_OUT"
     )
     table_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        SAEnum("RECEIVED", "COOKING", "READY", "COMPLETED", "CANCELLED", name="order_status"),
+        default="RECEIVED",
+    )
+    # 환불 시 포인트·쿠폰을 정확히 원상복구하려면 이 주문에 어떤 쿠폰을 썼는지가 남아있어야 한다.
+    user_coupon_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_coupons.id"), nullable=True
+    )
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     final_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
@@ -265,6 +273,7 @@ class OrderItem(Base):
     special_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     order: Mapped["Order"] = relationship("Order", back_populates="items")
+    menu_item: Mapped["MenuItem"] = relationship("MenuItem")
 
 
 # --- PAYMENTS ------------------------------------------------------------
@@ -289,3 +298,19 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     order: Mapped["Order"] = relationship("Order", back_populates="payments")
+
+
+# --- ADMIN_USERS -----------------------------------------------------------
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(64))
+    role: Mapped[str] = mapped_column(
+        SAEnum("OWNER", "STAFF", name="admin_role"), default="STAFF"
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
