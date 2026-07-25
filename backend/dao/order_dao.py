@@ -72,3 +72,27 @@ async def get_recent_orders_by_user(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+from sqlalchemy.orm import Session
+from backend.core.models import Order
+
+def list_orders(db: Session, status: str | None = None, order_type: str | None = None):
+    """관리자용 주문 목록 조회 (미완료 주문 우선 정렬)"""
+    query = db.query(Order)
+    if status:
+        query = query.filter(Order.status == status)
+    if order_type:
+        query = query.filter(Order.order_type == order_type)
+    
+    # 최신순 정렬
+    return query.order_by(Order.created_at.desc()).all()
+
+
+def update_order_status(db: Session, order_id: str, new_status: str) -> Order | None:
+    """주문 상태 변경 (DAO 규칙: flush만 호출)"""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if order:
+        order.status = new_status
+        db.flush()
+    return order

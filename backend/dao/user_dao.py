@@ -69,3 +69,47 @@ async def adjust_points(db: AsyncSession, user_id: str, delta: int, reason: str)
         user_id, delta, reason, user.current_points,
     )
     return user
+
+# --- Module C: 포인트 및 쿠폰 관련 DAO ---
+from sqlalchemy.orm import Session
+from backend.core.models import User, UserCoupon, Coupon
+
+def adjust_points(db: Session, user_id: str, delta: int) -> User:
+    """유저의 포인트를 적립(+)/차감(-)하는 함수 (flush만 호출)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ValueError("존재하지 않는 회원입니다.")
+    
+    user.current_points += delta
+    db.flush()
+    return user
+
+
+def get_user_coupon_by_code(db: Session, user_id: str, code: str) -> UserCoupon | None:
+    """쿠폰 코드로 미사용 유저 쿠폰 조회"""
+    return (
+        db.query(UserCoupon)
+        .join(Coupon, UserCoupon.coupon_id == Coupon.id)
+        .filter(
+            UserCoupon.user_id == user_id,
+            Coupon.code == code,
+            UserCoupon.is_used == False
+        )
+        .first()
+    )
+
+
+def mark_coupon_used(db: Session, user_coupon_id: str):
+    """쿠폰 사용 완료 처리"""
+    user_coupon = db.query(UserCoupon).filter(UserCoupon.id == user_coupon_id).first()
+    if user_coupon:
+        user_coupon.is_used = True
+        db.flush()
+
+
+def restore_coupon(db: Session, user_coupon_id: str):
+    """환불 시 쿠폰 복구"""
+    user_coupon = db.query(UserCoupon).filter(UserCoupon.id == user_coupon_id).first()
+    if user_coupon:
+        user_coupon.is_used = False
+        db.flush()

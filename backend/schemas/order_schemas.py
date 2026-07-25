@@ -43,3 +43,7 @@ class OrderAdminOut(BaseModel):
     created_at: str
     items: list[OrderItemOut]
     payment_status: str | None  # 연결된 Payment.status, 결제 전이면 None
+
+class OrderAdminOut(OrderOut):
+    table_number: int | None = None
+    payment_status: str | None = None  # 연결된 결제 상태 (PENDING, SUCCESS 등)

@@ -79,3 +79,16 @@ async def health():
         "cv_routers_loaded": bool(_cv_routers),
         "cv_load_error": _cv_load_error,
     }
+
+
+from backend.api.admin import orders as admin_orders
+from backend.api.admin import coupons as admin_coupons
+from backend.api.admin import discounts as admin_discounts
+from backend.api.admin import payments as admin_payments
+from backend.api.admin import stats as admin_stats
+
+app.include_router(admin_orders.router)
+app.include_router(admin_coupons.router)
+app.include_router(admin_discounts.router)
+app.include_router(admin_payments.router)
+app.include_router(admin_stats.router)

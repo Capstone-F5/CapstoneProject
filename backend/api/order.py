@@ -1,51 +1,182 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 from decimal import Decimal
-from core.db import get_session
-from dao.cart_dao import get_cart_with_items
-from dao.order_dao import create_order_from_cart, create_order_items_from_cart_items, get_order_by_id
-from schemas.order_schemas import OrderIn, OrderOut
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-router = APIRouter(prefix="/api/orders", tags=["order"])
+from backend.core.db import get_db
+from backend.core.models import Order, OrderItem, Cart, CartItem
+from backend.schemas.order_schemas import OrderCreateIn, OrderOut, OrderItemOut
+from backend.dao import user_dao, order_dao
+
+router = APIRouter(prefix="/api/orders", tags=["orders"])
+
 
 @router.post("", response_model=OrderOut)
-async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
-    cart = await get_cart_with_items(db, body.session_id)
-    if cart is None or not cart.items:
-        raise HTTPException(status_code=400, detail="장바구니가 비어있습니다")
+def create_order(body: OrderCreateIn, db: Session = Depends(get_db)):
+    """주문 생성 API
+    - items 직렬화 버그 수정
+    - 회원 포인트 적립 및 차감 실제 반영
+    - 쿠폰 할인 적용 및 사용 처리
+    """
+    # 1. 장바구니 조회 및 검증
+    cart = db.query(Cart).filter(Cart.id == body.cart_id).first()
+    if not cart or not cart.items:
+        raise HTTPException(status_code=400, detail="장바구니가 비어있거나 존재하지 않습니다.")
 
-    subtotal = sum(ci.unit_price * ci.quantity for ci in cart.items)
+    # 2. 금액 계산 (Subtotal)
+    subtotal = sum(item.unit_price * item.quantity for item in cart.items)
     discount_amount = Decimal("0")
-    # TODO: 쿠폰 적용 로직 추가 (coupon_code 검증 → discount 계산)
-    final_amount = subtotal - discount_amount - (body.points_to_use or 0)
-    points_earned = int(final_amount * Decimal("0.05"))  # 결제금액 5% 적립
+    user_coupon_id = None
+    user = None
 
-    order = await create_order_from_cart(
-        db, cart.id, body.order_type, subtotal,
-        discount_amount, final_amount, body.points_to_use, points_earned
+    # 회원 정보 조회 (전화번호가 제공된 경우)
+    if body.phone:
+        user = user_dao.get_user_by_phone(db, body.phone)
+
+    # 3. 쿠폰 적용 로직 (회원 전용)
+    if body.coupon_code:
+        if not user:
+            raise HTTPException(status_code=400, detail="쿠폰은 회원만 사용할 수 있습니다.")
+        
+        user_coupon = user_dao.get_user_coupon_by_code(db, user.id, body.coupon_code)
+        if not user_coupon:
+            raise HTTPException(status_code=400, detail="유효하지 않거나 이미 사용된 쿠폰입니다.")
+        
+        coupon = user_coupon.coupon
+        if not coupon.is_active:
+            raise HTTPException(status_code=400, detail="비활성화된 쿠폰입니다.")
+        
+        if subtotal < coupon.min_order_amount:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"최소 주문 금액({coupon.min_order_amount}원)을 충족하지 못했습니다."
+            )
+
+        # 할인 금액 계산
+        if coupon.discount_type == "PERCENT":
+            discount_amount = subtotal * (coupon.discount_value / Decimal("100"))
+        else:  # CASH
+            discount_amount = coupon.discount_value
+
+        user_coupon_id = user_coupon.id
+
+    # 4. 포인트 사용 및 적립 계산 (기본 1% 적립)
+    points_to_use = body.points_to_use or 0
+    if points_to_use > 0:
+        if not user:
+            raise HTTPException(status_code=400, detail="포인트 사용은 회원만 가능합니다.")
+        if user.current_points < points_to_use:
+            raise HTTPException(status_code=400, detail="보유 포인트가 부족합니다.")
+        
+    final_amount = max(Decimal("0"), subtotal - discount_amount - Decimal(points_to_use))
+    points_earned = int(final_amount * Decimal("0.01"))  # 결제금액의 1% 적립
+
+    # 5. 주문(Order) 객체 생성
+    order_number = f"ORD-{int(datetime.now().timestamp())}"
+    order = Order(
+        user_id=user.id if user else None,
+        cart_id=cart.id,
+        order_number=order_number,
+        order_type=body.order_type,
+        status="RECEIVED",  # 기본 상태: 접수됨
+        user_coupon_id=user_coupon_id,
+        subtotal=subtotal,
+        discount_amount=discount_amount,
+        final_amount=final_amount,
+        points_used=points_to_use,
+        points_earned=points_earned,
     )
-    await create_order_items_from_cart_items(db, order.id, cart.items)
+    db.add(order)
+    db.flush()
 
-    # 장바구니 상태 COMPLETED로 변경
+    # 6. 주문 항목(OrderItem) 복사
+    order_items = []
+    for cart_item in cart.items:
+        order_item = OrderItem(
+            order_id=order.id,
+            menu_item_id=cart_item.menu_item_id,
+            quantity=cart_item.quantity,
+            unit_price=cart_item.unit_price,
+            total_price=cart_item.unit_price * cart_item.quantity,
+            selected_options=cart_item.selected_options,
+            special_note=cart_item.special_note,
+        )
+        db.add(order_item)
+        order_items.append(order_item)
+
+    # 7. 쿠폰 사용 처리 및 포인트 차감/적립 반영
+    if user_coupon_id:
+        user_dao.mark_coupon_used(db, user_coupon_id)
+
+    if user:
+        # 사용 포인트 차감 (-) 및 적립 포인트 반영 (+)
+        net_point_change = points_earned - points_to_use
+        user_dao.adjust_points(db, user.id, net_point_change)
+
+    # 8. 장바구니 완료 처리 및 DB 최종 커밋
     cart.status = "COMPLETED"
-    await db.commit()
+    db.commit()
+    db.refresh(order)
 
-    order_with_items = await get_order_by_id(db, order.id)
+    # 9. 응답 데이터 직렬화 (items 목록 채우기)
+    items_out = [
+        OrderItemOut(
+            id=item.id,
+            menu_item_id=item.menu_item_id,
+            quantity=item.quantity,
+            unit_price=float(item.unit_price),
+            total_price=float(item.total_price),
+            selected_options=item.selected_options or [],
+            special_note=item.special_note,
+        )
+        for item in order_items
+    ]
+
     return OrderOut(
-        order_id=order.id,
+        id=order.id,
         order_number=order.order_number,
         order_type=order.order_type,
-        subtotal=order.subtotal,
-        discount_amount=order.discount_amount,
-        final_amount=order.final_amount,
+        status=order.status,
+        subtotal=float(order.subtotal),
+        discount_amount=float(order.discount_amount),
+        final_amount=float(order.final_amount),
         points_used=order.points_used,
         points_earned=order.points_earned,
-        items=[],  # 필요 시 items 직렬화 추가
+        items=items_out,
+        created_at=order.created_at,
     )
 
-@router.get("/{order_id}")
-async def get_order(order_id: str, db: AsyncSession = Depends(get_session)):
-    order = await get_order_by_id(db, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
-    return {"order_id": order.id, "order_number": order.order_number, "status": "completed"}
+
+@router.get("/{order_id}", response_model=OrderOut)
+def get_order(order_id: str, db: Session = Depends(get_db)):
+    """주문 단건 조회 API (실제 status 및 items 반환)"""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+
+    items_out = [
+        OrderItemOut(
+            id=item.id,
+            menu_item_id=item.menu_item_id,
+            quantity=item.quantity,
+            unit_price=float(item.unit_price),
+            total_price=float(item.total_price),
+            selected_options=item.selected_options or [],
+            special_note=item.special_note,
+        )
+        for item in order.items
+    ]
+
+    return OrderOut(
+        id=order.id,
+        order_number=order.order_number,
+        order_type=order.order_type,
+        status=order.status,  # ★ 하드코딩 "completed" 대신 실제 order.status 반환!
+        subtotal=float(order.subtotal),
+        discount_amount=float(order.discount_amount),
+        final_amount=float(order.final_amount),
+        points_used=order.points_used,
+        points_earned=order.points_earned,
+        items=items_out,
+        created_at=order.created_at,
+    )
