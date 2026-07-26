@@ -14,7 +14,7 @@ from langchain_core.messages import SystemMessage
 
 from ai_modules.llm.action_context import get_actions, reset_actions, set_cart
 from ai_modules.llm.agent import get_agent_executor
-from ai_modules.llm.memory import get_memory
+from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id, set_order_type
 
 # 감지된 언어로 답변하도록 지시하는 SystemMessage 텍스트.
@@ -84,6 +84,24 @@ _SCREEN_HINT: dict[str, str] = {
     "complete": "navigate('start')로 새 주문.",
 }
 
+# 화면에 실제로 무엇이 보이는지 설명하는 문장 — 시각장애인이 "이 화면 뭐야", "읽어줘" 처럼
+# 물었을 때 그대로 읽어줄 수 있도록 화면 구성요소를 서술한다. (메뉴/장바구니 내용 자체는
+# 각각 list_menu/search_menu 호출 결과나 아래 _cart_summary로 별도 제공됨 — 여기서는
+# 레이아웃/버튼 설명만 담당)
+_SCREEN_DESCRIPTION: dict[str, str] = {
+    "start": "대기 화면입니다. 중앙에 로고와 배경 사진이 있고, 화면 하단에 '주문 시작하기' 버튼, "
+             "우측 상단에 작은 '회원가입' 버튼이 있습니다.",
+    "orderType": "매장 식사 또는 포장을 선택하는 화면입니다. 화면에 두 개의 큰 카드가 나란히 있고, "
+                 "왼쪽 카드가 매장 식사, 오른쪽 카드가 포장입니다.",
+    "menu": "메뉴를 고르는 화면입니다. 상단에 추천메뉴/버거/사이드/음료 탭이 있고, "
+            "선택한 탭의 메뉴들이 사진, 이름, 가격과 함께 목록으로 나열되어 있습니다. "
+            "구체적인 메뉴 이름과 가격은 list_menu 또는 search_menu 도구로 조회해서 안내한다.",
+    "cart": "장바구니 화면입니다. 담긴 메뉴 목록과 각 줄의 수량·가격, 합계 금액이 보이고, "
+            "화면 하단에 '결제하기' 버튼이 있습니다. 담긴 항목은 아래 장바구니 요약을 그대로 읽어준다.",
+    "complete": "주문이 완료된 화면입니다. 화면 중앙에 주문번호가 크게 표시되고, "
+                "잠시 후 자동으로 처음 화면으로 돌아갑니다.",
+}
+
 
 def _context_message(cart: list, screen: str | None, order_type: str | None = None,
                      modal_state: dict | None = None) -> str:
@@ -92,6 +110,9 @@ def _context_message(cart: list, screen: str | None, order_type: str | None = No
     if screen:
         hint = _SCREEN_HINT.get(screen, "")
         parts.append(f"현재 화면: {screen}" + (f" — 가능 동작: {hint}" if hint else ""))
+        desc = _SCREEN_DESCRIPTION.get(screen, "")
+        if desc:
+            parts.append(f"화면 구성: {desc}")
     if order_type:
         label = "매장 식사" if order_type == "dine-in" else "포장"
         parts.append(f"주문 유형: {label}")
@@ -147,35 +168,50 @@ async def run_agent_stream(
     in_tool_call = False
     emitted_count = 0  # 이미 인라인으로 전송한 액션 수 추적
 
-    async for event in executor.astream_events(
-        {"input": user_input, "chat_history": chat_history},
-        version="v1",
-    ):
-        kind = event["event"]
+    # ★ astream_events 도중 예외(OpenAI 네트워크/속도 제한 등)가 나면 여기서 잡아서 항상
+    # done 이벤트를 보낸다. 그렇지 않으면 헤더가 이미 전송된 뒤라 예외가 연결을 그냥 끊어버려,
+    # 프론트는 done을 영원히 못 받고(그 턴은 실패해도 정상) 이후 요청까지 밀리는 것처럼 보인다.
+    stream_error: Exception | None = None
+    try:
+        async for event in executor.astream_events(
+            {"input": user_input, "chat_history": chat_history},
+            version="v1",
+        ):
+            kind = event["event"]
 
-        if kind == "on_tool_start":
-            in_tool_call = True
+            if kind == "on_tool_start":
+                in_tool_call = True
 
-        elif kind == "on_tool_end":
-            in_tool_call = False
-            # 도구 실행 즉시 새로 쌓인 액션을 SSE 로 내보냄
-            # → 텍스트 토큰보다 먼저 프론트에 도달 → 화면 이동이 응답 텍스트보다 앞서 발생
-            current_actions = get_actions()
-            if len(current_actions) > emitted_count:
-                for action in current_actions[emitted_count:]:
-                    yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
-                emitted_count = len(current_actions)
+            elif kind == "on_tool_end":
+                in_tool_call = False
+                # 도구 실행 즉시 새로 쌓인 액션을 SSE 로 내보냄
+                # → 텍스트 토큰보다 먼저 프론트에 도달 → 화면 이동이 응답 텍스트보다 앞서 발생
+                current_actions = get_actions()
+                if len(current_actions) > emitted_count:
+                    for action in current_actions[emitted_count:]:
+                        yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
+                    emitted_count = len(current_actions)
 
-        elif kind == "on_chat_model_stream" and not in_tool_call:
-            chunk = event["data"]["chunk"]
-            content: str = getattr(chunk, "content", "") or ""
-            tool_calls = getattr(chunk, "additional_kwargs", {}).get("tool_calls")
-            if content and not tool_calls:
-                output_parts.append(content)
-                yield f"data: {json.dumps({'token': content}, ensure_ascii=False)}\n\n"
+            elif kind == "on_chat_model_stream" and not in_tool_call:
+                chunk = event["data"]["chunk"]
+                content: str = getattr(chunk, "content", "") or ""
+                tool_calls = getattr(chunk, "additional_kwargs", {}).get("tool_calls")
+                if content and not tool_calls:
+                    output_parts.append(content)
+                    yield f"data: {json.dumps({'token': content}, ensure_ascii=False)}\n\n"
+    except Exception as e:  # noqa: BLE001
+        stream_error = e
 
     output = "".join(output_parts)
-    await memory.asave_context({"input": user_input}, {"output": output})
+
+    if stream_error is not None:
+        if not output:
+            output = "죄송해요, 지금 답변을 생성하지 못했어요. 다시 한번 말씀해 주세요."
+        # 이번 턴 저장은 건너뛴다 — 부분 응답을 히스토리에 남기면 다음 턴이 더 헷갈릴 수 있다.
+        yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
+        return
+
+    await save_and_prune(memory, user_input, output)
 
     # 인라인으로 아직 전송되지 않은 나머지 액션 전송 (안전장치)
     remaining = get_actions()[emitted_count:]
@@ -215,7 +251,7 @@ async def run_agent(
     )
     output = result.get("output", "")
 
-    await memory.asave_context({"input": user_input}, {"output": output})
+    await save_and_prune(memory, user_input, output)
 
     return {
         "session_id": session_id,

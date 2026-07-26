@@ -4,7 +4,6 @@ import { LocaleProvider, useLocale } from './i18n/LocaleContext'
 import * as cartService from './services/cartService'
 import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
-import SignupScreen from './screens/SignupScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
 import MenuScreen from './screens/MenuScreen'
 import CartScreen from './screens/CartScreen'
@@ -31,6 +30,10 @@ const GESTURE_LABELS = {
 }
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
+
+// orderType 화면 진입 직후, 직전 화면의 OK 핀치 해제 과도기 동작을 매장/포장 선택으로
+// 오인식하지 않도록 무시하는 유예 구간(ms)
+const ORDER_TYPE_GESTURE_GRACE_MS = 900
 
 // 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
 const CONTROL_BAR_HEIGHT = 58
@@ -142,7 +145,13 @@ function AppContent() {
 
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
-  useEffect(() => { screenRef.current = screen }, [screen])
+  // 화면 진입 시각 — 전환 직후 잔여 손동작(직전 화면의 OK 핀치를 풀며 손을 펴는 과도기 동작)이
+  // finger_1/finger_2로 오인식되어 매장/포장이 자동 선택되는 것을 막기 위한 유예 구간 기준점
+  const screenEnteredAtRef = useRef(performance.now())
+  useEffect(() => {
+    screenRef.current = screen
+    screenEnteredAtRef.current = performance.now()
+  }, [screen])
 
   // 화면별 제스처 액션 — 렌더마다 최신 클로저를 갱신
   const gestureActionsRef = useRef({})
@@ -361,9 +370,12 @@ function AppContent() {
       const { dineIn, takeout } = gestureActionsRef.current.orderType
       const activeHand  = hands?.right || hands?.left
       const fingerCount = activeHand?.finger_count ?? -1
-      if      (gesture === 'ok')                              { fireOk(); showLabel(GESTURE_LABELS.ok) }
-      else if (gesture === 'finger_1' && fingerCount <= 1)   { dineIn();  showLabel('☝ 매장') }
-      else if (gesture === 'finger_2' && fingerCount >= 2)   { takeout(); showLabel('✌ 포장') }
+      // 화면 진입 직후 짧은 유예 구간 — 직전 화면(start)의 OK 핀치를 풀며 손을 펴는 동작이
+      // finger_1/finger_2로 오인식되어 매장/포장이 사용자 의도 없이 자동 선택되는 것을 방지
+      const settled = performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS
+      if      (gesture === 'ok')                                        { fireOk(); showLabel(GESTURE_LABELS.ok) }
+      else if (settled && gesture === 'finger_1' && fingerCount <= 1)  { dineIn();  showLabel('☝ 매장') }
+      else if (settled && gesture === 'finger_2' && fingerCount >= 2)  { takeout(); showLabel('✌ 포장') }
       return
     }
 
@@ -680,7 +692,6 @@ function AppContent() {
 
   const screens = {
     start:       <StartScreen {...props} />,
-    signup:      <SignupScreen nav={nav} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,

@@ -72,9 +72,10 @@ export default function StartScreen({ nav }) {
         />
       ))}
 
-      {/* 회원가입 — 주문 흐름과 완전히 분리된 별도 화면으로 이동. 눈에 띄지 않게 우측 상단에 배치 */}
+      {/* 회원가입 — 키오스크 주문 SPA와 완전히 분리된 별도 페이지(signup.html)로 실제 이동.
+          내부 nav() 화면 전환이 아니라 브라우저 페이지 전환이므로 세션/카트 상태와 무관하다. */}
       <button
-        onClick={e => { e.stopPropagation(); nav('signup') }}
+        onClick={e => { e.stopPropagation(); window.location.href = './signup.html' }}
         style={{
           position: 'absolute', top: 20, right: 20, zIndex: 1,
           background: 'rgba(0,0,0,0.35)',

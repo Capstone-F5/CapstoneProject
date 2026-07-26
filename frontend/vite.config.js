@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, createLogger } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
@@ -31,6 +32,11 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      // 회원가입은 키오스크 주문 SPA와 별개의 정적 페이지로 따로 빌드된다(signup.html).
+      input: {
+        main:   fileURLToPath(new URL('./index.html', import.meta.url)),
+        signup: fileURLToPath(new URL('./signup.html', import.meta.url)),
+      },
       onwarn(warning, warn) {
         if (warning.code === 'SOURCEMAP_ERROR') return
         warn(warning)
