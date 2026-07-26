@@ -1,21 +1,20 @@
-from datetime import date, datetime, timedelta
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from datetime import date, timedelta
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.models import Order, OrderItem, MenuItem
 
 
-def get_today_summary(db: Session):
+async def get_today_summary(db: AsyncSession) -> dict:
     """오늘 매출 합계, 주문 건수, 평균 객단가"""
     today = date.today()
-    orders = (
-        db.query(Order)
-        .filter(
+    result = await db.execute(
+        select(Order).where(
             Order.status == "COMPLETED",
-            func.date(Order.created_at) == today
+            func.date(Order.created_at) == today,
         )
-        .all()
     )
-    
+    orders = result.scalars().all()
+
     order_count = len(orders)
     today_sales = sum(float(o.final_amount) for o in orders)
     avg_order_value = (today_sales / order_count) if order_count > 0 else 0.0
@@ -27,17 +26,16 @@ def get_today_summary(db: Session):
     }
 
 
-def get_sales_series(db: Session, days: int):
+async def get_sales_series(db: AsyncSession, days: int) -> list[dict]:
     """최근 N일간 일자별 매출 추이"""
     start_date = date.today() - timedelta(days=days)
-    orders = (
-        db.query(Order)
-        .filter(
+    result = await db.execute(
+        select(Order).where(
             Order.status == "COMPLETED",
-            func.date(Order.created_at) >= start_date
+            func.date(Order.created_at) >= start_date,
         )
-        .all()
     )
+    orders = result.scalars().all()
 
     daily_map = {}
     for i in range(days + 1):
@@ -56,26 +54,25 @@ def get_sales_series(db: Session, days: int):
     ]
 
 
-def get_popular_items(db: Session, days: int, limit: int = 5):
+async def get_popular_items(db: AsyncSession, days: int, limit: int = 5) -> list[dict]:
     """인기 메뉴 랭킹 (판매 수량 및 매출액 기준)"""
     start_date = date.today() - timedelta(days=days)
-    results = (
-        db.query(
+    result = await db.execute(
+        select(
             OrderItem.menu_item_id,
             MenuItem.name_ko,
             func.sum(OrderItem.quantity).label("quantity_sold"),
-            func.sum(OrderItem.total_price).label("revenue")
+            func.sum(OrderItem.total_price).label("revenue"),
         )
         .join(Order, OrderItem.order_id == Order.id)
         .join(MenuItem, OrderItem.menu_item_id == MenuItem.id)
-        .filter(
+        .where(
             Order.status == "COMPLETED",
-            func.date(Order.created_at) >= start_date
+            func.date(Order.created_at) >= start_date,
         )
         .group_by(OrderItem.menu_item_id, MenuItem.name_ko)
         .order_by(func.sum(OrderItem.quantity).desc())
         .limit(limit)
-        .all()
     )
 
     return [
@@ -85,5 +82,5 @@ def get_popular_items(db: Session, days: int, limit: int = 5):
             "quantity_sold": int(r.quantity_sold),
             "revenue": float(r.revenue),
         }
-        for r in results
+        for r in result.all()
     ]

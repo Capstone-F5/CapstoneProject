@@ -53,7 +53,10 @@ async def get_order_by_id(db: AsyncSession, order_id: str) -> Order | None:
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
-        .options(selectinload(Order.items))
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.payments),
+        )
     )
     return result.scalar_one_or_none()
 
@@ -74,25 +77,27 @@ async def get_recent_orders_by_user(
     return result.scalars().all()
 
 
-from sqlalchemy.orm import Session
-from backend.core.models import Order
-
-def list_orders(db: Session, status: str | None = None, order_type: str | None = None):
-    """관리자용 주문 목록 조회 (미완료 주문 우선 정렬)"""
-    query = db.query(Order)
+async def list_orders(
+    db: AsyncSession, status: str | None = None, order_type: str | None = None
+) -> list[Order]:
+    """관리자용 주문 목록 조회 (최신순 정렬)"""
+    query = select(Order).options(
+        selectinload(Order.items).selectinload(OrderItem.menu_item),
+        selectinload(Order.payments),
+    )
     if status:
-        query = query.filter(Order.status == status)
+        query = query.where(Order.status == status)
     if order_type:
-        query = query.filter(Order.order_type == order_type)
-    
-    # 최신순 정렬
-    return query.order_by(Order.created_at.desc()).all()
+        query = query.where(Order.order_type == order_type)
+
+    result = await db.execute(query.order_by(Order.created_at.desc()))
+    return result.scalars().all()
 
 
-def update_order_status(db: Session, order_id: str, new_status: str) -> Order | None:
+async def update_order_status(db: AsyncSession, order_id: str, new_status: str) -> Order | None:
     """주문 상태 변경 (DAO 규칙: flush만 호출)"""
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = await get_order_by_id(db, order_id)
     if order:
         order.status = new_status
-        db.flush()
+        await db.flush()
     return order

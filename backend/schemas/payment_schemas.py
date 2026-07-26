@@ -1,5 +1,7 @@
-from pydantic import BaseModel
+from datetime import datetime
 from decimal import Decimal
+from pydantic import BaseModel
+
 
 class PaymentIn(BaseModel):
     order_id: str
@@ -8,6 +10,7 @@ class PaymentIn(BaseModel):
     pg_transaction_id: str | None = None
     pg_provider: str | None = None
 
+
 class PaymentOut(BaseModel):
     payment_id: str
     order_id: str
@@ -15,11 +18,6 @@ class PaymentOut(BaseModel):
     amount: Decimal
     status: str
     paid_at: str | None
-
-
-    from datetime import datetime
-from decimal import Decimal
-from pydantic import BaseModel
 
 
 class PaymentAdminOut(BaseModel):

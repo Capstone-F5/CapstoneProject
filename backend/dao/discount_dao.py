@@ -1,14 +1,16 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from backend.core.models import Discount
 from backend.schemas.coupon_schemas import DiscountIn
 
 
-def list_discounts(db: Session):
-    return db.query(Discount).all()
+async def list_discounts(db: AsyncSession) -> list[Discount]:
+    result = await db.execute(select(Discount))
+    return result.scalars().all()
 
 
-def create_discount(db: Session, data: DiscountIn) -> Discount:
+async def create_discount(db: AsyncSession, data: DiscountIn) -> Discount:
     discount = Discount(**data.model_dump())
     db.add(discount)
-    db.flush()
+    await db.flush()
     return discount

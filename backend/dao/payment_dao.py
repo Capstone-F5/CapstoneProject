@@ -1,4 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from decimal import Decimal
 from datetime import datetime
 from core.models import Payment
@@ -25,28 +27,37 @@ async def create_payment(
     return payment
 
 
-from datetime import datetime
-from sqlalchemy.orm import Session
-from backend.core.models import Payment
+async def get_payment_by_id(db: AsyncSession, payment_id: str) -> Payment | None:
+    result = await db.execute(
+        select(Payment).where(Payment.id == payment_id).options(selectinload(Payment.order))
+    )
+    return result.scalar_one_or_none()
 
 
-def get_payment_by_id(db: Session, payment_id: str) -> Payment | None:
-    return db.query(Payment).filter(Payment.id == payment_id).first()
+async def get_payment_by_order_id(db: AsyncSession, order_id: str) -> Payment | None:
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.order_id == order_id)
+        .options(selectinload(Payment.order))
+        .order_by(Payment.created_at.desc())
+    )
+    return result.scalars().first()
 
 
-def list_payments(db: Session, status: str | None = None) -> list[Payment]:
-    query = db.query(Payment)
+async def list_payments(db: AsyncSession, status: str | None = None) -> list[Payment]:
+    query = select(Payment).options(selectinload(Payment.order))
     if status:
-        query = query.filter(Payment.status == status)
-    return query.order_by(Payment.created_at.desc()).all()
+        query = query.where(Payment.status == status)
+    result = await db.execute(query.order_by(Payment.created_at.desc()))
+    return result.scalars().all()
 
 
-def mark_refunded(db: Session, payment_id: str, reason: str) -> Payment | None:
+async def mark_refunded(db: AsyncSession, payment_id: str, reason: str) -> Payment | None:
     """결제 상태를 REFUNDED로 변경하고 사유 기록 (DAO 규칙: flush만 호출)"""
-    payment = get_payment_by_id(db, payment_id)
+    payment = await get_payment_by_id(db, payment_id)
     if payment:
         payment.status = "REFUNDED"
-        payment.refunded_at = datetime.now()
+        payment.refunded_at = datetime.utcnow()
         payment.failure_reason = reason
-        db.flush()
+        await db.flush()
     return payment
