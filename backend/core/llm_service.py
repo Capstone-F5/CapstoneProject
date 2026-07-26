@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage
 from ai_modules.llm.action_context import get_actions, reset_actions, set_cart
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.memory import get_memory, save_and_prune
-from ai_modules.llm.session_context import set_session_id, set_order_type
+from ai_modules.llm.session_context import set_session_id
 
 # 감지된 언어로 답변하도록 지시하는 SystemMessage 텍스트.
 # ko/zh/ja 는 UI 지원 언어이므로 해당 언어 고정.
@@ -149,7 +149,6 @@ async def run_agent_stream(
     """
     cart = cart or []
     set_session_id(session_id)
-    set_order_type(order_type)
     set_cart(cart)
     reset_actions()
 
@@ -232,7 +231,6 @@ async def run_agent(
 ) -> dict[str, Any]:
     cart = cart or []
     set_session_id(session_id)
-    set_order_type(order_type)
     set_cart(cart)
     reset_actions()
 

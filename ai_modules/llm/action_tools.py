@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
 from .action_context import push_action
-from .session_context import get_session_id, get_order_type
+from .session_context import get_session_id
 from . import api_client
 from .rag import search_menu as _rag_search_menu
 
@@ -442,23 +442,13 @@ def checkout(method: str | None = None) -> str:
     return "결제 화면(장바구니)으로 이동합니다."
 
 
-@tool
-def confirm_order(user_phone: str | None = None) -> str:
-    """장바구니의 메뉴로 주문을 확정하고 DB에 주문을 생성한다.
-
-    Args:
-        user_phone: 포인트 적립용 전화번호 (선택). 예: 01012345678
-    """
-    session_id = get_session_id()
-    order_type = get_order_type()
-    try:
-        result = _run(api_client.create_order(session_id, user_phone, order_type))
-    except Exception as e:
-        return _friendly_error("주문 생성 실패", e)
-
-    order_id = result.get("order_id", "")
-    push_action({"type": "confirm_order", "order_id": order_id})
-    return f"주문이 완료되었습니다! 주문 번호: {order_id}"
+# ★ 여기 있던 confirm_order 툴(POST /api/orders를 직접 호출해 DB에 주문을 생성)은 제거했다.
+# 실제 결제(카드 리더/현금 확인/QR 결제)를 전혀 거치지 않고도 "주문이 완료되었습니다"라고
+# 답하며 DB에 진짜 주문을 만들어버리는 구조적 우회로였다 — CartScreen.jsx의 결제 대기 팝업
+# (카드/현금/간편결제 UI, 하드웨어 트리거, processPayment 호출)을 건너뛰는 유일한 경로였음.
+# 주문 확정은 반드시 화면의 결제 흐름(ui_action start_checkout → points → payment_method)을
+# 거쳐 CartScreen의 handleComplete()가 결제 성공을 직접 확인한 뒤에만 이루어져야 한다.
+# 그 경로는 프론트엔드에만 있고 LLM 툴로는 절대 재현할 수 없어야 한다.
 
 
 # ── ui_action: 화면 조작 범용 도구 ──────────────────────────────────────────
@@ -565,6 +555,5 @@ ACTION_TOOLS = [
     check_user_points,
     navigate,
     checkout,
-    confirm_order,
     ui_action,
 ]
