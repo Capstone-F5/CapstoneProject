@@ -12,7 +12,7 @@ from langchain_core.tools import tool
 #   action_context.py 에 있던 전역 변수(_session_id) 방식은 동시 요청 시 서로 다른 세션의
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
-from .action_context import push_action
+from .action_context import push_action, get_user_input
 from .session_context import get_session_id
 from . import api_client
 from .rag import search_menu as _rag_search_menu
@@ -451,6 +451,29 @@ def checkout(method: str | None = None) -> str:
 # 그 경로는 프론트엔드에만 있고 LLM 툴로는 절대 재현할 수 없어야 한다.
 
 
+# ── 결제수단 환각 방지 가드 ──────────────────────────────────────────────────
+# "결제할게"처럼 결제수단을 말하지 않은 한 마디에도 모델이 스스로 payment_method(cash) 등을
+# 정해서 호출해버리는 사례가 재현됨(프롬프트 지시만으로는 8회 중 최대 7회까지 재현 — 프롬프트
+# 보강만으로는 못 막음). 이 발화에 결제수단을 실제로 언급했는지를 키워드로 확인해, 근거 없이
+# 값을 정했으면 툴 자체에서 거부한다. 삼성페이는 화면상 카드 버튼에 같이 묶여 있으므로 card
+# 키워드에도 포함시켰다(카카오페이 등 나머지 간편결제는 pay에만 포함).
+_PAYMENT_METHOD_KEYWORDS: dict[str, list[str]] = {
+    "card": ["카드", "신용카드", "삼성페이", "samsung", "card", "credit", "信用卡", "卡", "カード", "クレジット"],
+    "cash": ["현금", "cash", "现金", "現金", "キャッシュ"],
+    "pay": [
+        "간편결제", "간편", "페이", "pay", "qr", "바코드", "barcode",
+        "네이버페이", "카카오페이", "제로페이", "페이코", "naver", "kakao", "payco",
+        "扫码", "移动支付", "QRコード",
+    ],
+}
+
+
+def _payment_method_supported_by_input(value: str) -> bool:
+    text = get_user_input().lower()
+    keywords = _PAYMENT_METHOD_KEYWORDS.get(value, [])
+    return any(kw.lower() in text for kw in keywords)
+
+
 # ── ui_action: 화면 조작 범용 도구 ──────────────────────────────────────────
 # action 별 허용 value 화이트리스트. None = value 불필요.
 _UI_ACTION_SPEC: dict[str, set[str] | None] = {
@@ -517,6 +540,12 @@ def ui_action(
             return f"오류: action '{action}' 의 value 는 {sorted(allowed)} 중 하나여야 합니다."
     elif action in ("open_item", "points_phone") and not value:
         return f"오류: action '{action}' 은 value 가 필요합니다."
+
+    if action == "payment_method" and not _payment_method_supported_by_input(value):
+        return (
+            "오류: 이번 발화에 결제수단이 실제로 언급되지 않았습니다. 카드/현금/간편결제 중 "
+            "고객이 직접 말한 수단이 아니면 임의로 정하지 말고, 결제수단을 다시 물어보세요."
+        )
 
     payload: dict = {"type": action}
     if action == "update_modal":
