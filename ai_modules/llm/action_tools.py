@@ -12,9 +12,10 @@ from langchain_core.tools import tool
 #   action_context.py 에 있던 전역 변수(_session_id) 방식은 동시 요청 시 서로 다른 세션의
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
-from .action_context import push_action, get_user_input
+from .action_context import push_action, get_user_input, get_checkout_snapshot
 from .session_context import get_session_id
 from . import api_client
+from . import checkout_progress
 from .rag import search_menu as _rag_search_menu
 
 def _run(coro):
@@ -389,6 +390,7 @@ def clear_cart() -> str:
         _run(api_client.delete_cart(session_id))
     except Exception as e:
         return _friendly_error("초기화 실패", e)
+    checkout_progress.reset(session_id)  # 새 주문을 시작하므로 이전 결제 진행 상태도 초기화
     push_action({"type": "clear_cart"})
     return "장바구니를 비웠습니다."
 
@@ -398,10 +400,20 @@ def check_user_points(phone: str) -> str:
     Args:
         phone: 전화번호 (숫자만, 예: 01012345678)
     """
+    # 음성으로 번호를 부를 때 "010-1234-5678"/"010 1234 5678"처럼 끊어 말하는 경우가 실제로
+    # 재현됨 — 숫자만 남기고 나머지는 버린다.
+    digits = "".join(ch for ch in phone if ch.isdigit())
     try:
-        data = _run(api_client.get_user_points(phone))
+        data = _run(api_client.get_user_points(digits or phone))
     except Exception as e:
         return _friendly_error("포인트 조회 실패", e)
+
+    # ★ 결제 중 전화번호 입력 단계에서 모델이 이 툴로 잘못 라우팅해도(포인트 단순 조회와
+    # 헷갈리는 경우) 화면이 실제로 진행되도록 points_phone 액션을 함께 발행한다. cart 화면이
+    # 아니면 처리할 곳이 없어 조용히 무시되므로 다른 상황에서 호출돼도 안전하다.
+    if len(digits) == 11:
+        push_action({"type": "points_phone", "phone": digits})
+        checkout_progress.mark_done(get_session_id(), "points")
 
     if data is None:
         return "등록된 회원 정보가 없습니다. 주문 후 포인트 적립이 가능합니다."
@@ -419,27 +431,12 @@ def navigate(screen: str) -> str:
     return f"{screen} 화면으로 이동"
 
 
-@tool
-def checkout(method: str | None = None) -> str:
-    """결제를 진행한다. 장바구니가 비어 있으면 거부한다.
-
-    Args:
-        method: 결제 수단 ('card' | 'cash' | 'pay'). 생략 가능.
-    """
-    session_id = get_session_id()
-    try:
-        cart = _run(api_client.get_cart(session_id))
-    except Exception as e:
-        return _friendly_error("장바구니 확인 실패", e)
-
-    if not cart.get("items"):
-        return "담긴 메뉴가 없어요. 먼저 메뉴를 선택해 주세요."
-
-    action: dict = {"type": "checkout"}
-    if method:
-        action["method"] = method
-    push_action(action)
-    return "결제 화면(장바구니)으로 이동합니다."
+# ★ 여기 있던 checkout(method=...) 툴은 제거했다. ui_action(start_checkout)과 navigate('cart')로
+# 이미 완전히 커버되는데도, "method" 파라미터가 있다는 이유로 모델이 이걸 결제수단 확정/주문
+# 완료 툴로 오인해서 호출하고("카드로 할게" → checkout(method='card')), 그 결과("결제 화면으로
+# 이동합니다"라는 평범한 문구)를 무시한 채 "결제가 완료되었습니다! 감사합니다"처럼 실제로는
+# 전혀 일어나지 않은 결제·주문 완료를 스스로 지어내 답하는 사례가 재현됨. payment_method 가드로
+# 못 잡는 새로운 완주 경로였다 — 아예 없애는 게 확실하다.
 
 
 # ★ 여기 있던 confirm_order 툴(POST /api/orders를 직접 호출해 DB에 주문을 생성)은 제거했다.
@@ -541,11 +538,32 @@ def ui_action(
     elif action in ("open_item", "points_phone") and not value:
         return f"오류: action '{action}' 은 value 가 필요합니다."
 
-    if action == "payment_method" and not _payment_method_supported_by_input(value):
-        return (
-            "오류: 이번 발화에 결제수단이 실제로 언급되지 않았습니다. 카드/현금/간편결제 중 "
-            "고객이 직접 말한 수단이 아니면 임의로 정하지 말고, 결제수단을 다시 물어보세요."
-        )
+    if action == "points":
+        # ★ 포인트 질문은 반드시 고객이 실제로 그 질문을 들은 뒤(=start_checkout이 이전 턴에
+        # 이미 끝난 뒤)에만 대답으로 인정한다. 같은 턴에서 start_checkout 직후 곧바로
+        # points(no)를 스스로 정해버리는 사례가 재현되어("결제할게" 한 마디에 포인트 질문 자체를
+        # 건너뛰고 답까지 정함) 걸어둔다.
+        if "start_checkout" not in get_checkout_snapshot():
+            return (
+                "오류: 아직 포인트 적립 여부를 묻지 않았습니다. 이번 턴에는 points를 호출하지 말고, "
+                "결제를 시작한 뒤 '포인트 적립하시겠어요?'라고 물어보기만 하세요. 고객이 실제로 "
+                "대답한 다음 턴에만 points를 호출할 수 있습니다."
+            )
+
+    if action == "payment_method":
+        # ★ 결제수단보다 포인트 적립 질문이 항상 먼저다 — 예외 없음. 스냅샷은 "이번 턴이
+        # 시작되기 전" 기준이므로, 같은 턴에서 방금 points를 호출했다는 이유로는 통과되지 않는다
+        # (그렇게 허용하면 "카드로 결제할게" 한 마디로 포인트 질문 자체를 건너뛰고 완주해버림).
+        if "points" not in get_checkout_snapshot():
+            return (
+                "오류: 포인트 적립 여부를 먼저 물어야 합니다. 결제수단을 언급했더라도, 이번 턴에는 "
+                "결제수단을 정하지 말고 '포인트 적립하시겠어요?'를 먼저 물어보세요."
+            )
+        if not _payment_method_supported_by_input(value):
+            return (
+                "오류: 이번 발화에 결제수단이 실제로 언급되지 않았습니다. 카드/현금/간편결제 중 "
+                "고객이 직접 말한 수단이 아니면 임의로 정하지 말고, 결제수단을 다시 물어보세요."
+            )
 
     payload: dict = {"type": action}
     if action == "update_modal":
@@ -561,11 +579,21 @@ def ui_action(
         if item_type in ("single", "set"):
             payload["item_type"] = item_type
     elif action == "points_phone":
-        payload["phone"] = value
+        # "010-1234-5678"/"010 1234 5678"처럼 끊어 말한 값이 그대로 들어와도 숫자만 남긴다.
+        digits = "".join(ch for ch in (value or "") if ch.isdigit())
+        payload["phone"] = digits or value
     elif value is not None:
         payload["value"] = value
 
     push_action(payload)
+    if action in ("start_checkout", "points"):
+        checkout_progress.mark_done(get_session_id(), action)
+    elif action == "points_phone":
+        # points_phone은 고객이 "적립할게"라고 답한 뒤에만 도달하는 단계다. 중간의 points(yes)
+        # 툴 호출 자체가 가끔 생략돼도(재현되는 신뢰도 문제) 여기 도달했다는 사실 자체가 포인트
+        # 질문에 실제로 답했다는 증거이므로, points 완료로도 함께 기록해 결제수단 단계가
+        # 불필요하게 막히지 않게 한다.
+        checkout_progress.mark_done(get_session_id(), "points")
     label = _UI_ACTION_MSG.get(action, action)
     detail = f" ({field}={field_value})" if action == "update_modal" else (f" ({value})" if value else "")
     return f"{label} 완료{detail}"
@@ -583,6 +611,5 @@ ACTION_TOOLS = [
     clear_cart,
     check_user_points,
     navigate,
-    checkout,
     ui_action,
 ]
