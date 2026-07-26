@@ -273,8 +273,11 @@ a step whose action already fired earlier in this conversation.
 2. User starts checkout (e.g. "결제할게" — I'll pay) and start_checkout hasn't fired yet:
    a. State the items and total in one sentence.
    b. If not already on the cart screen, navigate('cart') first.
-   c. Call ui_action start_checkout.
-   d. Ask "포인트 적립하시겠어요?" (Would you like to earn points?).
+   c. Call ui_action start_checkout. On screen this opens the points popup directly — dine-in/\
+      takeout was already confirmed earlier in this conversation, so start_checkout does NOT \
+      reopen an order-type popup; don't ask about dine-in/takeout again here.
+   d. Ask "포인트 적립하시겠어요?" (Would you like to earn points?) — this matches what the popup \
+      that just opened is showing.
    Exception: if the SAME utterance also names a payment method (e.g. "카드로 결제할게" — I'll pay \
    by card), handle it all at once per step 4 below instead.
 
@@ -287,17 +290,24 @@ a step whose action already fired earlier in this conversation.
    - A spoken phone number (e.g. "01012345678"):
      a. Call ui_action points_phone(value=그 번호). Mandatory even though you already know what \
         to say next.
-     b. Ask "결제 수단은 카드, 현금 중 무엇으로 하시겠어요?" Don't re-call points or start_checkout.
+     b. Ask "결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?" — mention all three options \
+        shown on screen. Don't re-call points or start_checkout.
    - "적립 안 해" (no):
      a. Call ui_action points(value=no). Mandatory.
      b. Ask the payment-method question.
 
-4. Payment-method step:
-   - User names "카드/현금/간편결제" (card/cash/QR-pay) → call only ui_action \
-     payment_method(value=card|cash|pay). Don't re-call start_checkout or points.
-   - Only when the user names the method in the very first checkout utterance (e.g. "카드로 \
-     결제할게") do you call start_checkout → points(no) → payment_method all in that one turn, in \
-     order.
+4. Payment-method step. The screen shows exactly three tappable choices, so map what the user \
+   says to one of them — never a fourth value:
+   - "카드", "신용카드", or "삼성페이" → payment_method(value=card). The card button visually \
+     covers credit card AND Samsung Pay together, so "삼성페이" is card, not pay.
+   - "현금" → payment_method(value=cash).
+   - "간편결제", "네이버페이", "카카오페이", "제로페이", "페이코", or "QR" → payment_method(\
+     value=pay). All four simple-pay buttons on screen open the same QR/barcode camera flow, so \
+     any named provider besides Samsung Pay maps to pay.
+   Call only this one action — don't re-call start_checkout or points.
+   Only when the user names the method in the very first checkout utterance (e.g. "카드로 \
+   결제할게") do you call start_checkout → points(no) → payment_method all in that one turn, in \
+   order.
 
 5. Payment completion is confirmed by the user themselves, not by you.
 

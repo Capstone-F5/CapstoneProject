@@ -65,6 +65,20 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setShowOrderTypeConfirm(true)
   }
 
+  // 음성으로 "결제할게"를 말했을 때 진입 지점 — 매장/포장 재확인 팝업은 손으로 카드를 다시
+  // 눌러 바꾸는 터치 전용 UI라 음성으로는 응답할 방법이 없다(order_type ui_action은 전역
+  // 핸들러가 항상 menu 화면으로 이동시켜버려 결제 중간에 재사용할 수 없음, App.jsx 참고).
+  // 주문 유형은 이미 대화로 확인했으므로, 음성 결제 시작은 이 팝업을 띄우지 않고 터치 사용자가
+  // "확인"을 눌렀을 때와 동일한 다음 단계(포인트 질문)로 곧장 진행한다.
+  const voiceStartCheckout = () => {
+    if (cart.length === 0) {
+      setEmptyCartNotice(true)
+      setTimeout(() => setEmptyCartNotice(false), 2000)
+      return
+    }
+    setShowPointPrompt(true)
+  }
+
   const confirmOrderType = () => {
     setShowOrderTypeConfirm(false)
     setShowPointPrompt(true)
@@ -154,7 +168,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     voiceRef.current = (a) => {
       switch (a.type) {
         case 'start_checkout':
-          handlePayClick()
+          voiceStartCheckout()
           return true
         case 'points':
           setShowPointPrompt(false)
