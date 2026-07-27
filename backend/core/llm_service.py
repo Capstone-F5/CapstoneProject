@@ -39,6 +39,20 @@ _LANG_INSTRUCTIONS: dict[str, str] = {
 # ko / zh / ja 외 모든 언어는 영어로 처리
 _NATIVE_LANGS = frozenset({"ko", "zh", "ja"})
 
+# LLM 호출 자체가 실패했을 때(메모리 로드/네트워크/속도 제한 등) 보여줄 안내문 — LLM이 생성하는
+# 문장이 아니라 고정 문자열이므로 UI 지원 4개 언어로만 준비하고, 나머지는 영어로 대체한다.
+_FALLBACK_MESSAGES: dict[str, str] = {
+    "ko": "죄송해요, 지금 답변을 생성하지 못했어요. 다시 한번 말씀해 주세요.",
+    "en": "Sorry, I couldn't generate a response just now. Please try saying that again.",
+    "zh": "抱歉，现在无法生成回复。请再说一次。",
+    "ja": "申し訳ございません、只今応答を生成できませんでした。もう一度お話しください。",
+}
+
+
+def _fallback_message(language: str | None) -> str:
+    normalized = language if language in _NATIVE_LANGS else "en"
+    return _FALLBACK_MESSAGES.get(normalized, _FALLBACK_MESSAGES["en"])
+
 
 def _prepend_language(chat_history: list, language: str | None) -> list:
     """감지된 언어 코드가 있으면 히스토리 맨 앞에 기본 언어 SystemMessage를 주입."""
@@ -157,26 +171,28 @@ async def run_agent_stream(
     set_checkout_snapshot(checkout_snapshot(session_id))
     reset_actions()
 
-    memory = await get_memory(session_id)
-    executor = get_agent_executor()
-
-    mem_vars = await memory.aload_memory_variables({})
-    chat_history = _prepend_language(
-        mem_vars.get("chat_history", []), language
-    )
-
-    # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
-    chat_history = [SystemMessage(content=_context_message(cart, screen, order_type, modal_state))] + chat_history
-
     output_parts: list[str] = []
     in_tool_call = False
     emitted_count = 0  # 이미 인라인으로 전송한 액션 수 추적
+    memory = None
 
-    # ★ astream_events 도중 예외(OpenAI 네트워크/속도 제한 등)가 나면 여기서 잡아서 항상
-    # done 이벤트를 보낸다. 그렇지 않으면 헤더가 이미 전송된 뒤라 예외가 연결을 그냥 끊어버려,
-    # 프론트는 done을 영원히 못 받고(그 턴은 실패해도 정상) 이후 요청까지 밀리는 것처럼 보인다.
+    # ★ 메모리 로드/에이전트 생성부터 astream_events까지 전부 한 try 안에 둔다. 이전에는
+    # astream_events 루프만 감쌌는데, get_memory/aload_memory_variables 쪽에서 예외가 나면
+    # 첫 yield 전에 함수가 그냥 죽어버려 프론트가 "서버와 연결이 잠시 어려워요" 오류를 보게
+    # 됐다 — 실제로 재현된 문제. 어디서 실패하든 항상 done 이벤트로 마무리한다.
     stream_error: Exception | None = None
     try:
+        memory = await get_memory(session_id)
+        executor = get_agent_executor()
+
+        mem_vars = await memory.aload_memory_variables({})
+        chat_history = _prepend_language(
+            mem_vars.get("chat_history", []), language
+        )
+
+        # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
+        chat_history = [SystemMessage(content=_context_message(cart, screen, order_type, modal_state))] + chat_history
+
         async for event in executor.astream_events(
             {"input": user_input, "chat_history": chat_history},
             version="v1",
@@ -210,7 +226,7 @@ async def run_agent_stream(
 
     if stream_error is not None:
         if not output:
-            output = "죄송해요, 지금 답변을 생성하지 못했어요. 다시 한번 말씀해 주세요."
+            output = _fallback_message(language)
         # 이번 턴 저장은 건너뛴다 — 부분 응답을 히스토리에 남기면 다음 턴이 더 헷갈릴 수 있다.
         yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
         return

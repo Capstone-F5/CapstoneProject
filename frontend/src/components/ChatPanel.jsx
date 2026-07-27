@@ -20,6 +20,16 @@ const CSS = `
 const NATIVE_LOCALES = new Set(['ko', 'zh', 'ja'])
 const langToLocale = (lang) => NATIVE_LOCALES.has(lang) ? lang : 'en'
 
+// 서버 연결 실패 시 보여줄 안내문 — LLM이 만드는 문장이 아니라 고정 문자열이므로
+// UI 지원 4개 언어로만 준비한다.
+const CONNECTION_ERROR_MESSAGES = {
+  ko: '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.',
+  en: "Sorry, I'm having trouble connecting to the server. Please try again in a moment.",
+  zh: '抱歉，服务器连接暂时出现问题。请稍后再试。',
+  ja: '申し訳ございません、サーバーとの接続が不安定です。しばらくしてからもう一度お試しください。',
+}
+const connectionErrorMessage = (lang) => CONNECTION_ERROR_MESSAGES[langToLocale(lang)]
+
 const INIT_MESSAGES = [
   {
     id: 'init', role: 'bot',
@@ -379,7 +389,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         }
       }
     } catch (e) {
-      replyText = '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.'
+      replyText = connectionErrorMessage(detectedLangRef.current)
       flushTtsBuf(true)
       setMessages(prev =>
         prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
