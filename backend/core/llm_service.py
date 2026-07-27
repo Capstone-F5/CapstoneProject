@@ -19,6 +19,7 @@ from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
 from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id
+from .conversation_log import log_turn
 
 # 감지된 언어로 답변하도록 지시하는 SystemMessage 텍스트.
 # ko/zh/ja 는 UI 지원 언어이므로 해당 언어 고정.
@@ -227,6 +228,10 @@ async def run_agent_stream(
     if stream_error is not None:
         if not output:
             output = _fallback_message(language)
+        log_turn(
+            session_id=session_id, user_input=user_input, output=output, actions=get_actions(),
+            language=language, screen=screen, order_type=order_type, error=str(stream_error),
+        )
         # 이번 턴 저장은 건너뛴다 — 부분 응답을 히스토리에 남기면 다음 턴이 더 헷갈릴 수 있다.
         yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
         return
@@ -238,6 +243,10 @@ async def run_agent_stream(
     for action in remaining:
         yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
 
+    log_turn(
+        session_id=session_id, user_input=user_input, output=output, actions=get_actions(),
+        language=language, screen=screen, order_type=order_type,
+    )
     yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
 
 
@@ -273,6 +282,10 @@ async def run_agent(
     output = result.get("output", "")
 
     await save_and_prune(memory, user_input, output)
+    log_turn(
+        session_id=session_id, user_input=user_input, output=output, actions=get_actions(),
+        language=language, screen=screen, order_type=order_type,
+    )
 
     return {
         "session_id": session_id,

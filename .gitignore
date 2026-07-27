@@ -37,6 +37,7 @@ Thumbs.db
 # Project Specific
 assets/raw_data/
 temp/
+backend/logs/
 
 # Python
 __pycache__/
