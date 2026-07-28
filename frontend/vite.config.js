@@ -18,9 +18,11 @@ if (_warnOnce) {
   logger.warnOnce = (msg, opts) => { if (!suppress(msg)) _warnOnce(msg, opts) }
 }
 
+const useHttps = process.env.VITE_HTTPS !== 'false'
+
 export default defineConfig({
   customLogger: logger,
-  plugins: [react(), basicSsl()],
+  plugins: [react(), ...(useHttps ? [basicSsl()] : [])],
   base: './',
   optimizeDeps: {
     // vad-react / vad-web: CJS → ESM 변환을 위해 pre-bundle 포함
