@@ -52,6 +52,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
+      allowedHosts: ['cap.dmuce-stu.kr'],
       headers: {
         // onnxruntime-web 1.18+은 threaded WASM만 제공 → SharedArrayBuffer 필요
         // credentialless: 프록시 API 요청에 영향 없이 SAB 허용
