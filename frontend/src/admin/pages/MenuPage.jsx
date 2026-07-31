@@ -21,11 +21,11 @@ function Toggle({ checked, onChange }) {
     <div
       role="switch"
       aria-checked={checked}
-      className="toggle"
+      className={`toggle${checked ? ' checked' : ''}`}
       onClick={e => { e.stopPropagation(); onChange(!checked) }}
-      style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+      style={{ cursor: 'pointer' }}
     >
-      <div className="toggle-track" style={{ background: checked ? '#744032' : '#ccc' }} />
+      <div className="toggle-track" />
       <div className="toggle-thumb" />
     </div>
   )

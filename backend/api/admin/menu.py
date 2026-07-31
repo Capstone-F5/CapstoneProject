@@ -55,13 +55,13 @@ async def upload_menu_image(file: UploadFile = File(...)):
     return {"url": f"/static/uploads/menu/{filename}"}
 
 
-# --- 관리자용 메뉴 전체 조회 (숨김 카테고리 포함) ---------------------------
+# --- 관리자용 메뉴 전체 조회 (숨김 카테고리 + 품절 메뉴 포함) --------------
 @router.get("/menu", response_model=MenuResponse)
 async def get_admin_menu(db: AsyncSession = Depends(get_session)):
     categories = await menu_dao.get_all_categories_admin(db)
     menu_items: dict[str, list] = {}
     for cat in categories:
-        items = await menu_dao.get_menu_items_by_category(db, cat.id)
+        items = await menu_dao.get_menu_items_by_category_admin(db, cat.id)
         menu_items[cat.name_en.lower()] = [MenuItemOut.model_validate(i) for i in items]
     return MenuResponse(
         categories=[CategoryOut.model_validate(c) for c in categories],

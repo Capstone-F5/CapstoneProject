@@ -58,6 +58,19 @@ async def get_all_categories_admin(db: AsyncSession) -> list[Category]:
     return result.scalars().all()
 
 
+async def get_menu_items_by_category_admin(
+    db: AsyncSession, category_id: str
+) -> list[MenuItem]:
+    """관리자용 - 품절(is_available=False) 메뉴도 포함"""
+    result = await db.execute(
+        select(MenuItem)
+        .where(MenuItem.category_id == category_id)
+        .options(*_MENU_ITEM_LOAD_OPTS)
+        .order_by(MenuItem.display_order)
+    )
+    return result.scalars().all()
+
+
 async def get_category_by_id(db: AsyncSession, category_id: str) -> Category | None:
     result = await db.execute(select(Category).where(Category.id == category_id))
     return result.scalar_one_or_none()
