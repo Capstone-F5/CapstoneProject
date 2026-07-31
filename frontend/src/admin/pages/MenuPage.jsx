@@ -413,48 +413,89 @@ export default function MenuPage() {
   const [selectedItem,  setSelectedItem]  = useState(null)
   const [editItem,      setEditItem]      = useState(undefined)  // undefined=숨김 | null=신규 | obj=수정
   const [editOption,    setEditOption]    = useState(undefined)  // undefined=숨김 | null=신규 | obj=수정
-  const [editOptionGroup, setEditOptionGroup] = useState(null)   // editOption=null 일 때 기본 그룹
-  // editCat: null=숨김, true=신규 추가, object=수정 대상 카테고리
-  const [editCat,       setEditCat]       = useState(null)
+  const [editOptionGroup, setEditOptionGroup] = useState(null)
+  const [editCat,       setEditCat]       = useState(null)    // null=숨김 | true=신규 | object=수정
   const [deletingOpt,   setDeletingOpt]   = useState(null)
   const [deletingItem,  setDeletingItem]  = useState(null)
   const [deletingCat,   setDeletingCat]   = useState(null)
 
-  const load = () => {
-    setLoading(true)
-    fetchAdminMenu()
-      .then(raw => { setData(raw) })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
+  // silent=true: loading 스피너 없이 데이터만 갱신 (스크롤·깜박임 방지)
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true)
+    try {
+      const raw = await fetchAdminMenu()
+      setData(raw)
+    } catch(e) {
+      setError(e.message)
+    } finally {
+      if (!silent) setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [])
 
+  // ── 낙관적 업데이트 helpers ────────────────────────────────────────────────
+  const patchItem = (itemId, patch) => {
+    setData(prev => {
+      if (!prev) return prev
+      const items = {}
+      for (const key in prev.menu_items) {
+        items[key] = prev.menu_items[key].map(i => i.id === itemId ? { ...i, ...patch } : i)
+      }
+      return { ...prev, menu_items: items }
+    })
+  }
+
+  const patchOption = (itemId, optId, patch) => {
+    setData(prev => {
+      if (!prev) return prev
+      const items = {}
+      for (const key in prev.menu_items) {
+        items[key] = prev.menu_items[key].map(i =>
+          i.id === itemId
+            ? { ...i, options: (i.options ?? []).map(o => o.id === optId ? { ...o, ...patch } : o) }
+            : i
+        )
+      }
+      return { ...prev, menu_items: items }
+    })
+  }
+
+  const patchCat = (catId, patch) => {
+    setData(prev => {
+      if (!prev) return prev
+      return { ...prev, categories: prev.categories.map(c => c.id === catId ? { ...c, ...patch } : c) }
+    })
+  }
+
+  // ── 핸들러 ────────────────────────────────────────────────────────────────
   const handleToggleAvailable = async (item) => {
-    try { await updateMenuItem(item.id, { is_available: !item.is_available }); load() }
-    catch (e) { alert(e.message) }
+    patchItem(item.id, { is_available: !item.is_available })
+    try { await updateMenuItem(item.id, { is_available: !item.is_available }) }
+    catch (e) { alert(e.message); patchItem(item.id, { is_available: item.is_available }) }
   }
 
   const handleToggleCatVisible = async (cat) => {
-    try { await updateCategory(cat.id, { is_visible: !cat.is_visible }); load() }
-    catch (e) { alert(e.message) }
+    patchCat(cat.id, { is_visible: !cat.is_visible })
+    try { await updateCategory(cat.id, { is_visible: !cat.is_visible }) }
+    catch (e) { alert(e.message); patchCat(cat.id, { is_visible: cat.is_visible }) }
   }
 
   const handleSaveItem = async (itemId, payload) => {
     if (itemId) await updateMenuItem(itemId, payload)
     else        await createMenuItem(payload)
-    load()
+    load(true)
   }
 
   const handleSaveOption = async (itemId, optionId, payload) => {
     if (optionId) await updateMenuOption(itemId, optionId, payload)
     else          await createMenuOption(itemId, payload)
-    load()
+    load(true)
   }
 
   const handleDeleteOption = async (itemId, optionId) => {
     setDeletingOpt(optionId)
-    try { await deleteMenuOption(itemId, optionId); load() }
+    try { await deleteMenuOption(itemId, optionId); load(true) }
     catch (e) { alert(e.message) }
     finally { setDeletingOpt(null) }
   }
@@ -468,7 +509,7 @@ export default function MenuPage() {
       alert(e.message)
     } finally {
       setDeletingItem(null)
-      load()
+      load(true)
     }
   }
 
@@ -478,7 +519,7 @@ export default function MenuPage() {
     } else {
       await createCategory({ ...payload, is_visible: true })
     }
-    load()
+    load(true)
   }
 
   const handleDeleteCat = async (cat) => {
@@ -487,18 +528,19 @@ export default function MenuPage() {
     try {
       await deleteCategory(cat.id)
       if (selectedCat === cat.id) setSelectedCat(null)
-      load()
+      load(true)
     } catch (e) {
       alert(e.message)
-      load()
+      load(true)
     } finally {
       setDeletingCat(null)
     }
   }
 
   const handleToggleOptionAvailable = async (item, opt) => {
-    try { await updateMenuOption(item.id, opt.id, { is_available: !opt.is_available }); load() }
-    catch (e) { alert(e.message) }
+    patchOption(item.id, opt.id, { is_available: !opt.is_available })
+    try { await updateMenuOption(item.id, opt.id, { is_available: !opt.is_available }) }
+    catch (e) { alert(e.message); patchOption(item.id, opt.id, { is_available: opt.is_available }) }
   }
 
   const openAddOption = (group) => {
@@ -598,16 +640,25 @@ export default function MenuPage() {
             <span style={{ fontWeight: 600, fontSize: 15 }}>{currentCat?.name_ko ?? '전체 메뉴'}</span>
             <button className="btn-primary btn-sm" onClick={() => setEditItem(null)}>+ 메뉴 추가</button>
           </div>
-          <table className="data-table">
+          <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+            <colgroup>
+              <col style={{ width: 56 }} />
+              <col />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 110 }} />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ width: 56 }}></th>
+                <th></th>
                 <th>이름</th>
                 <th>카테고리</th>
                 <th>가격</th>
                 <th>품절</th>
                 <th>상태</th>
-                <th style={{ width: 110 }}>수정/삭제</th>
+                <th>수정/삭제</th>
               </tr>
             </thead>
             <tbody>
@@ -636,10 +687,10 @@ export default function MenuPage() {
                       <Toggle checked={!item.is_available} onChange={() => handleToggleAvailable(item)} />
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {item.is_popular    && <span className="badge badge-active"    style={{ fontSize: 10, padding: '1px 7px' }}>인기</span>}
-                        {item.is_new        && <span className="badge badge-received"  style={{ fontSize: 10, padding: '1px 7px' }}>신메뉴</span>}
-                        {!item.is_available && <span className="badge badge-cancelled" style={{ fontSize: 10, padding: '1px 7px' }}>품절</span>}
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'nowrap', overflow: 'hidden' }}>
+                        {item.is_popular    && <span className="badge badge-active"    style={{ fontSize: 10, padding: '1px 6px', flexShrink: 0 }}>인기</span>}
+                        {item.is_new        && <span className="badge badge-received"  style={{ fontSize: 10, padding: '1px 6px', flexShrink: 0 }}>신메뉴</span>}
+                        {!item.is_available && <span className="badge badge-cancelled" style={{ fontSize: 10, padding: '1px 6px', flexShrink: 0 }}>품절</span>}
                       </div>
                     </td>
                     <td onClick={e => e.stopPropagation()}>
