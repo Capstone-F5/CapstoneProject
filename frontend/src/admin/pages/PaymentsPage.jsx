@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { DUMMY_PAYMENTS } from '../api/adminApi.js'
+import { useState, useEffect } from 'react'
+import { fetchAdminPayments, refundPayment } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 
 const FILTERS = [
@@ -10,16 +10,27 @@ const FILTERS = [
   { key: 'REFUNDED', label: '환불됨' },
 ]
 
+function fmtDatetime(dt) {
+  if (!dt) return '–'
+  const d = new Date(dt)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+}
+
 function RefundModal({ payment, onClose, onConfirm }) {
-  const [reason, setReason] = useState('')
+  const [reason, setReason]   = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleConfirm = async () => {
     if (!reason.trim()) { alert('환불 사유를 입력해 주세요'); return }
     setLoading(true)
-    await onConfirm(payment.payment_id, reason)
-    setLoading(false)
-    onClose()
+    try {
+      await onConfirm(payment.payment_id, reason)
+      onClose()
+    } catch (e) {
+      alert(`환불 실패: ${e.message}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -28,7 +39,7 @@ function RefundModal({ payment, onClose, onConfirm }) {
         <div className="modal-title">환불 처리</div>
         <p style={{ fontSize:'13px', color:'#666', marginBottom:'16px' }}>
           주문 <strong className="order-number">#{payment.order_number}</strong>의 결제
-          ({payment.amount.toLocaleString('ko-KR')}원)를 환불합니다.
+          ({Number(payment.amount).toLocaleString('ko-KR')}원)를 환불합니다.
         </p>
         <div style={{
           background:'#fff8e1', border:'1px solid #ffe082',
@@ -59,25 +70,36 @@ function RefundModal({ payment, onClose, onConfirm }) {
 }
 
 export default function PaymentsPage() {
-  const [payments, setPayments] = useState(DUMMY_PAYMENTS)
-  const [filter, setFilter] = useState('all')
+  const [payments,     setPayments]     = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState('')
+  const [filter,       setFilter]       = useState('all')
   const [refundTarget, setRefundTarget] = useState(null)
 
-  const handleRefund = (paymentId, reason) => {
-    setPayments(prev => prev.map(p =>
-      p.payment_id === paymentId
-        ? { ...p, status: 'REFUNDED', failure_reason: reason, refunded_at: new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' }) }
-        : p
-    ))
+  const load = () => {
+    setLoading(true)
+    fetchAdminPayments()
+      .then(data => { setPayments(data); setError('') })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleRefund = async (paymentId, reason) => {
+    const updated = await refundPayment(paymentId, reason)
+    setPayments(prev => prev.map(p => p.payment_id === paymentId ? updated : p))
   }
 
   const filtered = payments.filter(p =>
     filter === 'all' || p.status === filter
   )
 
+  if (loading) return <div className="loading-text">결제 내역 로딩 중…</div>
+  if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
+
   return (
     <div>
-      {/* Filters */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px' }}>
         <div className="filter-chips">
           {FILTERS.map(f => (
@@ -90,24 +112,19 @@ export default function PaymentsPage() {
             </button>
           ))}
         </div>
-        <div style={{
-          border:'1.5px solid #ddd', borderRadius:'8px', padding:'6px 14px',
-          fontSize:'13px', color:'#666', background:'#fff'
-        }}>
-          2026-07-{String(new Date().getDate()-6).padStart(2,'0')} ~ 07-{String(new Date().getDate()).padStart(2,'0')}
-        </div>
+        <button className="btn-outline btn-sm" onClick={load}>새로고침</button>
       </div>
 
       <div className="card" style={{ padding:0, overflow:'hidden' }}>
         <table className="data-table">
           <thead>
             <tr>
-              <th>결제ID</th>
               <th>주문번호</th>
               <th>수단</th>
               <th>금액/상태</th>
               <th>실패/환불사유</th>
               <th>결제시각</th>
+              <th>환불시각</th>
               <th>환불</th>
             </tr>
           </thead>
@@ -117,25 +134,20 @@ export default function PaymentsPage() {
             )}
             {filtered.map(p => (
               <tr key={p.payment_id}>
-                <td style={{ color:'#888', fontSize:'13px' }}>{p.payment_id}</td>
                 <td className="order-number">#{p.order_number}</td>
                 <td>{p.method}</td>
                 <td>
-                  <span style={{ marginRight:'8px' }}>{p.amount.toLocaleString('ko-KR')}원</span>
+                  <span style={{ marginRight:'8px' }}>{Number(p.amount).toLocaleString('ko-KR')}원</span>
                   <StatusBadge type="payment" value={p.status} />
                 </td>
                 <td style={{ color: p.failure_reason ? '#c0392b' : '#ccc', fontSize:'13px' }}>
                   {p.failure_reason ?? '–'}
                 </td>
-                <td style={{ color:'#888', fontSize:'13px' }}>{p.paid_at}</td>
+                <td style={{ color:'#888', fontSize:'13px' }}>{fmtDatetime(p.paid_at)}</td>
+                <td style={{ color:'#888', fontSize:'13px' }}>{p.refunded_at ? fmtDatetime(p.refunded_at) : '–'}</td>
                 <td>
                   {p.status === 'SUCCESS' ? (
-                    <button
-                      className="btn-danger btn-sm"
-                      onClick={() => setRefundTarget(p)}
-                    >
-                      환불
-                    </button>
+                    <button className="btn-danger btn-sm" onClick={() => setRefundTarget(p)}>환불</button>
                   ) : (
                     <button className="btn-disabled btn-sm" disabled>환불</button>
                   )}

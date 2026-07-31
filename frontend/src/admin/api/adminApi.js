@@ -119,7 +119,62 @@ export async function adjustPoints(id, delta, reason) {
   return req('PATCH', `/api/admin/users/${id}/points`, { delta, reason })
 }
 
-// ── Orders (Dummy) ───────────────────────────────────
+// ── Orders (Real API) ────────────────────────────────
+export async function fetchAdminOrders(status) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : ''
+  return req('GET', `/api/admin/orders${q}`)
+}
+
+export async function updateOrderStatus(orderId, status) {
+  return req('PATCH', `/api/admin/orders/${orderId}/status?status=${encodeURIComponent(status)}`)
+}
+
+// ── Payments (Real API) ───────────────────────────────
+export async function fetchAdminPayments(status) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : ''
+  return req('GET', `/api/admin/payments${q}`)
+}
+
+export async function refundPayment(id, reason) {
+  return req('POST', `/api/admin/payments/${id}/refund`, { reason })
+}
+
+// ── Stats (Real API) ─────────────────────────────────
+export async function fetchStatsSummary() {
+  return req('GET', '/api/admin/stats/summary')
+}
+
+export async function fetchSalesSeries(range = '7d') {
+  return req('GET', `/api/admin/stats/sales?range=${range}`)
+}
+
+export async function fetchPopularItems(range = '7d') {
+  return req('GET', `/api/admin/stats/popular-items?range=${range}`)
+}
+
+// ── Coupons (Real API) ────────────────────────────────
+export async function fetchAdminCoupons() {
+  return req('GET', '/api/admin/coupons')
+}
+
+export async function createCoupon(payload) {
+  return req('POST', '/api/admin/coupons', payload)
+}
+
+export async function issueCoupon(couponId, phone) {
+  return req('POST', `/api/admin/coupons/${couponId}/issue`, { phone })
+}
+
+// ── Discounts (Real API) ──────────────────────────────
+export async function fetchAdminDiscounts() {
+  return req('GET', '/api/admin/discounts')
+}
+
+export async function createDiscount(payload) {
+  return req('POST', '/api/admin/discounts', payload)
+}
+
+// ── Legacy dummy stubs (하위호환) ──────────────────────
 const now = new Date()
 function t(h, m) {
   const d = new Date(now)

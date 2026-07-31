@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { DUMMY_ORDERS } from '../api/adminApi.js'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { fetchAdminOrders, updateOrderStatus } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 
 const STATUS_FILTERS = [
@@ -20,16 +20,17 @@ function nextStatus(current) {
 }
 
 function nextLabel(status) {
-  const map = { RECEIVED: '조리중으로', COOKING: '준비완료로', READY: '완료로' }
-  return map[status]
+  return { RECEIVED: '조리중으로', COOKING: '준비완료로', READY: '완료로' }[status]
 }
 
 function fmt(dt) {
+  if (!dt) return ''
   const d = new Date(dt)
   return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
 }
 
 function fmtFull(dt) {
+  if (!dt) return ''
   const d = new Date(dt)
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
 }
@@ -58,7 +59,7 @@ function OrderDetail({ order, onClose, onStatusChange }) {
           <div key={i}>
             <div style={{ display:'flex', justifyContent:'space-between', fontWeight:'500', marginBottom:'4px' }}>
               <span>{item.name_ko} X{item.quantity}</span>
-              <span>{(item.total_price).toLocaleString('ko-KR')}원</span>
+              <span>{Number(item.total_price).toLocaleString('ko-KR')}원</span>
             </div>
             {item.selected_options?.length > 0 && (
               <div style={{ fontSize:'12px', color:'#888', paddingLeft:'8px', lineHeight:'1.8' }}>
@@ -82,24 +83,24 @@ function OrderDetail({ order, onClose, onStatusChange }) {
       <div style={{ display:'flex', flexDirection:'column', gap:'8px', fontSize:'14px' }}>
         <div style={{ display:'flex', justifyContent:'space-between' }}>
           <span style={{ color:'#888' }}>주문 금액</span>
-          <span>{order.subtotal.toLocaleString('ko-KR')}원</span>
+          <span>{Number(order.subtotal).toLocaleString('ko-KR')}원</span>
         </div>
-        {order.discount_amount > 0 && (
+        {Number(order.discount_amount) > 0 && (
           <div style={{ display:'flex', justifyContent:'space-between' }}>
             <span style={{ color:'#888' }}>할인</span>
-            <span style={{ color:'#e00' }}>-{order.discount_amount.toLocaleString('ko-KR')}원</span>
+            <span style={{ color:'#e00' }}>-{Number(order.discount_amount).toLocaleString('ko-KR')}원</span>
           </div>
         )}
-        {order.points_used > 0 && (
+        {Number(order.points_used) > 0 && (
           <div style={{ display:'flex', justifyContent:'space-between' }}>
             <span style={{ color:'#888' }}>포인트 사용</span>
-            <span style={{ color:'#e00' }}>-{order.points_used.toLocaleString('ko-KR')}P</span>
+            <span style={{ color:'#e00' }}>-{Number(order.points_used).toLocaleString('ko-KR')}P</span>
           </div>
         )}
         <div className="divider" style={{ margin:'4px 0' }} />
         <div style={{ display:'flex', justifyContent:'space-between', fontWeight:'700', fontSize:'15px' }}>
           <span>결제금액</span>
-          <span>{order.final_amount.toLocaleString('ko-KR')}원</span>
+          <span>{Number(order.final_amount).toLocaleString('ko-KR')}원</span>
         </div>
       </div>
 
@@ -119,35 +120,56 @@ function OrderDetail({ order, onClose, onStatusChange }) {
 }
 
 export default function OrdersPage() {
-  const [orders, setOrders] = useState(DUMMY_ORDERS)
-  const [filter, setFilter] = useState('incomplete')
-  const [selected, setSelected] = useState(null)
+  const [orders,      setOrders]      = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState('')
+  const [filter,      setFilter]      = useState('incomplete')
+  const [selected,    setSelected]    = useState(null)
   const [lastRefresh, setLastRefresh] = useState(new Date())
   const timerRef = useRef(null)
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => setLastRefresh(new Date()), 30000)
-    return () => clearInterval(timerRef.current)
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchAdminOrders()
+      setOrders(data)
+      setLastRefresh(new Date())
+      setError('')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  const handleStatusChange = (orderId, newStatus) => {
-    setOrders(prev => prev.map(o =>
-      o.order_id === orderId ? { ...o, status: newStatus } : o
-    ))
-    setSelected(prev => prev?.order_id === orderId ? { ...prev, status: newStatus } : prev)
+  useEffect(() => {
+    load()
+    timerRef.current = setInterval(load, 30000)
+    return () => clearInterval(timerRef.current)
+  }, [load])
+
+  const handleStatusChange = async (orderId, newStatus) => {
+    try {
+      const updated = await updateOrderStatus(orderId, newStatus)
+      setOrders(prev => prev.map(o => o.order_id === orderId ? updated : o))
+      setSelected(prev => prev?.order_id === orderId ? updated : prev)
+    } catch (e) {
+      alert(`상태 변경 실패: ${e.message}`)
+    }
   }
 
   const filtered = orders.filter(o => {
-    if (filter === 'all') return true
+    if (filter === 'all')        return true
     if (filter === 'incomplete') return ['RECEIVED','COOKING','READY'].includes(o.status)
     return o.status === filter
   })
 
-  const selectedOrder = selected ? orders.find(o => o.order_id === selected.order_id) : null
+  const selectedOrder = selected ? orders.find(o => o.order_id === selected.order_id) ?? null : null
+
+  if (loading) return <div className="loading-text">주문 로딩 중…</div>
+  if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
 
   return (
     <div>
-      {/* Toolbar */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px' }}>
         <div className="filter-chips">
           {STATUS_FILTERS.map(f => (
@@ -160,13 +182,15 @@ export default function OrdersPage() {
             </button>
           ))}
         </div>
-        <span style={{ fontSize:'12px', color:'#aaa', whiteSpace:'nowrap', marginLeft:'16px' }}>
-          마지막 갱신 {lastRefresh.getHours().toString().padStart(2,'0')}:{lastRefresh.getMinutes().toString().padStart(2,'0')}:{lastRefresh.getSeconds().toString().padStart(2,'0')}
-        </span>
+        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+          <span style={{ fontSize:'12px', color:'#aaa', whiteSpace:'nowrap' }}>
+            마지막 갱신 {lastRefresh.getHours().toString().padStart(2,'0')}:{lastRefresh.getMinutes().toString().padStart(2,'0')}:{lastRefresh.getSeconds().toString().padStart(2,'0')}
+          </span>
+          <button className="btn-outline btn-sm" onClick={load}>새로고침</button>
+        </div>
       </div>
 
-      <div style={{ display:'flex', alignItems:'flex-start', gap:'0' }}>
-        {/* Table */}
+      <div style={{ display:'flex', alignItems:'flex-start' }}>
         <div className="card" style={{ flex:1, padding:'0', overflow:'hidden' }}>
           <table className="data-table">
             <thead>
@@ -175,7 +199,7 @@ export default function OrdersPage() {
                 <th>유형</th>
                 <th>상태</th>
                 <th>결제</th>
-                <th>금액(생성시각)</th>
+                <th>금액(시각)</th>
                 <th>상태변경</th>
               </tr>
             </thead>
@@ -198,7 +222,7 @@ export default function OrdersPage() {
                     <td><StatusBadge value={order.status} /></td>
                     <td><StatusBadge type="payment" value={order.payment_status ?? 'PENDING'} /></td>
                     <td>
-                      <span style={{ fontWeight:'500' }}>{order.final_amount.toLocaleString('ko-KR')}원</span>
+                      <span style={{ fontWeight:'500' }}>{Number(order.final_amount).toLocaleString('ko-KR')}원</span>
                       <span style={{ color:'#bbb', marginLeft:'6px', fontSize:'12px' }}>{fmt(order.created_at)}</span>
                     </td>
                     <td onClick={e => e.stopPropagation()}>
@@ -213,9 +237,9 @@ export default function OrdersPage() {
                           <button
                             className="chip"
                             style={{ padding:'3px 10px', fontSize:'11px' }}
-                            onClick={() => handleStatusChange(order.order_id, 'CANCELLED')}
+                            onClick={() => { if (confirm('주문을 취소하시겠습니까?')) handleStatusChange(order.order_id, 'CANCELLED') }}
                           >
-                            ···
+                            취소
                           </button>
                         </div>
                       ) : (
@@ -231,7 +255,6 @@ export default function OrdersPage() {
           </table>
         </div>
 
-        {/* Detail panel */}
         {selectedOrder && (
           <OrderDetail
             order={selectedOrder}
