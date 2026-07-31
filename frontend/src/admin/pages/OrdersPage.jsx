@@ -35,6 +35,29 @@ function fmtFull(dt) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
 }
 
+const ELAPSED_ACTIVE = new Set(['RECEIVED', 'COOKING'])
+
+function elapsedColor(minutes) {
+  if (minutes <= 7)  return { bg: '#e8f5e9', color: '#2e7d32' }  // 연두
+  if (minutes <= 15) return { bg: '#fff8e1', color: '#f57f17' }  // 노랑
+  if (minutes <= 25) return { bg: '#fff3e0', color: '#e65100' }  // 주황
+  return               { bg: '#fde8e8', color: '#c0392b' }       // 빨강
+}
+
+function ElapsedBadge({ createdAt, now }) {
+  const minutes = Math.floor((now - new Date(createdAt)) / 60000)
+  const { bg, color } = elapsedColor(minutes)
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+      fontSize: 12, fontWeight: 700, background: bg, color,
+      whiteSpace: 'nowrap',
+    }}>
+      {minutes}분
+    </span>
+  )
+}
+
 function OrderDetail({ order, onClose, onStatusChange }) {
   if (!order) return null
   const next = nextStatus(order.status)
@@ -126,7 +149,9 @@ export default function OrdersPage() {
   const [filter,      setFilter]      = useState('incomplete')
   const [selected,    setSelected]    = useState(null)
   const [lastRefresh, setLastRefresh] = useState(new Date())
+  const [now,         setNow]         = useState(new Date())
   const timerRef = useRef(null)
+  const clockRef = useRef(null)
 
   const load = useCallback(async () => {
     try {
@@ -144,7 +169,8 @@ export default function OrdersPage() {
   useEffect(() => {
     load()
     timerRef.current = setInterval(load, 30000)
-    return () => clearInterval(timerRef.current)
+    clockRef.current = setInterval(() => setNow(new Date()), 15000)
+    return () => { clearInterval(timerRef.current); clearInterval(clockRef.current) }
   }, [load])
 
   const handleStatusChange = async (orderId, newStatus) => {
@@ -198,6 +224,7 @@ export default function OrdersPage() {
                 <th>주문번호</th>
                 <th>유형</th>
                 <th>상태</th>
+                <th>경과</th>
                 <th>결제</th>
                 <th>금액(시각)</th>
                 <th>상태변경</th>
@@ -205,7 +232,7 @@ export default function OrdersPage() {
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="loading-text">주문이 없습니다</td></tr>
+                <tr><td colSpan={7} className="loading-text">주문이 없습니다</td></tr>
               )}
               {filtered.map(order => {
                 const next = nextStatus(order.status)
@@ -220,6 +247,12 @@ export default function OrdersPage() {
                     <td className="order-number">#{order.order_number}</td>
                     <td>{order.order_type === 'EAT_IN' ? '매장' : '포장'}</td>
                     <td><StatusBadge value={order.status} /></td>
+                    <td>
+                      {ELAPSED_ACTIVE.has(order.status) && order.created_at
+                        ? <ElapsedBadge createdAt={order.created_at} now={now} />
+                        : <span style={{ color: '#ccc', fontSize: 12 }}>–</span>
+                      }
+                    </td>
                     <td><StatusBadge type="payment" value={order.payment_status ?? 'PENDING'} /></td>
                     <td>
                       <span style={{ fontWeight:'500' }}>{Number(order.final_amount).toLocaleString('ko-KR')}원</span>
