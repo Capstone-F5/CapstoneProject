@@ -30,3 +30,22 @@ async def create_discount(body: DiscountIn, db: AsyncSession = Depends(get_sessi
     await db.commit()
     await db.refresh(discount)
     return discount
+
+
+@router.patch("/{id}/toggle", response_model=DiscountOut)
+async def toggle_discount(id: str, db: AsyncSession = Depends(get_session)):
+    discount = await discount_dao.toggle_discount(db, id)
+    if discount is None:
+        raise HTTPException(status_code=404, detail="할인을 찾을 수 없습니다.")
+    await db.commit()
+    await db.refresh(discount)
+    return discount
+
+
+@router.delete("/{id}")
+async def delete_discount(id: str, db: AsyncSession = Depends(get_session)):
+    ok = await discount_dao.delete_discount(db, id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="할인을 찾을 수 없습니다.")
+    await db.commit()
+    return {"ok": True}

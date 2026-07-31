@@ -1,8 +1,18 @@
 import { useState, useEffect } from 'react'
 import {
-  fetchAdminCoupons, createCoupon, issueCoupon,
-  fetchAdminDiscounts, createDiscount,
+  fetchAdminCoupons, createCoupon, issueCoupon, toggleCoupon, deleteCoupon,
+  fetchAdminDiscounts, createDiscount, toggleDiscount, deleteDiscount,
 } from '../api/adminApi.js'
+
+function Toggle({ checked, onChange, disabled }) {
+  return (
+    <label className="toggle" onClick={e => { e.stopPropagation(); if (!disabled) onChange(!checked) }}>
+      <input type="checkbox" checked={checked} onChange={() => {}} />
+      <div className="toggle-track" />
+      <div className="toggle-thumb" />
+    </label>
+  )
+}
 
 const TARGET_LABELS = { MENU: '메뉴', CATEGORY: '카테고리', ALL: '전체' }
 const TIER_LABELS   = { ALL: '전체 회원', STUDENT: '학생', SENIOR: '시니어', GOLD: 'VIP' }
@@ -246,9 +256,42 @@ export default function CouponsPage() {
     setCoupons(prev => [c, ...prev])
   }
 
+  const handleToggleCoupon = async (id) => {
+    try {
+      const updated = await toggleCoupon(id)
+      setCoupons(prev => prev.map(c => c.id === id ? updated : c))
+    } catch (e) { alert(e.message) }
+  }
+
+  const handleDeleteCoupon = async (id, code) => {
+    if (!confirm(`"${code}" 쿠폰을 삭제하시겠습니까?`)) return
+    try {
+      await deleteCoupon(id)
+      setCoupons(prev => prev.filter(c => c.id !== id))
+    } catch (e) {
+      alert(e.message)
+      load()
+    }
+  }
+
   const handleCreateDiscount = async (payload) => {
     const d = await createDiscount(payload)
     setDiscounts(prev => [d, ...prev])
+  }
+
+  const handleToggleDiscount = async (id) => {
+    try {
+      const updated = await toggleDiscount(id)
+      setDiscounts(prev => prev.map(d => d.id === id ? updated : d))
+    } catch (e) { alert(e.message) }
+  }
+
+  const handleDeleteDiscount = async (id, name) => {
+    if (!confirm(`"${name}" 할인을 삭제하시겠습니까?`)) return
+    try {
+      await deleteDiscount(id)
+      setDiscounts(prev => prev.filter(d => d.id !== id))
+    } catch (e) { alert(e.message) }
   }
 
   const filteredCoupons   = coupons.filter(c =>
@@ -308,10 +351,11 @@ export default function CouponsPage() {
                   <th>사용/최대</th>
                   <th>유효기한</th>
                   <th>활성</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {filteredCoupons.length === 0 && <tr><td colSpan={7} className="loading-text">쿠폰이 없습니다</td></tr>}
+                {filteredCoupons.length === 0 && <tr><td colSpan={8} className="loading-text">쿠폰이 없습니다</td></tr>}
                 {filteredCoupons.map(c => (
                   <tr key={c.id} style={{ color: c.is_active ? '#222' : '#bbb' }}>
                     <td style={{ fontWeight:'600', fontFamily:'monospace', letterSpacing:'0.5px' }}>{c.code}</td>
@@ -324,10 +368,15 @@ export default function CouponsPage() {
                     <td>{c.min_order_amount ? `${Number(c.min_order_amount).toLocaleString('ko-KR')}원` : '–'}</td>
                     <td>{c.used_count}/{c.max_usage_count || '∞'}</td>
                     <td style={{ fontSize:'13px', color:'#888' }}>{fmtDate(c.valid_until)}</td>
-                    <td>
-                      <span className={`badge ${c.is_active ? 'badge-active' : 'badge-inactive'}`}>
-                        {c.is_active ? '활성' : '비활성'}
-                      </span>
+                    <td onClick={e => e.stopPropagation()}>
+                      <Toggle checked={c.is_active} onChange={() => handleToggleCoupon(c.id)} />
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <button
+                        className="btn-sm"
+                        style={{ background:'#ffeaea', color:'#c00', border:'1px solid #ffc0c0', borderRadius:6, fontSize:12, padding:'4px 10px', cursor:'pointer' }}
+                        onClick={() => handleDeleteCoupon(c.id, c.code)}
+                      >삭제</button>
                     </td>
                   </tr>
                 ))}
@@ -359,10 +408,11 @@ export default function CouponsPage() {
                   <th>적용등급</th>
                   <th>유효기한</th>
                   <th>활성</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {filteredDiscounts.length === 0 && <tr><td colSpan={7} className="loading-text">할인이 없습니다</td></tr>}
+                {filteredDiscounts.length === 0 && <tr><td colSpan={8} className="loading-text">할인이 없습니다</td></tr>}
                 {filteredDiscounts.map(d => (
                   <tr key={d.id} style={{ color: d.is_active ? '#222' : '#bbb' }}>
                     <td style={{ fontWeight:'500' }}>{d.name_ko}</td>
@@ -379,10 +429,15 @@ export default function CouponsPage() {
                     </td>
                     <td style={{ fontSize:'13px', color:'#888' }}>{TIER_LABELS[d.applicable_tier] ?? d.applicable_tier}</td>
                     <td style={{ fontSize:'13px', color:'#888' }}>{fmtDate(d.valid_until)}</td>
-                    <td>
-                      <span className={`badge ${d.is_active ? 'badge-active' : 'badge-inactive'}`}>
-                        {d.is_active ? '활성' : '비활성'}
-                      </span>
+                    <td onClick={e => e.stopPropagation()}>
+                      <Toggle checked={d.is_active} onChange={() => handleToggleDiscount(d.id)} />
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <button
+                        className="btn-sm"
+                        style={{ background:'#ffeaea', color:'#c00', border:'1px solid #ffc0c0', borderRadius:6, fontSize:12, padding:'4px 10px', cursor:'pointer' }}
+                        onClick={() => handleDeleteDiscount(d.id, d.name_ko)}
+                      >삭제</button>
                     </td>
                   </tr>
                 ))}

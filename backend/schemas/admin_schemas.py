@@ -21,3 +21,7 @@ class UserDetailOut(UserAdminOut):
 class PointsAdjustIn(BaseModel):
     delta: int
     reason: str
+
+
+class TierUpdateIn(BaseModel):
+    tier: str  # BASIC | SILVER | GOLD

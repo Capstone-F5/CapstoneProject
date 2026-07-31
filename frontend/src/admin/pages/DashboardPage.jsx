@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { fetchStatsSummary, fetchSalesSeries, fetchPopularItems } from '../api/adminApi.js'
+import { fetchStatsSummary, fetchSalesSeries, fetchPopularItems, fetchCategorySales, fetchPaymentMethodStats } from '../api/adminApi.js'
 
 function fmt(n) {
   return Math.round(n).toLocaleString('ko-KR')
@@ -9,6 +9,31 @@ function shortDate(dateStr) {
   // "YYYY-MM-DD" → "M/D"
   const [, m, d] = (dateStr ?? '').split('-')
   return m && d ? `${parseInt(m)}/${parseInt(d)}` : dateStr
+}
+
+function CategorySalesChart({ data }) {
+  const max = Math.max(...data.map(d => d.revenue), 1)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {data.map(item => (
+        <div key={item.category_id}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}>
+            <span style={{ fontWeight: 500 }}>{item.name_ko}</span>
+            <span style={{ color: '#744032', fontWeight: 600 }}>
+              {item.ratio}% &nbsp;·&nbsp; {fmt(item.revenue)}원
+            </span>
+          </div>
+          <div style={{ background: '#f5f5f5', borderRadius: 4, height: 8 }}>
+            <div style={{
+              width: `${(item.revenue / max) * 100}%`,
+              background: '#744032', borderRadius: 4, height: '100%',
+              transition: 'width 0.4s',
+            }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function BarChart({ data }) {
@@ -41,12 +66,14 @@ function BarChart({ data }) {
 }
 
 export default function DashboardPage() {
-  const [range, setRange] = useState('7d')
-  const [summary, setSummary]     = useState(null)
-  const [salesData, setSalesData] = useState([])
-  const [popular, setPopular]     = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState('')
+  const [range, setRange]               = useState('7d')
+  const [summary, setSummary]           = useState(null)
+  const [salesData, setSalesData]       = useState([])
+  const [popular, setPopular]           = useState([])
+  const [categorySales, setCategorySales] = useState([])
+  const [paymentStats, setPaymentStats] = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [error, setError]               = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -55,11 +82,15 @@ export default function DashboardPage() {
       fetchStatsSummary(),
       fetchSalesSeries(range),
       fetchPopularItems(range),
+      fetchCategorySales(range),
+      fetchPaymentMethodStats(range),
     ])
-      .then(([sum, sales, pop]) => {
+      .then(([sum, sales, pop, cats, pmts]) => {
         setSummary(sum)
         setSalesData(sales.data ?? [])
         setPopular(pop)
+        setCategorySales(cats)
+        setPaymentStats(pmts)
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -139,6 +170,43 @@ export default function DashboardPage() {
                     <td style={{ fontWeight: '500' }}>{item.name_ko}</td>
                     <td style={{ textAlign: 'right' }}>{fmt(item.quantity_sold)}개</td>
                     <td style={{ textAlign: 'right', fontWeight: '600' }}>{fmt(item.revenue)}원</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+      </div>
+
+      {/* Category sales */}
+      <div className="card">
+        <div style={{ fontWeight: '600', fontSize: '15px', marginBottom: '16px' }}>카테고리별 매출 비율</div>
+        {categorySales.length === 0
+          ? <div className="loading-text">데이터가 없습니다</div>
+          : <CategorySalesChart data={categorySales} />
+        }
+      </div>
+
+      {/* Payment method stats */}
+      <div className="card">
+        <div style={{ fontWeight: '600', fontSize: '15px', marginBottom: '16px' }}>결제수단별 집계</div>
+        {paymentStats.length === 0
+          ? <div className="loading-text">데이터가 없습니다</div>
+          : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>결제수단</th>
+                  <th style={{ textAlign: 'right' }}>건수</th>
+                  <th style={{ textAlign: 'right' }}>합계</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentStats.map(p => (
+                  <tr key={p.method}>
+                    <td style={{ fontWeight: 500 }}>{p.method}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(p.count)}건</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(p.total_amount)}원</td>
                   </tr>
                 ))}
               </tbody>

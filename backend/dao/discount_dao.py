@@ -14,3 +14,21 @@ async def create_discount(db: AsyncSession, data: DiscountIn) -> Discount:
     db.add(discount)
     await db.flush()
     return discount
+
+
+async def toggle_discount(db: AsyncSession, discount_id: str) -> Discount | None:
+    discount = await db.get(Discount, discount_id)
+    if discount is None:
+        return None
+    discount.is_active = not discount.is_active
+    await db.flush()
+    return discount
+
+
+async def delete_discount(db: AsyncSession, discount_id: str) -> bool:
+    discount = await db.get(Discount, discount_id)
+    if discount is None:
+        return False
+    await db.delete(discount)
+    await db.flush()
+    return True

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { listUsers, getUserDetail, adjustPoints } from '../api/adminApi.js'
+import { listUsers, getUserDetail, adjustPoints, updateUserTier } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 
 const TIER_COLORS = {
@@ -81,7 +81,49 @@ function PointsModal({ user, onClose, onConfirm }) {
   )
 }
 
-function UserDetail({ user, onPointsAdjust }) {
+function TierModal({ user, onClose, onConfirm }) {
+  const [tier, setTier] = useState(user.tier ?? 'BASIC')
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirm = async () => {
+    setLoading(true)
+    try {
+      await onConfirm(tier)
+      onClose()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-box">
+        <div className="modal-title">회원 등급 변경</div>
+        <p style={{ fontSize:'13px', color:'#666', marginBottom:'16px' }}>
+          <strong>{user.phone_number}</strong> &nbsp; 현재 등급: <TierBadge tier={user.tier} />
+        </p>
+        <div className="form-group">
+          <label className="form-label">변경할 등급</label>
+          <select className="form-input" value={tier} onChange={e => setTier(e.target.value)}>
+            <option value="BASIC">BASIC</option>
+            <option value="SILVER">SILVER</option>
+            <option value="GOLD">GOLD</option>
+          </select>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-outline" onClick={onClose}>취소</button>
+          <button className="btn-primary" onClick={handleConfirm} disabled={loading}>
+            {loading ? '변경 중…' : '변경'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function UserDetail({ user, onPointsAdjust, onTierChange }) {
   if (!user) return null
 
   return (
@@ -92,6 +134,11 @@ function UserDetail({ user, onPointsAdjust }) {
           <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
             <span style={{ fontWeight:'700', fontSize:'16px' }}>{user.phone_number ?? '알 수 없음'}</span>
             <TierBadge tier={user.tier} />
+            {!user.is_guest && (
+              <button className="btn-outline btn-sm" style={{ fontSize:11 }} onClick={onTierChange}>
+                등급 변경
+              </button>
+            )}
           </div>
           <span style={{ fontSize:'12px', color:'#aaa' }}>
             가입일 {user.created_at ? new Date(user.created_at).toLocaleDateString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit' }).replace(/\. /g,'.').replace('.','/').replace('.','/') : '–'}
@@ -173,6 +220,7 @@ export default function UsersPage() {
   const [searching, setSearching] = useState(false)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [showPointsModal, setShowPointsModal] = useState(false)
+  const [showTierModal,   setShowTierModal]   = useState(false)
   const [error, setError] = useState('')
 
   const handleSearch = async () => {
@@ -208,9 +256,15 @@ export default function UsersPage() {
   const handlePointsAdjust = async (delta, reason) => {
     if (!selectedUser) return
     const updated = await adjustPoints(selectedUser.id, delta, reason)
-    // refresh detail
     setDetailUser(prev => prev ? { ...prev, current_points: updated.current_points } : prev)
     setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, current_points: updated.current_points } : u))
+  }
+
+  const handleTierUpdate = async (tier) => {
+    if (!selectedUser) return
+    const updated = await updateUserTier(selectedUser.id, tier)
+    setDetailUser(prev => prev ? { ...prev, tier: updated.tier } : prev)
+    setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, tier: updated.tier } : u))
   }
 
   const handleKeyDown = (e) => {
@@ -288,6 +342,7 @@ export default function UsersPage() {
           <UserDetail
             user={detailUser}
             onPointsAdjust={() => setShowPointsModal(true)}
+            onTierChange={() => setShowTierModal(true)}
           />
         )}
       </div>
@@ -297,6 +352,14 @@ export default function UsersPage() {
           user={detailUser}
           onClose={() => setShowPointsModal(false)}
           onConfirm={handlePointsAdjust}
+        />
+      )}
+
+      {showTierModal && detailUser && (
+        <TierModal
+          user={detailUser}
+          onClose={() => setShowTierModal(false)}
+          onConfirm={handleTierUpdate}
         />
       )}
     </div>

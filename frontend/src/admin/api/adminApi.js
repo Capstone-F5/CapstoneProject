@@ -119,6 +119,10 @@ export async function adjustPoints(id, delta, reason) {
   return req('PATCH', `/api/admin/users/${id}/points`, { delta, reason })
 }
 
+export async function updateUserTier(id, tier) {
+  return req('PATCH', `/api/admin/users/${id}/tier`, { tier })
+}
+
 // ── Orders (Real API) ────────────────────────────────
 export async function fetchAdminOrders(status) {
   const q = status ? `?status=${encodeURIComponent(status)}` : ''
@@ -152,6 +156,14 @@ export async function fetchPopularItems(range = '7d') {
   return req('GET', `/api/admin/stats/popular-items?range=${range}`)
 }
 
+export async function fetchCategorySales(range = '7d') {
+  return req('GET', `/api/admin/stats/category-sales?range=${range}`)
+}
+
+export async function fetchPaymentMethodStats(range = '7d') {
+  return req('GET', `/api/admin/stats/payment-methods?range=${range}`)
+}
+
 // ── Coupons (Real API) ────────────────────────────────
 export async function fetchAdminCoupons() {
   return req('GET', '/api/admin/coupons')
@@ -165,6 +177,14 @@ export async function issueCoupon(couponId, phone) {
   return req('POST', `/api/admin/coupons/${couponId}/issue`, { phone })
 }
 
+export async function toggleCoupon(id) {
+  return req('PATCH', `/api/admin/coupons/${id}/toggle`)
+}
+
+export async function deleteCoupon(id) {
+  return req('DELETE', `/api/admin/coupons/${id}`)
+}
+
 // ── Discounts (Real API) ──────────────────────────────
 export async function fetchAdminDiscounts() {
   return req('GET', '/api/admin/discounts')
@@ -172,6 +192,14 @@ export async function fetchAdminDiscounts() {
 
 export async function createDiscount(payload) {
   return req('POST', '/api/admin/discounts', payload)
+}
+
+export async function toggleDiscount(id) {
+  return req('PATCH', `/api/admin/discounts/${id}/toggle`)
+}
+
+export async function deleteDiscount(id) {
+  return req('DELETE', `/api/admin/discounts/${id}`)
 }
 
 // ── Legacy dummy stubs (하위호환) ──────────────────────

@@ -24,4 +24,17 @@ class PopularItemOut(BaseModel):
     name_ko: str
     quantity_sold: int
     revenue: float
-    
+
+
+class CategorySalesOut(BaseModel):
+    category_id: str
+    name_ko: str
+    revenue: float
+    quantity_sold: int
+    ratio: float
+
+
+class PaymentMethodStatsOut(BaseModel):
+    method: str
+    count: int
+    total_amount: float

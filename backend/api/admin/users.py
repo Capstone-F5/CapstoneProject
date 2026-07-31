@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.security import get_current_admin
 from dao import order_dao, user_dao
-from schemas.admin_schemas import PointsAdjustIn, UserAdminOut, UserDetailOut
+from schemas.admin_schemas import PointsAdjustIn, TierUpdateIn, UserAdminOut, UserDetailOut
 from schemas.coupon_schemas import UserCouponOut
 from schemas.order_schemas import OrderAdminOut, OrderItemOut
 
@@ -106,3 +106,21 @@ async def adjust_user_points(
 
     membership = await user_dao.get_membership(db, user.id)
     return _to_user_admin_out(user, membership.tier if membership else None)
+
+
+@router.patch("/{user_id}/tier", response_model=UserAdminOut)
+async def update_user_tier(
+    user_id: str, payload: TierUpdateIn, db: AsyncSession = Depends(get_session)
+):
+    if payload.tier not in user_dao.VALID_TIERS:
+        raise HTTPException(400, f"유효하지 않은 등급입니다. ({', '.join(sorted(user_dao.VALID_TIERS))})")
+
+    user = await user_dao.get_user_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(404, "등록된 회원이 아닙니다")
+    if user.is_guest:
+        raise HTTPException(400, "비회원에게는 등급을 부여할 수 없습니다")
+
+    membership = await user_dao.update_user_tier(db, user_id, payload.tier)
+    await db.commit()
+    return _to_user_admin_out(user, membership.tier)
