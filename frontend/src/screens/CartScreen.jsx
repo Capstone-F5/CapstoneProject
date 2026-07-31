@@ -139,11 +139,15 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
 
-  // QR/바코드 스캔 또는 모달 내 수동 입력 완료 시 호출됨
-  const handleCouponDetected = (code) => {
+  // CouponScanModal에서 검증+확인 완료 후 호출됨 (code, validatedInfo)
+  const handleCouponDetected = (code, info) => {
     setShowCouponScan(false)
     setCouponCode(code)
-    handleCheckCoupon(code)
+    if (info) {
+      setCouponInfo(info)
+    } else {
+      handleCheckCoupon(code)
+    }
   }
 
   const goPayment = (dest) => {
@@ -571,6 +575,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         <CouponScanModal
           onDetect={handleCouponDetected}
           onClose={() => setShowCouponScan(false)}
+          total={total}
         />
       )}
 
