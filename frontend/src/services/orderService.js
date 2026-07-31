@@ -47,6 +47,17 @@ export async function validateCoupon(code, subtotal) {
   return { valid: true, discountAmount: Number(d.discount_amount), finalAmount: Number(d.final_amount) }
 }
 
+export async function previewDiscount() {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/preview-discount?session_id=${getSessionId()}`)
+    if (!res.ok) return { discountAmount: 0, applicable: [] }
+    const d = await res.json()
+    return { discountAmount: d.discount_amount, finalAmount: d.final_amount, applicable: d.applicable }
+  } catch {
+    return { discountAmount: 0, applicable: [] }
+  }
+}
+
 export async function getOrderStatus(orderId) {
   const res = await fetch(`${API_BASE}/api/orders/${orderId}`)
   if (!res.ok) throw new Error(`주문 조회 실패 (${res.status})`)

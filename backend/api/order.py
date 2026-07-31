@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date as _date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select as sa_select
@@ -40,6 +40,63 @@ async def validate_coupon(code: str, subtotal: Decimal, db: AsyncSession = Depen
         "valid": True,
         "discount_amount": discount_amount,
         "final_amount": max(Decimal("0"), subtotal - discount_amount),
+    }
+
+
+@router.get("/preview-discount")
+async def preview_discount(session_id: str, db: AsyncSession = Depends(get_session)):
+    """장바구니 기준으로 적용 가능한 할인 금액을 미리 계산해 반환한다 (주문 생성 없음)."""
+    cart = await cart_dao.get_cart_with_items(db, session_id)
+    if not cart or not cart.items:
+        return {"discount_amount": 0.0, "final_amount": 0.0, "applicable": []}
+
+    subtotal = sum(item.unit_price * item.quantity for item in cart.items)
+    discount_amount = Decimal("0")
+    applicable = []
+
+    active_discounts = await discount_dao.get_active_discounts(db)
+    today = _date.today()
+    for disc in active_discounts:
+        if disc.applicable_tier != "ALL":
+            continue
+        if disc.valid_from and today < disc.valid_from:
+            continue
+        if disc.valid_until and today > disc.valid_until:
+            continue
+
+        if disc.target_type == "ALL":
+            base = subtotal
+        elif disc.target_type == "CATEGORY":
+            base = sum(
+                item.unit_price * item.quantity
+                for item in cart.items
+                if item.menu_item and item.menu_item.category_id == disc.category_id
+            )
+        elif disc.target_type == "MENU":
+            base = sum(
+                item.unit_price * item.quantity
+                for item in cart.items
+                if item.menu_item_id == disc.menu_item_id
+            )
+        else:
+            continue
+
+        if base <= 0:
+            continue
+
+        if disc.discount_type == "PERCENT":
+            d = base * disc.discount_value / Decimal("100")
+        else:
+            d = min(Decimal(str(disc.discount_value)), base)
+
+        discount_amount += d
+        applicable.append({"name": disc.name_ko, "amount": float(d)})
+
+    discount_amount = min(discount_amount, subtotal)
+    return {
+        "discount_amount": float(discount_amount),
+        "final_amount": float(subtotal - discount_amount),
+        "applicable": applicable,
     }
 
 
