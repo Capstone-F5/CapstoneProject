@@ -218,7 +218,16 @@ export default function OrdersPage() {
 
       <div style={{ display:'flex', alignItems:'flex-start' }}>
         <div className="card" style={{ flex:1, padding:'0', overflow:'hidden' }}>
-          <table className="data-table">
+          <table className="data-table" style={{ tableLayout:'fixed', width:'100%' }}>
+            <colgroup>
+              <col style={{ width: 90 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 88 }} />
+              <col />
+              <col style={{ width: 170 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>주문번호</th>
