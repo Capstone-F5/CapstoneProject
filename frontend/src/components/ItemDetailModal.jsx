@@ -1,5 +1,6 @@
 import { useState, useEffect, useImperativeHandle, forwardRef } from 'react'
 import useT from '../i18n/useT'
+import { useLocale } from '../i18n/LocaleContext'
 
 const ItemDetailModal = forwardRef(function ItemDetailModal({
   item, type, onClose, onAdd,
@@ -13,6 +14,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
   autoConfirmMs     = 0,
 }, ref) {
   const t = useT()
+  const { locale } = useLocale()
 
   const initSide  = setSides.find(s => s.name === initialSideName) ?? setSides[0]
   const initDrink = setDrinks.find(d => d.name === initialDrinkName) ?? setDrinks[0]
@@ -205,7 +207,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
                 {setSides.map(s => (
                   <Chip
                     key={s.name}
-                    label={s.name}
+                    label={locale === 'ko' ? s.name : locale === 'ja' ? (s.nameJa ?? s.nameEn ?? s.name) : locale === 'zh' ? (s.nameZh ?? s.nameEn ?? s.name) : (s.nameEn ?? s.name)}
                     extra={s.extra}
                     active={side?.name === s.name}
                     onClick={() => setSide(s)}
@@ -220,7 +222,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
                 {setDrinks.map(d => (
                   <Chip
                     key={d.name}
-                    label={d.name}
+                    label={locale === 'ko' ? d.name : locale === 'ja' ? (d.nameJa ?? d.nameEn ?? d.name) : locale === 'zh' ? (d.nameZh ?? d.nameEn ?? d.name) : (d.nameEn ?? d.name)}
                     extra={d.extra}
                     active={drink?.name === d.name}
                     onClick={() => setDrink(d)}

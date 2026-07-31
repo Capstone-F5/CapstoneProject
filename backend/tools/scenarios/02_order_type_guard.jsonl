@@ -1,0 +1,5 @@
+{"scenario": "매장/포장 임의 선택 방지", "session_id": "test-ordertype-01"}
+{"turn": 1, "input": "주문할게요", "language": "ko", "screen": "start", "order_type": null, "cart": [], "expect": {"no_action_types": ["order_type"], "note": "주문할게요 = 매장/포장 미결정 → action_type 없어야"}}
+{"turn": 2, "input": "네", "language": "ko", "screen": "orderType", "order_type": null, "cart": [], "expect": {"no_action_types": ["order_type"], "note": "네 = 긍정이지만 유형 미결정 → action 없어야"}}
+{"turn": 3, "input": "시작할게요", "language": "ko", "screen": "orderType", "order_type": null, "cart": [], "expect": {"no_action_types": ["order_type"], "note": "시작 = 유형 미결정"}}
+{"turn": 4, "input": "매장에서 먹을게요", "language": "ko", "screen": "orderType", "order_type": null, "cart": [], "expect": {"action_types": ["order_type"], "action_value": {"type": "order_type", "value": "dine-in"}, "note": "명확한 매장 발화 → dine-in"}}

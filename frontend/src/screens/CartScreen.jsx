@@ -8,6 +8,8 @@ import IdleOverlay from '../components/IdleOverlay'
 import CouponScanModal from '../components/CouponScanModal'
 import CameraPreview from '../components/CameraPreview'
 import useT from '../i18n/useT'
+import { useLocale } from '../i18n/LocaleContext'
+import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
 
@@ -690,9 +692,20 @@ function CashIllustration() {
   )
 }
 
+function translateOptionName(korName, locale) {
+  if (!korName || locale === 'ko') return korName
+  const all = [...SET_SIDES, ...SET_DRINKS]
+  const found = all.find(x => x.name === korName)
+  if (!found) return korName
+  if (locale === 'ja') return found.nameJa ?? found.nameEn ?? korName
+  if (locale === 'zh') return found.nameZh ?? found.nameEn ?? korName
+  return found.nameEn ?? korName
+}
+
 /* ── CartItem ── */
 function CartItem({ item, onUpdateQty }) {
   const t = useT()
+  const { locale } = useLocale()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
   return (
     <div style={{
@@ -746,8 +759,8 @@ function CartItem({ item, onUpdateQty }) {
             borderRadius: 10, overflow: 'hidden', alignSelf: 'center', marginTop: 4,
           }}>
             {item.exclusion && item.exclusion !== '없음' && <SubRow label={item.exclusion} extra={0} />}
-            {item.side  && <SubRow label={item.side}  extra={item.sideExtra}  />}
-            {item.drink && <SubRow label={item.drink} extra={item.drinkExtra} />}
+            {item.side  && <SubRow label={translateOptionName(item.side,  locale)} extra={item.sideExtra}  />}
+            {item.drink && <SubRow label={translateOptionName(item.drink, locale)} extra={item.drinkExtra} />}
           </div>
         )}
       </div>

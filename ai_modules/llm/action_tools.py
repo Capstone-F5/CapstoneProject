@@ -54,6 +54,25 @@ def _friendly_error(prefix: str, e: Exception) -> str:
     return f"{prefix}: 처리 중 오류가 발생했습니다."
 
 
+# 일본어·영어·중국어 사이드/음료 별칭 → 한국어(DB 저장명) 정규화 테이블.
+# 외국어 사용자가 "フライドポテト", "Fries" 등으로 말할 때 add_item이 올바른 이름으로 조회하도록.
+_OPTION_NAME_ALIASES: dict[str, str] = {
+    # ── 사이드(SET_SIDE) ────────────────────────────────────────────────────
+    "フライドポテト": "감자튀김",    "Fries": "감자튀김",    "fries": "감자튀김",    "薯条": "감자튀김",
+    "チーズスティック": "치즈스틱",  "Cheese Sticks": "치즈스틱", "cheese sticks": "치즈스틱", "芝士棒": "치즈스틱",
+    "チキンナゲット": "치킨너겟",    "Nuggets": "치킨너겟",  "nuggets": "치킨너겟",  "鸡块": "치킨너겟",
+    "ヤンニョムポテト": "양념감자튀김", "Seasoned Fries": "양념감자튀김", "seasoned fries": "양념감자튀김", "辣味薯条": "양념감자튀김",
+    # ── 음료(SET_DRINK) ──────────────────────────────────────────────────────
+    "コーラ": "콜라",    "Cola": "콜라",    "cola": "콜라",    "可乐": "콜라",
+    "ゼロコーラ": "제로콜라",  "Zero-Sugar Cola": "제로콜라", "Coke Zero": "제로콜라", "零糖可乐": "제로콜라",
+    "サイダー": "사이다",  "Cider": "사이다", "cider": "사이다", "雪碧": "사이다",
+    "ゼロサイダー": "제로사이다", "Zero-Sugar Cider": "제로사이다", "零糖雪碧": "제로사이다",
+    "お水": "생수",  "Water": "생수",  "water": "생수",  "矿泉水": "생수",
+    "ポロロドリンク": "뽀로로음료", "Pororo Drink": "뽀로로음료", "啵乐乐": "뽀로로음료",
+    "オレンジジュース": "오렌지주스", "Orange Juice": "오렌지주스", "orange juice": "오렌지주스", "橙汁": "오렌지주스",
+}
+
+
 def _find_option_by_name(
     options: list[dict], group: str, name: str, available_only: bool = False
 ) -> dict | None:
@@ -65,6 +84,8 @@ def _find_option_by_name(
     삽입 순서와 무관) 부분 일치만으로 고르면 반환 순서에 따라 "감자튀김"을 요청했는데
     "양념감자튀김"이 선택되는 등 비결정적으로 엉뚱한 옵션이 골라질 수 있었다.
     """
+    # 일본어·영어·중국어 별칭 → 한국어로 정규화 (DB 검색을 위해)
+    name = _OPTION_NAME_ALIASES.get(name, name)
     candidates = [
         o for o in options
         if o.get("option_group") == group and (not available_only or o.get("is_available", True))

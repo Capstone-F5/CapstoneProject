@@ -1,0 +1,4 @@
+{"scenario": "일본어 첫 발화 → 인사 없이 바로 식사 장소 질문", "session_id": "test-ja-first-01"}
+{"turn": 1, "input": "こんにちは", "language": "ja", "screen": "start", "order_type": null, "cart": [], "expect": {"no_action_types": ["order_type"], "output_no_hangul": true, "output_asks_order_type": true, "note": "greeting 없이 바로 매장/포장 질문, 한글 없음"}}
+{"turn": 2, "input": "店内で食べます", "language": "ja", "screen": "orderType", "order_type": null, "cart": [], "expect": {"action_types": ["order_type"], "action_value": {"type": "order_type", "value": "dine-in"}, "output_no_hangul": true, "note": "店内 → dine-in 선택"}}
+{"turn": 3, "input": "チーズバーガー一個", "language": "ja", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"no_action_types": ["add_item"], "output_no_hangul": true, "note": "한개 = 단품/세트 미결정 → 질문해야 함"}}

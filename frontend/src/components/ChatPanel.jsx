@@ -95,10 +95,10 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const vad = useMicVAD({
     // startOnLoad: false — 앱 시작 시 모델만 미리 로드, 마이크는 채팅 열 때만 시작
     startOnLoad: false,
-    positiveSpeechThreshold: 0.7,  // 짧고 작은 발화도 감지 (0.8→0.7)
-    negativeSpeechThreshold: 0.3,  // 말 끝을 조금 늦게 판정해 짧은 단어 보존
-    minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게 (4→2)
-    preSpeechPadFrames: 5,         // 첫 음절 잘림 방지 (~160ms 선행 패딩)
+    positiveSpeechThreshold: 0.75, // 더 확실한 음성만 시작으로 인정 (0.7→0.75, 노이즈 트리거 감소)
+    negativeSpeechThreshold: 0.35, // 말 끝 판정 (0.3→0.35)
+    minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게
+    preSpeechPadFrames: 8,         // 첫 음절 잘림 방지 (~256ms 선행 패딩, 5→8)
     redemptionFrames: 12,          // 짧은 끊김에 말 끝 조기 종료 방지
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
@@ -187,7 +187,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       res = await fetch('/ai_modules/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, format: 'mp3' }),
+        body: JSON.stringify({ text, format: 'mp3', language: detectedLangRef.current || 'ko' }),
       })
       if (!res.ok) return
     } catch { return }
@@ -384,6 +384,18 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
               setMessages(prev =>
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
               )
+              // 첫 발화에서 locale이 "en"으로 잘못 설정된 경우 LLM 응답 언어로 보정
+              if (detectedLangRef.current === 'en' || !detectedLangRef.current) {
+                const hasCJK  = /[一-鿿]/.test(replyText)
+                const hasKana = /[　-ヿ]/.test(replyText)
+                const hasHan  = /[가-힣]/.test(replyText)
+                const corrected = hasCJK ? 'zh' : hasKana ? 'ja' : hasHan ? 'ko' : null
+                if (corrected && corrected !== detectedLangRef.current) {
+                  detectedLangRef.current = corrected
+                  sessionStorage.setItem(LANG_KEY, corrected)
+                  setLocale(corrected)
+                }
+              }
             }
           } catch { /* JSON 파싱 실패 무시 */ }
         }

@@ -179,7 +179,10 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
         }
         case 'update_modal': {
           // 팝업이 열려 있을 때 AI가 선택 내용을 수정
-          if (!modalDetailRef.current) return false
+          if (!modalDetailRef.current) {
+            console.warn('[voice] update_modal 실패: ItemDetailModal이 열려있지 않음')
+            return false
+          }
           modalDetailRef.current.setOption(a.field, a.value)
           return true
         }

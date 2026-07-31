@@ -36,6 +36,76 @@ _VOCAB_NAMES = (
 )
 
 
+_HALLUCINATION_FRAGMENTS: frozenset[str] = frozenset({
+    "시청해주셔서 감사합니다",
+    "구독과 좋아요",
+    "다음 영상에서",
+    "mbc 뉴스", "kbs 뉴스", "sbs 뉴스",
+    "copyright", "subtitles by", "transcribed by",
+    "благодарю за просмотр",
+    "ありがとうございました",
+    "感谢您的观看",
+    "字幕",
+})
+
+_COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "is", "yes", "no", "hi", "hello", "ok", "okay",
+    "please", "want", "i", "me", "you", "we", "my", "your", "to", "and",
+})
+
+
+_PAYMENT_NORMALIZATIONS: list[tuple[str, str]] = [
+    # 간편결제 오인식 보정
+    ("간편결재", "간편결제"),
+    ("간편 결재", "간편결제"),
+    ("간편 결제", "간편결제"),
+    ("갠편결제", "간편결제"),
+    ("갠편 결제", "간편결제"),
+    ("간편결체", "간편결제"),
+    # 네이버페이
+    ("네이버 패이", "네이버페이"),
+    ("네이버 페이", "네이버페이"),
+    ("내이버페이", "네이버페이"),
+    ("네이버빼이", "네이버페이"),
+    # 카카오페이
+    ("카카오 패이", "카카오페이"),
+    ("카카오 페이", "카카오페이"),
+    ("가카오페이", "카카오페이"),
+    ("카카오빼이", "카카오페이"),
+    # 삼성페이
+    ("삼성 패이", "삼성페이"),
+    ("삼성 페이", "삼성페이"),
+    ("삼성빼이", "삼성페이"),
+    # 페이코
+    ("패이코", "페이코"),
+    ("페이 코", "페이코"),
+    # 제로페이
+    ("제로 패이", "제로페이"),
+    ("제로 페이", "제로페이"),
+    ("제로빼이", "제로페이"),
+    # QR
+    ("큐알코드", "QR코드"),
+    ("큐 알", "QR"),
+    ("큐알", "QR"),
+]
+
+
+def _normalize_payment_text(text: str) -> str:
+    """간편결제 관련 발화의 STT 오인식을 정규화."""
+    for wrong, correct in _PAYMENT_NORMALIZATIONS:
+        if wrong in text:
+            text = text.replace(wrong, correct)
+    return text
+
+
+def _is_hallucination(text: str) -> bool:
+    """Whisper 전형적 환각(유튜브 자막 패턴 등) 감지."""
+    if not text:
+        return False
+    t = text.lower()
+    return any(frag in t for frag in _HALLUCINATION_FRAGMENTS)
+
+
 def _is_prompt_echo(text: str) -> bool:
     """Whisper가 무음/잡음 입력에 prompt(메뉴 어휘 힌트)를 그대로 토해낸 경우 감지.
 
@@ -80,6 +150,11 @@ def _detect_language(text: str) -> str | None:
     if cjk / total > 0.15:
         return "zh"
     if latin / total > 0.25:
+        # 짧은 텍스트가 전부 Latin이고 일반 영어 단어가 없으면 핀인/로마자 의심 → 불확실 처리
+        stripped = text.lower().strip()
+        tokens = set(stripped.split())
+        if len(stripped) <= 15 and not tokens & _COMMON_ENGLISH_WORDS:
+            return None
         return "en"
     # 짧은 발화나 숫자 위주면 기본 한국어
     return "ko"
@@ -150,6 +225,14 @@ async def transcribe_bytes(
     if _is_prompt_echo(text):
         logger.info("STT prompt echo 감지 → 무시: %s", text[:40])
         text = ""
+    elif _is_hallucination(text):
+        logger.info("STT 환각 감지 → 무시: %s", text[:40])
+        text = ""
+    else:
+        normalized = _normalize_payment_text(text)
+        if normalized != text:
+            logger.info("STT 결제 키워드 정규화: %s → %s", text[:40], normalized[:40])
+            text = normalized
 
     if use_verbose:
         language = getattr(resp, "language", None)

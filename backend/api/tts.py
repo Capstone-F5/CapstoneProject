@@ -29,6 +29,7 @@ class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     voice: str | None = None
     format: str = "mp3"
+    language: str | None = None  # ko / ja / zh / en
 
 
 @router.post("/tts")
@@ -37,7 +38,7 @@ async def tts(req: TTSRequest):
         raise HTTPException(400, f"지원하지 않는 format: {req.format}")
 
     try:
-        gen = stream_tts(req.text, voice=req.voice, audio_format=req.format)
+        gen = stream_tts(req.text, voice=req.voice, audio_format=req.format, language=req.language)
     except RuntimeError as e:
         raise HTTPException(500, str(e))
 

@@ -113,7 +113,7 @@ _SET_SIDES = [
     ("감자튀김", "French Fries", 0),
     ("치즈스틱", "Cheese Sticks", 0),
     ("치킨너겟", "Chicken Nuggets", 0),
-    ("양념감자튀김", "Seasoned French Fries", 500),
+    ("양념감자튀김", "Seasoned French Fries", 0),
 ]
 _SET_DRINKS = [
     ("콜라", "Coke", 0),
@@ -122,7 +122,7 @@ _SET_DRINKS = [
     ("제로사이다", "Zero Sprite", 0),
     ("생수", "Water", 0),
     ("뽀로로음료", "Pororo Drink", 0),
-    ("오렌지주스", "Orange Juice", 500),
+    ("오렌지주스", "Orange Juice", 0),
 ]
 
 # 추천메뉴 탭(is_popular) — frontend mock 의 recommended 3종과 동일

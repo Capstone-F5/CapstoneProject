@@ -17,8 +17,13 @@ const CAT_EMOJI = { recommended: '🍱', burger: '🍔', side: '🍟', drink: '�
 const DEFAULT_CAT_EMOJI = '🍽️'
 
 function parseKcal(desc) {
-  const m = desc.match(/(\d+)\s*kcal/)
+  const m = (desc ?? '').match(/(\d+)\s*kcal/)
   return m ? Number(m[1]) : null
+}
+
+function parseKcalStr(desc) {
+  const m = (desc ?? '').match(/(\d+)\s*kcal/)
+  return m ? `${m[1]} kcal` : ''
 }
 
 // description 안의 "[F 버거] " 같은 이름 프리픽스 제거
@@ -39,12 +44,14 @@ function adaptItem(i, locale) {
     ...i.options.filter(o => o.option_group === 'EXCLUDE').map(o => (isKo ? o.name_ko : o.name_en)),
   ]
   const hasSet = i.options.some(o => o.option_group === 'SET_UPGRADE')
+  // 외국어 locale에서는 한국어 설명 텍스트 대신 kcal 수치만 표시
+  const desc = isKo ? stripNamePrefix(i.description) : parseKcalStr(i.description)
   return {
     id: i.id,
     name,
     price: Number(i.base_price),
     kcal: parseKcal(i.description),
-    desc: stripNamePrefix(i.description),
+    desc,
     hasSet,
     exclusions,
     // 이미지는 DB(menu_items.image_url/set_image_url) 매칭을 그대로 사용 — 관리자 대시보드에서

@@ -43,20 +43,20 @@ export const menuItems = {
 }
 
 export const SET_SIDES = [
-  { name: '감자튀김',    extra: 0,   image: '/images/sides/감튀.webp' },
-  { name: '치즈스틱',    extra: 0,   image: '/images/sides/치즈스틱.webp' },
-  { name: '치킨너겟',    extra: 0,   image: '/images/sides/너겟.webp' },
-  { name: '양념감자튀김', extra: 500, image: '/images/sides/양념감튀.webp' },
+  { name: '감자튀김',    nameEn: 'Fries',          nameJa: 'フライドポテト',    nameZh: '薯条',     extra: 0, image: '/images/sides/감튀.webp' },
+  { name: '치즈스틱',   nameEn: 'Cheese Sticks',  nameJa: 'チーズスティック',  nameZh: '芝士棒',   extra: 0, image: '/images/sides/치즈스틱.webp' },
+  { name: '치킨너겟',   nameEn: 'Nuggets',        nameJa: 'チキンナゲット',    nameZh: '鸡块',     extra: 0, image: '/images/sides/너겟.webp' },
+  { name: '양념감자튀김', nameEn: 'Seasoned Fries', nameJa: 'ヤンニョムポテト', nameZh: '辣味薯条', extra: 0, image: '/images/sides/양념감튀.webp' },
 ]
 
 export const SET_DRINKS = [
-  { name: '콜라',       extra: 0,   image: '/images/drinks/콜라.webp' },
-  { name: '제로콜라',   extra: 0,   image: '/images/drinks/콜라.webp' },
-  { name: '사이다',     extra: 0,   image: '/images/drinks/사이다.webp' },
-  { name: '제로사이다', extra: 0,   image: '/images/drinks/사이다.webp' },
-  { name: '생수',       extra: 0,   image: '/images/drinks/생수.webp' },
-  { name: '뽀로로음료', extra: 0,   image: '/images/drinks/뽀로로음료.webp' },
-  { name: '오렌지주스', extra: 500, image: '/images/drinks/오렌지주스.webp' },
+  { name: '콜라',       nameEn: 'Cola',             nameJa: 'コーラ',           nameZh: '可乐',     extra: 0, image: '/images/drinks/콜라.webp' },
+  { name: '제로콜라',   nameEn: 'Zero-Sugar Cola',  nameJa: 'ゼロコーラ',       nameZh: '零糖可乐', extra: 0, image: '/images/drinks/콜라.webp' },
+  { name: '사이다',     nameEn: 'Cider',            nameJa: 'サイダー',         nameZh: '雪碧',     extra: 0, image: '/images/drinks/사이다.webp' },
+  { name: '제로사이다', nameEn: 'Zero-Sugar Cider', nameJa: 'ゼロサイダー',     nameZh: '零糖雪碧', extra: 0, image: '/images/drinks/사이다.webp' },
+  { name: '생수',       nameEn: 'Water',            nameJa: 'お水',             nameZh: '矿泉水',   extra: 0, image: '/images/drinks/생수.webp' },
+  { name: '뽀로로음료', nameEn: 'Pororo Drink',     nameJa: 'ポロロドリンク',   nameZh: '啵乐乐',   extra: 0, image: '/images/drinks/뽀로로음료.webp' },
+  { name: '오렌지주스', nameEn: 'Orange Juice',     nameJa: 'オレンジジュース', nameZh: '橙汁',     extra: 0, image: '/images/drinks/오렌지주스.webp' },
 ]
 
 export const SET_SURCHARGE = 2000

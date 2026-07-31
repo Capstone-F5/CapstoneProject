@@ -604,7 +604,12 @@ function AppContent() {
       }
       if (res === 'handled') { q.shift(); continue }
       // 화면 종속 액션 → 현재 화면 브릿지에 위임
-      const handled = screenVoiceRef.current?.(a)
+      // screenVoiceRef.current가 null이면 화면이 아직 핸들러 등록 전 — 재시도
+      if (!screenVoiceRef.current) {
+        scheduleDrainRetry()
+        break
+      }
+      const handled = screenVoiceRef.current(a)
       if (handled) { q.shift(); continue }
       // 처리 못 함: 화면 전환 대기 중이면 보존하고 잠시 후 재시도
       if (awaitingScreenRef.current) {
