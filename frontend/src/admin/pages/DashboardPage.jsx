@@ -66,14 +66,15 @@ function BarChart({ data }) {
 
 function LineChart({ data }) {
   const max = Math.max(...data.map(d => d.sales), 1)
-  const W = 600
-  const H = 160
-  const PAD_L = 50
+  // 고정 좌표계(viewBox)를 사용하되 width="100%"로 카드 전체를 채움
+  const VW = 1000
+  const VH = 200
+  const PAD_L = 72
   const PAD_R = 16
-  const PAD_T = 12
-  const PAD_B = 28
-  const innerW = W - PAD_L - PAD_R
-  const innerH = H - PAD_T - PAD_B
+  const PAD_T = 16
+  const PAD_B = 36
+  const innerW = VW - PAD_L - PAD_R
+  const innerH = VH - PAD_T - PAD_B
 
   if (data.length < 2) return <BarChart data={data} />
 
@@ -83,14 +84,19 @@ function LineChart({ data }) {
   const points = data.map((d, i) => `${px(i)},${py(d.sales)}`).join(' ')
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H + 8} style={{ overflow: 'visible' }}>
+    <svg
+      viewBox={`0 0 ${VW} ${VH}`}
+      width="100%"
+      style={{ display: 'block', overflow: 'visible' }}
+      preserveAspectRatio="none"
+    >
       {/* Y축 그리드 */}
       {[0, 0.25, 0.5, 0.75, 1].map(ratio => {
         const y = PAD_T + (1 - ratio) * innerH
         return (
           <g key={ratio}>
-            <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#f0f0f0" strokeWidth="1" />
-            <text x={PAD_L - 6} y={y + 4} textAnchor="end" fontSize="9" fill="#bbb">
+            <line x1={PAD_L} y1={y} x2={VW - PAD_R} y2={y} stroke="#f0f0f0" strokeWidth="1" />
+            <text x={PAD_L - 8} y={y + 4} textAnchor="end" fontSize="14" fill="#bbb">
               {fmt(max * ratio)}
             </text>
           </g>
@@ -103,18 +109,18 @@ function LineChart({ data }) {
         fillOpacity="0.08"
       />
       {/* 선 */}
-      <polyline points={points} fill="none" stroke="#744032" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <polyline points={points} fill="none" stroke="#744032" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
       {/* 점 + 날짜 */}
       {data.map((d, i) => (
         <g key={i}>
           <circle
-            cx={px(i)} cy={py(d.sales)} r="4"
+            cx={px(i)} cy={py(d.sales)} r="5"
             fill={i === data.length - 1 ? '#744032' : '#fff'}
-            stroke="#744032" strokeWidth="2"
+            stroke="#744032" strokeWidth="2.5"
           />
           <title>{shortDate(d.date)}: {fmt(d.sales)}원</title>
-          {(i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 8) === 0) && (
-            <text x={px(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#999">
+          {(i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 10) === 0) && (
+            <text x={px(i)} y={VH - 6} textAnchor="middle" fontSize="13" fill="#999">
               {shortDate(d.date)}
             </text>
           )}
@@ -163,19 +169,13 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [range])
 
-  if (loading) return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 20 }}>
-      <img src="/logo.png" alt="로고" style={{ height: 64, objectFit: 'contain' }} />
-      <div className="loading-text">통계 로딩 중…</div>
-    </div>
-  )
+  if (loading) return <div className="loading-text">통계 로딩 중…</div>
   if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* 로고 + Period toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <img src="/logo.png" alt="로고" style={{ height: 48, objectFit: 'contain' }} />
+      {/* Period toggle */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1.5px solid #ddd' }}>
           {['7d', '30d'].map(r => (
             <button

@@ -526,7 +526,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showCardPayment && (
         <PayWaitPopup
           title={t('waitCard')}
-          total={total}
+          total={couponInfo?.valid ? (couponInfo.finalAmount ?? Math.max(0, total - (couponInfo.discountAmount ?? 0))) : total}
           image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
@@ -540,7 +540,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showCashPayment && (
         <PayWaitPopup
           title={t('waitCash')}
-          total={total}
+          total={couponInfo?.valid ? (couponInfo.finalAmount ?? Math.max(0, total - (couponInfo.discountAmount ?? 0))) : total}
           image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
@@ -554,7 +554,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showPayPayment && (
         <PayWaitPopup
           title={t('waitPay')}
-          total={total}
+          total={couponInfo?.valid ? (couponInfo.finalAmount ?? Math.max(0, total - (couponInfo.discountAmount ?? 0))) : total}
           image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}

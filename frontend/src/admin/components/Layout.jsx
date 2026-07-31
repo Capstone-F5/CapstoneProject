@@ -22,8 +22,7 @@ export default function Layout({ admin, currentPage, onNavigate, onLogout, child
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <span className="sidebar-logo-icon">🍔</span>
-          <span>BURGER</span>
+          <img src="/logo.png" alt="버거 로고" style={{ height: 44, objectFit: 'contain', display: 'block' }} />
         </div>
         <nav className="sidebar-nav">
           {NAV_ITEMS.map(item => (
