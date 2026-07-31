@@ -6,7 +6,6 @@ function fmt(n) {
 }
 
 function shortDate(dateStr) {
-  // "YYYY-MM-DD" → "M/D"
   const [, m, d] = (dateStr ?? '').split('-')
   return m && d ? `${parseInt(m)}/${parseInt(d)}` : dateStr
 }
@@ -65,8 +64,70 @@ function BarChart({ data }) {
   )
 }
 
+function LineChart({ data }) {
+  const max = Math.max(...data.map(d => d.sales), 1)
+  const W = 600
+  const H = 160
+  const PAD_L = 50
+  const PAD_R = 16
+  const PAD_T = 12
+  const PAD_B = 28
+  const innerW = W - PAD_L - PAD_R
+  const innerH = H - PAD_T - PAD_B
+
+  if (data.length < 2) return <BarChart data={data} />
+
+  const px = (i) => PAD_L + (i / (data.length - 1)) * innerW
+  const py = (v) => PAD_T + (1 - v / max) * innerH
+
+  const points = data.map((d, i) => `${px(i)},${py(d.sales)}`).join(' ')
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H + 8} style={{ overflow: 'visible' }}>
+      {/* Y축 그리드 */}
+      {[0, 0.25, 0.5, 0.75, 1].map(ratio => {
+        const y = PAD_T + (1 - ratio) * innerH
+        return (
+          <g key={ratio}>
+            <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#f0f0f0" strokeWidth="1" />
+            <text x={PAD_L - 6} y={y + 4} textAnchor="end" fontSize="9" fill="#bbb">
+              {fmt(max * ratio)}
+            </text>
+          </g>
+        )
+      })}
+      {/* 영역 채우기 */}
+      <polygon
+        points={`${PAD_L},${PAD_T + innerH} ${points} ${px(data.length - 1)},${PAD_T + innerH}`}
+        fill="#744032"
+        fillOpacity="0.08"
+      />
+      {/* 선 */}
+      <polyline points={points} fill="none" stroke="#744032" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {/* 점 + 날짜 */}
+      {data.map((d, i) => (
+        <g key={i}>
+          <circle
+            cx={px(i)} cy={py(d.sales)} r="4"
+            fill={i === data.length - 1 ? '#744032' : '#fff'}
+            stroke="#744032" strokeWidth="2"
+          />
+          <title>{shortDate(d.date)}: {fmt(d.sales)}원</title>
+          {(i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 8) === 0) && (
+            <text x={px(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#999">
+              {shortDate(d.date)}
+            </text>
+          )}
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 export default function DashboardPage() {
   const [range, setRange]               = useState('7d')
+  // 7일 기본 Bar, 30일 기본 Line — range 변경 시 자동 전환
+  const [chartType, setChartType]       = useState('bar')
   const [summary, setSummary]           = useState(null)
   const [salesData, setSalesData]       = useState([])
   const [popular, setPopular]           = useState([])
@@ -74,6 +135,12 @@ export default function DashboardPage() {
   const [paymentStats, setPaymentStats] = useState([])
   const [loading, setLoading]           = useState(true)
   const [error, setError]               = useState('')
+
+  const handleRangeChange = (r) => {
+    setRange(r)
+    // 30일→Line, 7일→Bar 기본 전환
+    setChartType(r === '30d' ? 'line' : 'bar')
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -96,18 +163,24 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [range])
 
-  if (loading) return <div className="loading-text">통계 로딩 중…</div>
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 20 }}>
+      <img src="/logo.png" alt="로고" style={{ height: 64, objectFit: 'contain' }} />
+      <div className="loading-text">통계 로딩 중…</div>
+    </div>
+  )
   if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Period toggle */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      {/* 로고 + Period toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <img src="/logo.png" alt="로고" style={{ height: 48, objectFit: 'contain' }} />
         <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1.5px solid #ddd' }}>
           {['7d', '30d'].map(r => (
             <button
               key={r}
-              onClick={() => setRange(r)}
+              onClick={() => handleRangeChange(r)}
               style={{
                 padding: '6px 20px', fontSize: '13px', fontWeight: '600',
                 border: 'none', cursor: 'pointer', fontFamily: 'Pretendard, sans-serif',
@@ -137,11 +210,35 @@ export default function DashboardPage() {
 
       {/* Sales chart */}
       <div className="card">
-        <div style={{ fontWeight: '600', fontSize: '15px', marginBottom: '20px' }}>
-          최근 {range === '7d' ? '7일' : '30일'} 매출 추이
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+          <span style={{ fontWeight: '600', fontSize: '15px' }}>
+            최근 {range === '7d' ? '7일' : '30일'} 매출 추이
+          </span>
+          {/* Bar / Line 전환 토글 */}
+          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1.5px solid #e0e0e0' }}>
+            {[
+              { key: 'bar',  label: '막대' },
+              { key: 'line', label: '선형' },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setChartType(key)}
+                style={{
+                  padding: '4px 14px', fontSize: '12px', fontWeight: '600',
+                  border: 'none', cursor: 'pointer', fontFamily: 'Pretendard, sans-serif',
+                  background: chartType === key ? '#744032' : '#fff',
+                  color:      chartType === key ? '#fff'    : '#888',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         {salesData.length > 0
-          ? <BarChart data={salesData} />
+          ? (chartType === 'bar'
+              ? <BarChart data={salesData} />
+              : <LineChart data={salesData} />)
           : <div className="loading-text">데이터가 없습니다</div>
         }
       </div>

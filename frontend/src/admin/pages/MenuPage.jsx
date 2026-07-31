@@ -9,24 +9,29 @@ import {
 
 const OPTION_GROUPS = [
   { value: 'SET_UPGRADE', label: '단품/세트' },
-  { value: 'EXCLUDE',     label: '제외하기' },
-  { value: 'SET_SIDE',    label: '사이드'   },
-  { value: 'SET_DRINK',   label: '음료수'   },
+  { value: 'EXCLUDE',     label: '제외하기'  },
+  { value: 'SET_SIDE',    label: '사이드'    },
+  { value: 'SET_DRINK',   label: '음료수'    },
 ]
 const GROUP_LABEL = Object.fromEntries(OPTION_GROUPS.map(g => [g.value, g.label]))
 
-// ─── Toggle ────────────────────────────────────────────────────────────────
+// ─── Toggle ─── (div 기반, label→input 이중클릭 없음) ──────────────────────
 function Toggle({ checked, onChange }) {
   return (
-    <label className="toggle" onClick={e => { e.stopPropagation(); onChange(!checked) }}>
-      <input type="checkbox" checked={checked} onChange={() => {}} />
-      <div className="toggle-track" />
+    <div
+      role="switch"
+      aria-checked={checked}
+      className="toggle"
+      onClick={e => { e.stopPropagation(); onChange(!checked) }}
+      style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+    >
+      <div className="toggle-track" style={{ background: checked ? '#744032' : '#ccc' }} />
       <div className="toggle-thumb" />
-    </label>
+    </div>
   )
 }
 
-// ─── ImageUploader ─────────────────────────────────────────────────────────
+// ─── ImageUploader ──────────────────────────────────────────────────────────
 function ImageUploader({ url, onChange }) {
   const fileRef = useRef(null)
   const [uploading, setUploading] = useState(false)
@@ -87,9 +92,14 @@ function ImageUploader({ url, onChange }) {
   )
 }
 
-// ─── EditCategoryModal ─────────────────────────────────────────────────────
-function EditCategoryModal({ onClose, onSave }) {
-  const [form, setForm] = useState({ name_ko: '', name_en: '', display_order: 0 })
+// ─── EditCategoryModal ── 생성/수정 겸용 ────────────────────────────────────
+function EditCategoryModal({ category, onClose, onSave }) {
+  const isEdit = !!category
+  const [form, setForm] = useState({
+    name_ko:       category?.name_ko       ?? '',
+    name_en:       category?.name_en       ?? '',
+    display_order: category?.display_order ?? 0,
+  })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -98,7 +108,7 @@ function EditCategoryModal({ onClose, onSave }) {
     if (!form.name_en.trim()) { alert('영어 이름을 입력하세요'); return }
     setLoading(true)
     try {
-      await onSave({ ...form, display_order: Number(form.display_order), is_visible: true })
+      await onSave({ ...form, display_order: Number(form.display_order) })
       onClose()
     } catch (e) {
       alert(e.message)
@@ -110,7 +120,7 @@ function EditCategoryModal({ onClose, onSave }) {
   return (
     <div className="modal-overlay">
       <div className="modal-box" style={{ width: 400 }}>
-        <div className="modal-title">카테고리 추가</div>
+        <div className="modal-title">{isEdit ? '카테고리 수정' : '카테고리 추가'}</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">이름 (한국어) *</label>
@@ -129,7 +139,7 @@ function EditCategoryModal({ onClose, onSave }) {
         <div className="modal-footer">
           <button className="btn-outline" onClick={onClose}>취소</button>
           <button className="btn-primary" onClick={handleSave} disabled={loading}>
-            {loading ? '저장 중…' : '추가'}
+            {loading ? '저장 중…' : isEdit ? '수정' : '추가'}
           </button>
         </div>
       </div>
@@ -137,19 +147,19 @@ function EditCategoryModal({ onClose, onSave }) {
   )
 }
 
-// ─── EditItemModal ─────────────────────────────────────────────────────────
+// ─── EditItemModal ──────────────────────────────────────────────────────────
 function EditItemModal({ item, categoryId, categories, onClose, onSave }) {
   const [form, setForm] = useState({
-    name_ko:      item?.name_ko      ?? '',
-    name_en:      item?.name_en      ?? '',
-    base_price:   item?.base_price   ?? '',
-    description:  item?.description  ?? '',
-    image_url:    item?.image_url    ?? null,
+    name_ko:       item?.name_ko       ?? '',
+    name_en:       item?.name_en       ?? '',
+    base_price:    item?.base_price    ?? '',
+    description:   item?.description   ?? '',
+    image_url:     item?.image_url     ?? null,
     set_image_url: item?.set_image_url ?? null,
-    is_available: item?.is_available ?? true,
-    is_popular:   item?.is_popular   ?? false,
-    is_new:       item?.is_new       ?? false,
-    category_id:  categoryId ?? categories?.[0]?.id ?? '',
+    is_available:  item?.is_available  ?? true,
+    is_popular:    item?.is_popular    ?? false,
+    is_new:        item?.is_new        ?? false,
+    category_id:   item?.category_id ?? categoryId ?? categories?.[0]?.id ?? '',
   })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -231,13 +241,13 @@ function EditItemModal({ item, categoryId, categories, onClose, onSave }) {
   )
 }
 
-// ─── EditOptionModal ───────────────────────────────────────────────────────
-function EditOptionModal({ option, itemId, onClose, onSave }) {
+// ─── EditOptionModal ─────────────────────────────────────────────────────────
+function EditOptionModal({ option, itemId, defaultGroup, onClose, onSave }) {
   const [form, setForm] = useState({
     name_ko:          option?.name_ko          ?? '',
     name_en:          option?.name_en          ?? '',
     additional_price: option?.additional_price != null ? Number(option.additional_price) : 0,
-    option_group:     option?.option_group     ?? 'EXCLUDE',
+    option_group:     option?.option_group     ?? defaultGroup ?? 'EXCLUDE',
     display_order:    option?.display_order    ?? 0,
     is_available:     option?.is_available     ?? true,
   })
@@ -273,7 +283,7 @@ function EditOptionModal({ option, itemId, onClose, onSave }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">이름 (한국어) *</label>
-            <input className="form-input" value={form.name_ko} onChange={e => set('name_ko', e.target.value)} />
+            <input className="form-input" value={form.name_ko} onChange={e => set('name_ko', e.target.value)} autoFocus />
           </div>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">이름 (영어) *</label>
@@ -310,27 +320,110 @@ function EditOptionModal({ option, itemId, onClose, onSave }) {
   )
 }
 
-// ─── MenuPage ──────────────────────────────────────────────────────────────
+// ─── OptionGroupSection ── 그룹별 섹션 ──────────────────────────────────────
+function OptionGroupSection({ group, options, item, onAdd, onEdit, onDelete, onToggle, deletingOpt }) {
+  const groupOptions = options.filter(o => o.option_group === group.value)
+    .sort((a, b) => a.display_order - b.display_order)
+
+  return (
+    <div style={{ borderBottom: '1px solid #f0f0f0' }}>
+      {/* 섹션 헤더 */}
+      <div style={{
+        padding: '10px 20px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: '#fafafa',
+      }}>
+        <span style={{
+          fontSize: 12, fontWeight: 700, color: '#744032',
+          padding: '2px 10px', background: '#f0ebe8', borderRadius: 999,
+        }}>
+          {group.label}
+        </span>
+        <button
+          className="btn-outline btn-sm"
+          style={{ fontSize: 11, padding: '3px 10px' }}
+          onClick={() => onAdd(group.value)}
+        >
+          + 추가
+        </button>
+      </div>
+
+      {/* 옵션 목록 */}
+      {groupOptions.length === 0 ? (
+        <div style={{ padding: '10px 20px', fontSize: 13, color: '#bbb' }}>
+          {group.label} 항목이 없습니다
+        </div>
+      ) : (
+        <table className="data-table" style={{ margin: 0 }}>
+          <thead>
+            <tr>
+              <th>한국어</th>
+              <th>영어</th>
+              <th style={{ width: 90 }}>추가금액</th>
+              <th style={{ width: 60 }}>판매</th>
+              <th style={{ width: 100 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {groupOptions.map(opt => (
+              <tr key={opt.id}>
+                <td style={{ fontWeight: 500 }}>{opt.name_ko}</td>
+                <td style={{ color: '#888', fontSize: 12 }}>{opt.name_en}</td>
+                <td>
+                  {Number(opt.additional_price) > 0
+                    ? <span style={{ color: '#F5B800', fontWeight: 600 }}>+{Number(opt.additional_price).toLocaleString('ko-KR')}원</span>
+                    : <span style={{ color: '#bbb' }}>-</span>
+                  }
+                </td>
+                <td>
+                  <Toggle
+                    checked={opt.is_available}
+                    onChange={() => onToggle(item, opt)}
+                  />
+                </td>
+                <td style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button className="btn-outline btn-sm" onClick={() => onEdit(opt)}>수정</button>
+                  <button
+                    className="btn-sm"
+                    style={{ background: '#ffeaea', color: '#c00', border: '1px solid #ffc0c0', borderRadius: 6, cursor: 'pointer', fontSize: 12, padding: '4px 10px' }}
+                    disabled={deletingOpt === opt.id}
+                    onClick={() => {
+                      if (confirm(`"${opt.name_ko}" 옵션을 삭제하시겠습니까?`))
+                        onDelete(item.id, opt.id)
+                    }}
+                  >
+                    {deletingOpt === opt.id ? '…' : '삭제'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+// ─── MenuPage ────────────────────────────────────────────────────────────────
 export default function MenuPage() {
-  const [data,         setData]         = useState(null)
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState('')
-  const [selectedCat,  setSelectedCat]  = useState(null)
-  const [selectedItem, setSelectedItem] = useState(null)
-  const [editItem,     setEditItem]     = useState(undefined)   // undefined=hidden | null=new | obj=edit
-  const [editOption,   setEditOption]   = useState(undefined)   // undefined=hidden | null=new | obj=edit
-  const [editCat,      setEditCat]      = useState(false)        // false=hidden | true=show
-  const [deletingOpt,  setDeletingOpt]  = useState(null)
-  const [deletingItem, setDeletingItem] = useState(null)
-  const [deletingCat,  setDeletingCat]  = useState(null)
+  const [data,          setData]          = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState('')
+  const [selectedCat,   setSelectedCat]   = useState(null)   // null = 전체
+  const [selectedItem,  setSelectedItem]  = useState(null)
+  const [editItem,      setEditItem]      = useState(undefined)  // undefined=숨김 | null=신규 | obj=수정
+  const [editOption,    setEditOption]    = useState(undefined)  // undefined=숨김 | null=신규 | obj=수정
+  const [editOptionGroup, setEditOptionGroup] = useState(null)   // editOption=null 일 때 기본 그룹
+  // editCat: null=숨김, true=신규 추가, object=수정 대상 카테고리
+  const [editCat,       setEditCat]       = useState(null)
+  const [deletingOpt,   setDeletingOpt]   = useState(null)
+  const [deletingItem,  setDeletingItem]  = useState(null)
+  const [deletingCat,   setDeletingCat]   = useState(null)
 
   const load = () => {
     setLoading(true)
     fetchAdminMenu()
-      .then(raw => {
-        setData(raw)
-        setSelectedCat(c => c ?? raw.categories?.[0]?.id ?? null)
-      })
+      .then(raw => { setData(raw) })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }
@@ -380,7 +473,11 @@ export default function MenuPage() {
   }
 
   const handleSaveCat = async (payload) => {
-    await createCategory(payload)
+    if (editCat && editCat !== true) {
+      await updateCategory(editCat.id, payload)
+    } else {
+      await createCategory({ ...payload, is_visible: true })
+    }
     load()
   }
 
@@ -404,6 +501,16 @@ export default function MenuPage() {
     catch (e) { alert(e.message) }
   }
 
+  const openAddOption = (group) => {
+    setEditOption(null)
+    setEditOptionGroup(group)
+  }
+
+  const openEditOption = (opt) => {
+    setEditOption(opt)
+    setEditOptionGroup(null)
+  }
+
   if (loading) return <div className="loading-text">메뉴 데이터 로딩 중…</div>
   if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
 
@@ -417,14 +524,14 @@ export default function MenuPage() {
     return data.menu_items[catKey] ?? []
   })()
 
-  const currentCat       = data?.categories?.find(c => c.id === selectedCat)
+  const currentCat      = data?.categories?.find(c => c.id === selectedCat)
   const selectedItemFull = selectedItem ? allItems.find(i => i.id === selectedItem) ?? null : null
 
   return (
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
 
       {/* ── 카테고리 패널 ── */}
-      <div className="card" style={{ width: 180, minWidth: 180, padding: '8px 0' }}>
+      <div className="card" style={{ width: 200, minWidth: 200, padding: '8px 0' }}>
         <div style={{ padding: '12px 16px 8px', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>카테고리</span>
           <button
@@ -433,29 +540,46 @@ export default function MenuPage() {
             onClick={() => setEditCat(true)}
           >+ 추가</button>
         </div>
+
+        {/* 전체 */}
+        <div
+          onClick={() => { setSelectedCat(null); setSelectedItem(null) }}
+          style={{
+            padding: '8px 16px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
+            background:  !selectedCat ? '#fff5f0' : 'transparent',
+            borderLeft:  !selectedCat ? '3px solid #744032' : '3px solid transparent',
+            fontWeight:  !selectedCat ? 600 : 400,
+            fontSize: 14, color: '#555',
+          }}
+        >
+          전체
+        </div>
+
         {(data?.categories ?? []).map(cat => (
           <div
             key={cat.id}
             onClick={() => { setSelectedCat(cat.id); setSelectedItem(null) }}
             style={{
-              padding: '8px 16px', cursor: 'pointer',
+              padding: '8px 16px 8px 12px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              background:   selectedCat === cat.id ? '#fff5f0' : 'transparent',
-              borderLeft:   selectedCat === cat.id ? '3px solid #744032' : '3px solid transparent',
-              fontWeight:   selectedCat === cat.id ? 600 : 400,
+              background:  selectedCat === cat.id ? '#fff5f0' : 'transparent',
+              borderLeft:  selectedCat === cat.id ? '3px solid #744032' : '3px solid transparent',
+              fontWeight:  selectedCat === cat.id ? 600 : 400,
             }}
           >
-            <span style={{ fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name_ko}</span>
+            <span style={{ fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {cat.name_ko}
+            </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-              <span
-                className={`badge ${cat.is_visible ? 'badge-active' : 'badge-inactive'}`}
-                style={{ fontSize: 10, padding: '1px 7px', cursor: 'pointer' }}
-                onClick={() => handleToggleCatVisible(cat)}
-              >
-                {cat.is_visible ? '노출' : '숨김'}
-              </span>
+              <Toggle checked={cat.is_visible} onChange={() => handleToggleCatVisible(cat)} />
               <button
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', fontSize: 14, lineHeight: 1, padding: '0 2px' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', fontSize: 13, lineHeight: 1, padding: '1px 2px' }}
+                onClick={() => setEditCat(cat)}
+                title="카테고리 수정"
+              >✎</button>
+              <button
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', fontSize: 13, lineHeight: 1, padding: '1px 2px' }}
                 disabled={deletingCat === cat.id}
                 onClick={() => handleDeleteCat(cat)}
                 title="삭제"
@@ -471,7 +595,7 @@ export default function MenuPage() {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0' }}>
-            <span style={{ fontWeight: 600, fontSize: 15 }}>{currentCat?.name_ko ?? '전체'}</span>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>{currentCat?.name_ko ?? '전체 메뉴'}</span>
             <button className="btn-primary btn-sm" onClick={() => setEditItem(null)}>+ 메뉴 추가</button>
           </div>
           <table className="data-table">
@@ -479,132 +603,88 @@ export default function MenuPage() {
               <tr>
                 <th style={{ width: 56 }}></th>
                 <th>이름</th>
+                <th>카테고리</th>
                 <th>가격</th>
-                <th>품절여부</th>
+                <th>품절</th>
                 <th>상태</th>
                 <th style={{ width: 110 }}>수정/삭제</th>
               </tr>
             </thead>
             <tbody>
               {displayItems.length === 0 && (
-                <tr><td colSpan={6} className="loading-text">메뉴가 없습니다</td></tr>
+                <tr><td colSpan={7} className="loading-text">메뉴가 없습니다</td></tr>
               )}
-              {displayItems.map(item => (
-                <tr
-                  key={item.id}
-                  className={selectedItem === item.id ? 'selected' : ''}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => setSelectedItem(selectedItem === item.id ? null : item.id)}
-                >
-                  <td>
-                    {item.image_url
-                      ? <img src={item.image_url} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
-                      : <div style={{ width: 40, height: 40, background: '#f5f5f5', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🍔</div>
-                    }
-                  </td>
-                  <td style={{ fontWeight: 500 }}>{item.name_ko}</td>
-                  <td>{Number(item.base_price).toLocaleString('ko-KR')}원</td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <Toggle checked={!item.is_available} onChange={() => handleToggleAvailable(item)} />
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {item.is_popular   && <span className="badge badge-active"    style={{ fontSize: 10, padding: '1px 7px' }}>인기</span>}
-                      {item.is_new       && <span className="badge badge-received"  style={{ fontSize: 10, padding: '1px 7px' }}>신메뉴</span>}
-                      {!item.is_available && <span className="badge badge-cancelled" style={{ fontSize: 10, padding: '1px 7px' }}>품절</span>}
-                    </div>
-                  </td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn-outline btn-sm" onClick={() => setEditItem(item)}>수정</button>
-                      <button
-                        className="btn-sm"
-                        style={{ background: '#ffeaea', color: '#c00', border: '1px solid #ffc0c0', borderRadius: 6, fontSize: 12, padding: '4px 8px', cursor: 'pointer' }}
-                        disabled={deletingItem === item.id}
-                        onClick={() => {
-                          if (confirm(`"${item.name_ko}"을(를) 삭제하시겠습니까?\n진행 중인 주문이 있으면 품절 처리됩니다.`))
-                            handleDeleteItem(item.id)
-                        }}
-                      >
-                        {deletingItem === item.id ? '…' : '삭제'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {displayItems.map(item => {
+                const cat = data?.categories?.find(c => c.id === item.category_id)
+                return (
+                  <tr
+                    key={item.id}
+                    className={selectedItem === item.id ? 'selected' : ''}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setSelectedItem(selectedItem === item.id ? null : item.id)}
+                  >
+                    <td>
+                      {item.image_url
+                        ? <img src={item.image_url} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
+                        : <div style={{ width: 40, height: 40, background: '#f5f5f5', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🍔</div>
+                      }
+                    </td>
+                    <td style={{ fontWeight: 500 }}>{item.name_ko}</td>
+                    <td style={{ fontSize: 12, color: '#888' }}>{cat?.name_ko ?? '–'}</td>
+                    <td>{Number(item.base_price).toLocaleString('ko-KR')}원</td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <Toggle checked={!item.is_available} onChange={() => handleToggleAvailable(item)} />
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {item.is_popular    && <span className="badge badge-active"    style={{ fontSize: 10, padding: '1px 7px' }}>인기</span>}
+                        {item.is_new        && <span className="badge badge-received"  style={{ fontSize: 10, padding: '1px 7px' }}>신메뉴</span>}
+                        {!item.is_available && <span className="badge badge-cancelled" style={{ fontSize: 10, padding: '1px 7px' }}>품절</span>}
+                      </div>
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button className="btn-outline btn-sm" onClick={() => setEditItem(item)}>수정</button>
+                        <button
+                          className="btn-sm"
+                          style={{ background: '#ffeaea', color: '#c00', border: '1px solid #ffc0c0', borderRadius: 6, fontSize: 12, padding: '4px 8px', cursor: 'pointer' }}
+                          disabled={deletingItem === item.id}
+                          onClick={() => {
+                            if (confirm(`"${item.name_ko}"을(를) 삭제하시겠습니까?\n진행 중인 주문이 있으면 품절 처리됩니다.`))
+                              handleDeleteItem(item.id)
+                          }}
+                        >
+                          {deletingItem === item.id ? '…' : '삭제'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* ── 옵션 패널 ── */}
+        {/* ── 옵션 패널 (그룹별 섹션) ── */}
         {selectedItemFull && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0' }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{selectedItemFull.name_ko} 옵션</span>
-              <button className="btn-primary btn-sm" onClick={() => setEditOption(null)}>+ 옵션 추가</button>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{selectedItemFull.name_ko} — 옵션 구성</span>
             </div>
 
-            {(!selectedItemFull.options || selectedItemFull.options.length === 0) ? (
-              <div className="loading-text" style={{ padding: '20px 0' }}>옵션이 없습니다</div>
-            ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: 90 }}>그룹</th>
-                    <th>한국어</th>
-                    <th>영어</th>
-                    <th style={{ width: 90 }}>추가금액</th>
-                    <th style={{ width: 70 }}>판매</th>
-                    <th style={{ width: 100 }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...selectedItemFull.options]
-                    .sort((a, b) => {
-                      const gi = g => OPTION_GROUPS.findIndex(x => x.value === g)
-                      return gi(a.option_group) - gi(b.option_group) || a.display_order - b.display_order
-                    })
-                    .map(opt => (
-                      <tr key={opt.id}>
-                        <td>
-                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#f0ebe8', color: '#744032', fontWeight: 600 }}>
-                            {GROUP_LABEL[opt.option_group] ?? opt.option_group}
-                          </span>
-                        </td>
-                        <td style={{ fontWeight: 500 }}>{opt.name_ko}</td>
-                        <td style={{ color: '#888', fontSize: 12 }}>{opt.name_en}</td>
-                        <td>
-                          {Number(opt.additional_price) > 0
-                            ? <span style={{ color: '#F5B800', fontWeight: 600 }}>+{Number(opt.additional_price).toLocaleString('ko-KR')}원</span>
-                            : <span style={{ color: '#bbb' }}>-</span>
-                          }
-                        </td>
-                        <td>
-                          <Toggle
-                            checked={opt.is_available}
-                            onChange={() => handleToggleOptionAvailable(selectedItemFull, opt)}
-                          />
-                        </td>
-                        <td style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <button className="btn-outline btn-sm" onClick={() => setEditOption(opt)}>수정</button>
-                          <button
-                            className="btn-sm"
-                            style={{ background: '#ffeaea', color: '#c00', border: '1px solid #ffc0c0', borderRadius: 6, cursor: 'pointer', fontSize: 12, padding: '4px 10px' }}
-                            disabled={deletingOpt === opt.id}
-                            onClick={() => {
-                              if (confirm(`"${opt.name_ko}" 옵션을 삭제하시겠습니까?`))
-                                handleDeleteOption(selectedItemFull.id, opt.id)
-                            }}
-                          >
-                            {deletingOpt === opt.id ? '…' : '삭제'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            )}
+            {OPTION_GROUPS.map(group => (
+              <OptionGroupSection
+                key={group.value}
+                group={group}
+                options={selectedItemFull.options ?? []}
+                item={selectedItemFull}
+                onAdd={openAddOption}
+                onEdit={openEditOption}
+                onDelete={handleDeleteOption}
+                onToggle={handleToggleOptionAvailable}
+                deletingOpt={deletingOpt}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -612,7 +692,8 @@ export default function MenuPage() {
       {/* ── 모달 ── */}
       {editCat && (
         <EditCategoryModal
-          onClose={() => setEditCat(false)}
+          category={editCat === true ? null : editCat}
+          onClose={() => setEditCat(null)}
           onSave={handleSaveCat}
         />
       )}
@@ -631,7 +712,8 @@ export default function MenuPage() {
         <EditOptionModal
           option={editOption}
           itemId={selectedItemFull.id}
-          onClose={() => setEditOption(undefined)}
+          defaultGroup={editOptionGroup}
+          onClose={() => { setEditOption(undefined); setEditOptionGroup(null) }}
           onSave={handleSaveOption}
         />
       )}

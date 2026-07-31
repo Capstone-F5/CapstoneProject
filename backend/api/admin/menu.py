@@ -20,6 +20,7 @@ from schemas.menu_schemas import (
     MenuOptionIn,
     MenuOptionOut,
     MenuOptionPatchIn,
+    MenuResponse,
 )
 
 _UPLOAD_DIR = os.path.join(
@@ -52,6 +53,20 @@ async def upload_menu_image(file: UploadFile = File(...)):
     with open(os.path.join(_UPLOAD_DIR, filename), "wb") as f:
         f.write(content)
     return {"url": f"/static/uploads/menu/{filename}"}
+
+
+# --- 관리자용 메뉴 전체 조회 (숨김 카테고리 포함) ---------------------------
+@router.get("/menu", response_model=MenuResponse)
+async def get_admin_menu(db: AsyncSession = Depends(get_session)):
+    categories = await menu_dao.get_all_categories_admin(db)
+    menu_items: dict[str, list] = {}
+    for cat in categories:
+        items = await menu_dao.get_menu_items_by_category(db, cat.id)
+        menu_items[cat.name_en.lower()] = [MenuItemOut.model_validate(i) for i in items]
+    return MenuResponse(
+        categories=[CategoryOut.model_validate(c) for c in categories],
+        menu_items=menu_items,
+    )
 
 
 # --- 카테고리 ---------------------------------------------------------------

@@ -206,8 +206,15 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         phone: confirmedPhone.replace(/\D/g, '') || null,
         couponCode: couponCode.trim() || null,
       })
-      const { success } = await processPayment({ orderId, method: paymentMethod, amount: total })
-      if (!success) throw new Error('결제가 승인되지 않았습니다')
+      // 쿠폰 적용 후 실제 결제 금액 계산 (서버가 계산한 finalAmount 우선, 없으면 클라이언트 계산)
+      const payAmount = couponInfo?.valid
+        ? (couponInfo.finalAmount ?? Math.max(0, total - (couponInfo.discountAmount ?? 0)))
+        : total
+      // 결제 금액이 0원이면 결제 API 호출 없이 완료 처리
+      if (payAmount > 0) {
+        const { success } = await processPayment({ orderId, method: paymentMethod, amount: payAmount })
+        if (!success) throw new Error('결제가 승인되지 않았습니다')
+      }
       setShowCardPayment(false)
       setShowCashPayment(false)
       setShowPayPayment(false)

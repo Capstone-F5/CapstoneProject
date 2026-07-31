@@ -49,7 +49,10 @@ export async function logout() {
 
 // ── Menu (Real API) ───────────────────────────────────
 export async function fetchAdminMenu() {
-  const res = await fetch(`${API_BASE}/api/menu?locale=ko`)
+  // 관리자 전용 엔드포인트: 숨김 카테고리도 포함
+  const res = await fetch(`${API_BASE}/api/admin/menu`, {
+    headers: { 'Authorization': `Bearer ${getToken()}` },
+  })
   if (!res.ok) throw new Error('메뉴 로드 실패')
   return res.json()
 }

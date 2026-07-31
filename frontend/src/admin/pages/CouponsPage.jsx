@@ -6,11 +6,16 @@ import {
 
 function Toggle({ checked, onChange, disabled }) {
   return (
-    <label className="toggle" onClick={e => { e.stopPropagation(); if (!disabled) onChange(!checked) }}>
-      <input type="checkbox" checked={checked} onChange={() => {}} />
-      <div className="toggle-track" />
+    <div
+      role="switch"
+      aria-checked={checked}
+      className="toggle"
+      onClick={e => { e.stopPropagation(); if (!disabled) onChange(!checked) }}
+      style={{ cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, display: 'inline-flex', alignItems: 'center' }}
+    >
+      <div className="toggle-track" style={{ background: checked ? '#744032' : '#ccc' }} />
       <div className="toggle-thumb" />
-    </label>
+    </div>
   )
 }
 
