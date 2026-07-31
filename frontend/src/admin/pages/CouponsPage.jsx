@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   fetchAdminCoupons, createCoupon, issueCoupon, toggleCoupon, deleteCoupon,
   fetchAdminDiscounts, createDiscount, toggleDiscount, deleteDiscount,
+  fetchAdminMenu,
 } from '../api/adminApi.js'
 
 function Toggle({ checked, onChange, disabled }) {
@@ -101,16 +102,26 @@ function CouponModal({ onClose, onSave }) {
   )
 }
 
-function DiscountModal({ onClose, onSave }) {
+function DiscountModal({ onClose, onSave, menuMeta }) {
   const [form, setForm] = useState({
-    name_ko: '', name_en: '', target_type: 'ALL',
+    name_ko: '', name_en: '',
+    target_type: 'ALL', menu_item_id: null, category_id: null,
     discount_type: 'CASH', discount_value: '', applicable_tier: 'ALL',
   })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  const categories = menuMeta?.categories ?? []
+  const allItems   = menuMeta ? Object.values(menuMeta.menu_items).flat() : []
+
+  const handleTargetTypeChange = (v) => {
+    setForm(f => ({ ...f, target_type: v, menu_item_id: null, category_id: null }))
+  }
+
   const handleSave = async () => {
     if (!form.name_ko || !form.discount_value) { alert('이름과 할인값을 입력해 주세요'); return }
+    if (form.target_type === 'CATEGORY' && !form.category_id) { alert('카테고리를 선택해 주세요'); return }
+    if (form.target_type === 'MENU' && !form.menu_item_id) { alert('메뉴를 선택해 주세요'); return }
     setLoading(true)
     try {
       await onSave({ ...form, discount_value: Number(form.discount_value) })
@@ -124,7 +135,7 @@ function DiscountModal({ onClose, onSave }) {
 
   return (
     <div className="modal-overlay">
-      <div className="modal-box">
+      <div className="modal-box" style={{ width: 480 }}>
         <div className="modal-title">할인 생성</div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
           <div className="form-group" style={{ marginBottom:0 }}>
@@ -136,39 +147,60 @@ function DiscountModal({ onClose, onSave }) {
             <input className="form-input" value={form.name_en} onChange={e => set('name_en', e.target.value)} />
           </div>
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginTop:'12px' }}>
-          <div className="form-group" style={{ marginBottom:0 }}>
+
+        {/* 적용 대상 */}
+        <div style={{ marginTop: 12 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">적용 대상</label>
-            <select className="form-input" value={form.target_type} onChange={e => set('target_type', e.target.value)}>
-              <option value="ALL">전체</option>
-              <option value="CATEGORY">카테고리</option>
-              <option value="MENU">메뉴</option>
+            <select className="form-input" value={form.target_type} onChange={e => handleTargetTypeChange(e.target.value)}>
+              <option value="ALL">전체 메뉴</option>
+              <option value="CATEGORY">특정 카테고리</option>
+              <option value="MENU">특정 메뉴</option>
             </select>
           </div>
-          <div className="form-group" style={{ marginBottom:0 }}>
-            <label className="form-label">적용 등급</label>
-            <select className="form-input" value={form.applicable_tier} onChange={e => set('applicable_tier', e.target.value)}>
-              <option value="ALL">전체 회원</option>
-              <option value="STUDENT">학생</option>
-              <option value="SENIOR">시니어</option>
-              <option value="GOLD">VIP</option>
-            </select>
-          </div>
+          {form.target_type === 'CATEGORY' && (
+            <div className="form-group" style={{ marginBottom: 0, marginTop: 8 }}>
+              <label className="form-label">카테고리 선택 *</label>
+              <select
+                className="form-input"
+                value={form.category_id ?? ''}
+                onChange={e => set('category_id', e.target.value || null)}
+              >
+                <option value="">-- 카테고리 선택 --</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name_ko}</option>)}
+              </select>
+            </div>
+          )}
+          {form.target_type === 'MENU' && (
+            <div className="form-group" style={{ marginBottom: 0, marginTop: 8 }}>
+              <label className="form-label">메뉴 선택 *</label>
+              <select
+                className="form-input"
+                value={form.menu_item_id ?? ''}
+                onChange={e => set('menu_item_id', e.target.value || null)}
+              >
+                <option value="">-- 메뉴 선택 --</option>
+                {allItems.map(item => <option key={item.id} value={item.id}>{item.name_ko}</option>)}
+              </select>
+            </div>
+          )}
         </div>
+
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginTop:'12px' }}>
           <div className="form-group" style={{ marginBottom:0 }}>
             <label className="form-label">할인 유형</label>
             <select className="form-input" value={form.discount_type} onChange={e => set('discount_type', e.target.value)}>
-              <option value="CASH">정액</option>
-              <option value="PERCENT">정률</option>
+              <option value="CASH">정액 (원)</option>
+              <option value="PERCENT">정률 (%)</option>
             </select>
           </div>
           <div className="form-group" style={{ marginBottom:0 }}>
-            <label className="form-label">할인값 ({form.discount_type === 'CASH' ? '원' : '%'})</label>
+            <label className="form-label">할인값 ({form.discount_type === 'CASH' ? '원' : '%'}) *</label>
             <input className="form-input" type="number" value={form.discount_value}
               onChange={e => set('discount_value', e.target.value)} />
           </div>
         </div>
+
         <div className="modal-footer">
           <button className="btn-outline" onClick={onClose}>취소</button>
           <button className="btn-primary" onClick={handleSave} disabled={loading}>
@@ -240,6 +272,7 @@ export default function CouponsPage() {
   const [discountFilter,  setDiscountFilter]  = useState('all')
   const [coupons,         setCoupons]         = useState([])
   const [discounts,       setDiscounts]       = useState([])
+  const [menuMeta,        setMenuMeta]        = useState(null)
   const [loading,         setLoading]         = useState(true)
   const [error,           setError]           = useState('')
   const [showCouponModal,   setShowCouponModal]   = useState(false)
@@ -248,8 +281,8 @@ export default function CouponsPage() {
 
   const load = () => {
     setLoading(true)
-    Promise.all([fetchAdminCoupons(), fetchAdminDiscounts()])
-      .then(([c, d]) => { setCoupons(c); setDiscounts(d); setError('') })
+    Promise.all([fetchAdminCoupons(), fetchAdminDiscounts(), fetchAdminMenu()])
+      .then(([c, d, m]) => { setCoupons(c); setDiscounts(d); setMenuMeta(m); setError('') })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }
@@ -418,13 +451,25 @@ export default function CouponsPage() {
               </thead>
               <tbody>
                 {filteredDiscounts.length === 0 && <tr><td colSpan={8} className="loading-text">할인이 없습니다</td></tr>}
-                {filteredDiscounts.map(d => (
+                {filteredDiscounts.map(d => {
+                  const allItems = menuMeta ? Object.values(menuMeta.menu_items).flat() : []
+                  const targetName = d.target_type === 'CATEGORY'
+                    ? (menuMeta?.categories?.find(c => c.id === d.category_id)?.name_ko ?? d.category_id)
+                    : d.target_type === 'MENU'
+                      ? (allItems.find(i => i.id === d.menu_item_id)?.name_ko ?? d.menu_item_id)
+                      : null
+                  return (
                   <tr key={d.id} style={{ color: d.is_active ? '#222' : '#bbb' }}>
                     <td style={{ fontWeight:'500' }}>{d.name_ko}</td>
                     <td>
                       <span style={{ border:'1px solid #ddd', borderRadius:'999px', padding:'2px 8px', fontSize:'12px' }}>
                         {TARGET_LABELS[d.target_type] ?? d.target_type}
                       </span>
+                      {targetName && (
+                        <span style={{ marginLeft: 4, fontSize: 12, color: '#744032', fontWeight: 600 }}>
+                          {targetName}
+                        </span>
+                      )}
                     </td>
                     <td>{d.discount_type === 'CASH' ? '정액' : '정률'}</td>
                     <td style={{ fontWeight:'600' }}>
@@ -445,7 +490,8 @@ export default function CouponsPage() {
                       >삭제</button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -453,7 +499,7 @@ export default function CouponsPage() {
       )}
 
       {showCouponModal   && <CouponModal   onClose={() => setShowCouponModal(false)}   onSave={handleCreateCoupon} />}
-      {showDiscountModal && <DiscountModal  onClose={() => setShowDiscountModal(false)} onSave={handleCreateDiscount} />}
+      {showDiscountModal && <DiscountModal  onClose={() => setShowDiscountModal(false)} onSave={handleCreateDiscount} menuMeta={menuMeta} />}
       {showIssueModal    && <IssueModal     coupons={coupons.filter(c => c.is_active)}  onClose={() => setShowIssueModal(false)} />}
     </div>
   )

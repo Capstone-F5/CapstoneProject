@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.models import Order, OrderItem
 from schemas.order_schemas import OrderIn, OrderOut, OrderItemOut
-from dao import user_dao, order_dao, cart_dao
+from dao import user_dao, order_dao, cart_dao, discount_dao
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -81,6 +81,45 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
         else:
             discount_amount = coupon.discount_value
         user_coupon_id = user_coupon.id
+
+    # 4.5. Discount 테이블 할인 적용 (ALL / CATEGORY / MENU, applicable_tier=ALL만)
+    from datetime import date as _date
+    active_discounts = await discount_dao.get_active_discounts(db)
+    today = _date.today()
+    for disc in active_discounts:
+        if disc.applicable_tier != "ALL":
+            continue
+        if disc.valid_from and today < disc.valid_from:
+            continue
+        if disc.valid_until and today > disc.valid_until:
+            continue
+
+        if disc.target_type == "ALL":
+            base = subtotal
+        elif disc.target_type == "CATEGORY":
+            base = sum(
+                item.unit_price * item.quantity
+                for item in cart.items
+                if item.menu_item and item.menu_item.category_id == disc.category_id
+            )
+        elif disc.target_type == "MENU":
+            base = sum(
+                item.unit_price * item.quantity
+                for item in cart.items
+                if item.menu_item_id == disc.menu_item_id
+            )
+        else:
+            continue
+
+        if base <= 0:
+            continue
+
+        if disc.discount_type == "PERCENT":
+            discount_amount += base * disc.discount_value / Decimal("100")
+        else:
+            discount_amount += min(Decimal(str(disc.discount_value)), base)
+
+    discount_amount = min(discount_amount, subtotal)
 
     # 5. 포인트 사용 및 적립 계산 (결제금액의 5% 적립)
     points_to_use = body.points_to_use or 0
