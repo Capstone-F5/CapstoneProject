@@ -1,36 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 from decimal import Decimal
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select as sa_select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from core.db import get_session
-from dao.cart_dao import get_cart_with_items
-from dao.order_dao import create_order_from_cart, create_order_items_from_cart_items, get_order_by_id
-from dao import user_dao
+from core.models import Order, OrderItem
 from schemas.order_schemas import OrderIn, OrderOut, OrderItemOut
+from dao import user_dao, order_dao, cart_dao
 
-router = APIRouter(prefix="/api/orders", tags=["order"])
+router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
-def _compute_discount(coupon, subtotal: Decimal) -> Decimal:
-    """쿠폰 할인액 계산. 최소 주문금액 미달이면 400을 던진다."""
-    if subtotal < coupon.min_order_amount:
-        raise HTTPException(
-            status_code=400,
-            detail=f"쿠폰 최소 주문금액 {coupon.min_order_amount}원 미달입니다",
-        )
-    if coupon.discount_type == "CASH":
-        discount_amount = coupon.discount_value
-    else:  # PERCENT
-        discount_amount = subtotal * coupon.discount_value / Decimal("100")
-    return min(discount_amount, subtotal)
+def _to_order_item_out(item: OrderItem) -> OrderItemOut:
+    return OrderItemOut(
+        menu_item_id=item.menu_item_id,
+        name_ko=item.menu_item.name_ko if item.menu_item else "",
+        quantity=item.quantity,
+        unit_price=item.unit_price,
+        total_price=item.total_price,
+        selected_options=item.selected_options or [],
+        special_note=item.special_note,
+    )
 
 
 @router.get("/validate-coupon")
 async def validate_coupon(code: str, subtotal: Decimal, db: AsyncSession = Depends(get_session)):
-    """결제 진행 전 쿠폰 코드를 미리 검증해 할인 금액을 보여주기 위한 엔드포인트."""
     coupon = await user_dao.get_coupon_by_code(db, code)
     if coupon is None:
         raise HTTPException(status_code=404, detail="유효하지 않은 쿠폰입니다")
-    discount_amount = _compute_discount(coupon, subtotal)
+    if subtotal < coupon.min_order_amount:
+        raise HTTPException(status_code=400, detail=f"쿠폰 최소 주문금액 {coupon.min_order_amount}원 미달입니다")
+    if coupon.discount_type == "CASH":
+        discount_amount = coupon.discount_value
+    else:
+        discount_amount = subtotal * coupon.discount_value / Decimal("100")
+    discount_amount = min(discount_amount, subtotal)
     return {
         "valid": True,
         "discount_amount": discount_amount,
@@ -40,87 +45,139 @@ async def validate_coupon(code: str, subtotal: Decimal, db: AsyncSession = Depen
 
 @router.post("", response_model=OrderOut)
 async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
-    cart = await get_cart_with_items(db, body.session_id)
-    if cart is None or not cart.items:
-        raise HTTPException(status_code=400, detail="장바구니가 비어있습니다")
+    # 1. 장바구니 조회 및 검증
+    cart = await cart_dao.get_cart_with_items(db, body.session_id)
+    if not cart or not cart.items:
+        raise HTTPException(status_code=400, detail="장바구니가 비어있거나 존재하지 않습니다.")
 
-    subtotal = sum(ci.unit_price * ci.quantity for ci in cart.items)
-
+    # 2. Subtotal 계산
+    subtotal = sum(item.unit_price * item.quantity for item in cart.items)
+    discount_amount = Decimal("0")
+    user_coupon_id = None
     user = None
+
+    # 3. 회원 조회 (전화번호 제공 시)
     if body.phone:
         user = await user_dao.get_user_by_phone(db, body.phone)
         if user is None:
             user = await user_dao.create_guest_user(db, body.phone)
         else:
-            # 적립 후 30일 지난 포인트를 먼저 만료 처리해 최신 잔액 기준으로 계산한다
             await user_dao.expire_old_points(db, user)
 
-    discount_amount = Decimal("0")
-    user_coupon = None
+    # 4. 쿠폰 적용
     if body.coupon_code:
-        coupon = await user_dao.get_coupon_by_code(db, body.coupon_code)
-        if coupon is None:
-            raise HTTPException(status_code=400, detail="유효하지 않은 쿠폰입니다")
-        discount_amount = _compute_discount(coupon, subtotal)
-        if user:
-            user_coupon = await user_dao.get_user_coupon(db, user.id, coupon.id)
+        if not user:
+            raise HTTPException(status_code=400, detail="쿠폰은 회원만 사용할 수 있습니다.")
+        user_coupon = await user_dao.get_user_coupon_by_code(db, user.id, body.coupon_code)
+        if not user_coupon:
+            raise HTTPException(status_code=400, detail="유효하지 않거나 이미 사용된 쿠폰입니다.")
+        coupon = user_coupon.coupon
+        if not coupon.is_active:
+            raise HTTPException(status_code=400, detail="비활성화된 쿠폰입니다.")
+        if subtotal < coupon.min_order_amount:
+            raise HTTPException(status_code=400, detail=f"최소 주문 금액({coupon.min_order_amount}원)을 충족하지 못했습니다.")
+        if coupon.discount_type == "PERCENT":
+            discount_amount = subtotal * (coupon.discount_value / Decimal("100"))
+        else:
+            discount_amount = coupon.discount_value
+        user_coupon_id = user_coupon.id
 
+    # 5. 포인트 사용 및 적립 계산 (결제금액의 5% 적립)
     points_to_use = body.points_to_use or 0
-    final_amount = max(Decimal("0"), subtotal - discount_amount - points_to_use)
-    points_earned = int(final_amount * Decimal("0.05"))  # 결제금액 5% 적립
+    if points_to_use > 0:
+        if not user:
+            raise HTTPException(status_code=400, detail="포인트 사용은 회원만 가능합니다.")
+        if user.current_points < points_to_use:
+            raise HTTPException(status_code=400, detail="보유 포인트가 부족합니다.")
 
-    order = await create_order_from_cart(
-        db, cart.id, body.order_type, subtotal,
-        discount_amount, final_amount, points_to_use, points_earned,
+    final_amount = max(Decimal("0"), subtotal - discount_amount - Decimal(points_to_use))
+    points_earned = int(final_amount * Decimal("0.05"))
+
+    # 6. 주문번호 생성 (당일 순번)
+    count_result = await db.execute(sa_select(func.count(Order.id)))
+    order_num = (count_result.scalar() or 0) + 1
+
+    order = Order(
         user_id=user.id if user else None,
+        cart_id=cart.id,
+        order_number=str(order_num),
+        order_type=body.order_type,
+        status="RECEIVED",
+        user_coupon_id=user_coupon_id,
+        subtotal=subtotal,
+        discount_amount=discount_amount,
+        final_amount=final_amount,
+        points_used=points_to_use,
+        points_earned=points_earned,
     )
-    await create_order_items_from_cart_items(db, order.id, cart.items)
+    db.add(order)
+    await db.flush()
+
+    # 7. 주문 항목 복사
+    order_items = []
+    for cart_item in cart.items:
+        order_item = OrderItem(
+            order_id=order.id,
+            menu_item_id=cart_item.menu_item_id,
+            quantity=cart_item.quantity,
+            unit_price=cart_item.unit_price,
+            total_price=cart_item.unit_price * cart_item.quantity,
+            selected_options=cart_item.selected_options,
+            special_note=cart_item.special_note,
+        )
+        order_item.menu_item = cart_item.menu_item
+        db.add(order_item)
+        order_items.append(order_item)
+
+    # 8. 쿠폰 사용 처리 및 포인트 FIFO 차감/적립
+    if user_coupon_id:
+        await user_dao.mark_coupon_used(db, user_coupon_id)
 
     if user:
-        user.current_points = max(0, user.current_points - points_to_use) + points_earned
         if points_to_use:
             await user_dao.consume_points_fifo(db, user.id, points_to_use)
         if points_earned:
             await user_dao.create_point_earn_log(db, user.id, order.id, points_earned)
-    if user_coupon:
-        user_coupon.is_used = True
+        user.current_points = max(0, user.current_points - points_to_use) + points_earned
 
-    # 장바구니 상태 COMPLETED로 변경
+    # 9. 장바구니 완료 처리
     cart.status = "COMPLETED"
     await db.commit()
+    await db.refresh(order)
 
-    order_with_items = await get_order_by_id(db, order.id)
+    items_out = [_to_order_item_out(item) for item in order_items]
+
     return OrderOut(
         order_id=order.id,
         order_number=order.order_number,
         order_type=order.order_type,
+        status=order.status,
         subtotal=order.subtotal,
         discount_amount=order.discount_amount,
         final_amount=order.final_amount,
         points_used=order.points_used,
         points_earned=order.points_earned,
-        items=[
-            OrderItemOut(
-                menu_item_id=i.menu_item_id,
-                name_ko=i.menu_item.name_ko if i.menu_item else "",
-                quantity=i.quantity,
-                unit_price=i.unit_price,
-                total_price=i.total_price,
-                selected_options=i.selected_options or [],
-                special_note=i.special_note,
-            )
-            for i in order_with_items.items
-        ],
+        items=items_out,
     )
 
-@router.get("/{order_id}")
+
+@router.get("/{order_id}", response_model=OrderOut)
 async def get_order(order_id: str, db: AsyncSession = Depends(get_session)):
-    order = await get_order_by_id(db, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
-    return {
-        "order_id": order.id,
-        "order_number": order.order_number,
-        "status": order.status,
-        "created_at": str(order.created_at),
-    }
+    order = await order_dao.get_order_by_id(db, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+
+    items_out = [_to_order_item_out(item) for item in order.items]
+
+    return OrderOut(
+        order_id=order.id,
+        order_number=order.order_number,
+        order_type=order.order_type,
+        status=order.status,
+        subtotal=order.subtotal,
+        discount_amount=order.discount_amount,
+        final_amount=order.final_amount,
+        points_used=order.points_used,
+        points_earned=order.points_earned,
+        items=items_out,
+    )

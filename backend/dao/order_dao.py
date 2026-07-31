@@ -53,7 +53,10 @@ async def get_order_by_id(db: AsyncSession, order_id: str) -> Order | None:
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
-        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.payments),
+        )
     )
     return result.scalar_one_or_none()
 
@@ -72,3 +75,29 @@ async def get_recent_orders_by_user(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+async def list_orders(
+    db: AsyncSession, status: str | None = None, order_type: str | None = None
+) -> list[Order]:
+    """관리자용 주문 목록 조회 (최신순 정렬)"""
+    query = select(Order).options(
+        selectinload(Order.items).selectinload(OrderItem.menu_item),
+        selectinload(Order.payments),
+    )
+    if status:
+        query = query.where(Order.status == status)
+    if order_type:
+        query = query.where(Order.order_type == order_type)
+
+    result = await db.execute(query.order_by(Order.created_at.desc()))
+    return result.scalars().all()
+
+
+async def update_order_status(db: AsyncSession, order_id: str, new_status: str) -> Order | None:
+    """주문 상태 변경 (DAO 규칙: flush만 호출)"""
+    order = await get_order_by_id(db, order_id)
+    if order:
+        order.status = new_status
+        await db.flush()
+    return order

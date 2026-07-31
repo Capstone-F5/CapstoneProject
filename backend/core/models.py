@@ -119,6 +119,8 @@ class UserCoupon(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     issued_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    coupon: Mapped["Coupon"] = relationship("Coupon")
+
 
 # --- CATEGORIES ----------------------------------------------------------
 class Category(Base):

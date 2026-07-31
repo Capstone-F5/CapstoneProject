@@ -21,6 +21,7 @@ class OrderOut(BaseModel):
     order_id: str
     order_number: str
     order_type: str
+    status: str                       # 1-A의 order.status
     subtotal: Decimal
     discount_amount: Decimal
     final_amount: Decimal

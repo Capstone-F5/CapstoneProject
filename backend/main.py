@@ -39,6 +39,11 @@ from api.hardware import router as hardware_router
 from api.admin.auth import router as admin_auth_router
 from api.admin.menu import router as admin_menu_router
 from api.admin.users import router as admin_users_router
+from api.admin.orders import router as admin_orders_router
+from api.admin.coupons import router as admin_coupons_router
+from api.admin.discounts import router as admin_discounts_router
+from api.admin.payments import router as admin_payments_router
+from api.admin.stats import router as admin_stats_router
 
 from core.db import init_db
 
@@ -74,6 +79,11 @@ app.include_router(hardware_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_menu_router)
 app.include_router(admin_users_router)
+app.include_router(admin_orders_router)
+app.include_router(admin_coupons_router)
+app.include_router(admin_discounts_router)
+app.include_router(admin_payments_router)
+app.include_router(admin_stats_router)
 
 
 @app.get("/health")
