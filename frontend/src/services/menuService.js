@@ -5,7 +5,7 @@ import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
 // 이 함수가 백엔드 응답을 화면이 기대하는 { categories, menuItems, setSides, setDrinks, setSurcharge } 로 변환한다.
 // ─────────────────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 // 백엔드 카테고리 키(name_en.lower()) → 프론트 카테고리 id.
 // 여기 없는 카테고리는 name_en.lower() 값을 그대로 id로 쓴다 — 관리자가 새 카테고리를

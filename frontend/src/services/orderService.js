@@ -1,6 +1,6 @@
 import { getSessionId } from './session'
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 const ORDER_TYPE_MAP = { 'dine-in': 'EAT_IN', takeout: 'TAKE_OUT' }
 
 async function safeDetail(res) {

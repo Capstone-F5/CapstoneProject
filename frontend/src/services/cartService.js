@@ -2,7 +2,7 @@
 // 터치 UI와 음성 주문(LLM)이 동일한 백엔드 카트를 실시간으로 공유한다.
 import { getSessionId } from './session'
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 async function req(path, opts) {
   const res = await fetch(`${API_BASE}${path}`, opts)

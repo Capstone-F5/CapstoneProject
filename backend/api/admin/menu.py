@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import uuid
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +22,36 @@ from schemas.menu_schemas import (
     MenuOptionPatchIn,
 )
 
+_UPLOAD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "static", "uploads", "menu",
+)
+_ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
 router = APIRouter(
     prefix="/api/admin",
     tags=["admin-menu"],
     dependencies=[Depends(get_current_admin)],
 )
+
+
+# --- 이미지 업로드 -----------------------------------------------------------
+@router.post("/upload/image")
+async def upload_menu_image(file: UploadFile = File(...)):
+    if file.content_type not in _ALLOWED_MIME:
+        raise HTTPException(400, "jpg, png, webp, gif 이미지만 업로드 가능합니다")
+    content = await file.read()
+    if len(content) > _MAX_BYTES:
+        raise HTTPException(400, "파일 크기는 5MB 이하여야 합니다")
+    os.makedirs(_UPLOAD_DIR, exist_ok=True)
+    ext = (file.filename or "img").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+        ext = "jpg"
+    filename = f"{uuid.uuid4()}.{ext}"
+    with open(os.path.join(_UPLOAD_DIR, filename), "wb") as f:
+        f.write(content)
+    return {"url": f"/static/uploads/menu/{filename}"}
 
 
 # --- 카테고리 ---------------------------------------------------------------
