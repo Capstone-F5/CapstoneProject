@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import Logo from '../components/Logo'
-import { lookupCustomer, addPoints } from '../services/pointsService'
-import { createOrder }   from '../services/orderService'
+import { lookupCustomer } from '../services/pointsService'
+import { createOrder, validateCoupon } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
+import { triggerHardwareAction } from '../services/hardwareService'
 import IdleOverlay from '../components/IdleOverlay'
+import CouponScanModal from '../components/CouponScanModal'
+import CameraPreview from '../components/CameraPreview'
 import useT from '../i18n/useT'
+import { useLocale } from '../i18n/LocaleContext'
+import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
 
@@ -29,8 +34,9 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, voiceRef }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef }) {
   const t = useT()
+  const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
   const [showPointsPopup,  setShowPointsPopup]  = useState(false)
   const [showPaymentPopup, setShowPaymentPopup] = useState(false)
@@ -41,12 +47,42 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [pointsError,      setPointsError]      = useState('')
   const [confirmedPhone,   setConfirmedPhone]   = useState('')
   const [confirmedName,    setConfirmedName]    = useState('')
+  const [confirmedRegistered, setConfirmedRegistered] = useState(null)
   const [paymentMethod,    setPaymentMethod]    = useState(null)
+  const [couponCode,       setCouponCode]       = useState('')
+  const [paymentError,     setPaymentError]     = useState('')
+  const [emptyCartNotice,  setEmptyCartNotice]  = useState(false)
+  const [couponInfo,       setCouponInfo]       = useState(null)   // { valid, message, discountAmount? }
+  const [couponChecking,   setCouponChecking]   = useState(false)
+  const [showCouponScan,   setShowCouponScan]   = useState(false)
 
   const isCompletingRef = useRef(false)
 
   const handlePayClick = () => {
-    if (cart.length === 0) return
+    if (cart.length === 0) {
+      setEmptyCartNotice(true)
+      setTimeout(() => setEmptyCartNotice(false), 2000)
+      return
+    }
+    setShowOrderTypeConfirm(true)
+  }
+
+  // 음성으로 "결제할게"를 말했을 때 진입 지점 — 매장/포장 재확인 팝업은 손으로 카드를 다시
+  // 눌러 바꾸는 터치 전용 UI라 음성으로는 응답할 방법이 없다(order_type ui_action은 전역
+  // 핸들러가 항상 menu 화면으로 이동시켜버려 결제 중간에 재사용할 수 없음, App.jsx 참고).
+  // 주문 유형은 이미 대화로 확인했으므로, 음성 결제 시작은 이 팝업을 띄우지 않고 터치 사용자가
+  // "확인"을 눌렀을 때와 동일한 다음 단계(포인트 질문)로 곧장 진행한다.
+  const voiceStartCheckout = () => {
+    if (cart.length === 0) {
+      setEmptyCartNotice(true)
+      setTimeout(() => setEmptyCartNotice(false), 2000)
+      return
+    }
+    setShowPointPrompt(true)
+  }
+
+  const confirmOrderType = () => {
+    setShowOrderTypeConfirm(false)
     setShowPointPrompt(true)
   }
 
@@ -70,9 +106,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setPointsError('')
   }
 
-  const openPayment = (phone = '', name = '') => {
+  const openPayment = (phone = '', name = '', registered = null) => {
     setConfirmedPhone(phone)
     setConfirmedName(name)
+    setConfirmedRegistered(registered)
     closePointsPopup()
     setShowPaymentPopup(true)
   }
@@ -84,17 +121,47 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     const d = raw.replace(/\D/g, '')
     if (!d.length)       { setPointsError(t('phoneError1')); return }
     if (d.length !== 11) { setPointsError(t('phoneError2')); return }
-    const { name } = await lookupCustomer(d)
-    openPayment(formatPhone(raw), name)
+    const { name, registered } = await lookupCustomer(d)
+    openPayment(formatPhone(raw), name, registered)
+  }
+
+  const handleCheckCoupon = async (codeArg) => {
+    const code = (typeof codeArg === 'string' ? codeArg : couponCode).trim()
+    if (!code) return
+    setCouponChecking(true)
+    try {
+      const result = await validateCoupon(code, total)
+      setCouponInfo(result)
+    } catch (err) {
+      setCouponInfo({ valid: false, message: err.message || '쿠폰 확인에 실패했습니다' })
+    } finally {
+      setCouponChecking(false)
+    }
+  }
+
+  // QR/바코드 스캔 또는 모달 내 수동 입력 완료 시 호출됨
+  const handleCouponDetected = (code) => {
+    setShowCouponScan(false)
+    setCouponCode(code)
+    handleCheckCoupon(code)
   }
 
   const goPayment = (dest) => {
     setShowPaymentPopup(false)
+    setPaymentError('')
     const methodMap = { cardPayment: 'card', cashPayment: 'cash', payPayment: 'pay' }
     setPaymentMethod(methodMap[dest] ?? 'card')
-    if (dest === 'cardPayment') setShowCardPayment(true)
-    else if (dest === 'cashPayment') setShowCashPayment(true)
-    else if (dest === 'payPayment')  setShowPayPayment(true)
+    if (dest === 'cardPayment') {
+      setShowCardPayment(true)
+      // 카드/삼성페이 결제 대기 화면 진입 시 물리적 카드리더 동작 트리거(현재는 시뮬레이션).
+      // ★ 아두이노 등 실제 장치 연동 확장 지점 — hardwareService.js 참고.
+      triggerHardwareAction('card_payment')
+    } else if (dest === 'cashPayment') {
+      setShowCashPayment(true)
+      triggerHardwareAction('cash_payment')
+    } else if (dest === 'payPayment') {
+      setShowPayPayment(true)
+    }
   }
 
   // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
@@ -103,7 +170,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     voiceRef.current = (a) => {
       switch (a.type) {
         case 'start_checkout':
-          handlePayClick()
+          voiceStartCheckout()
           return true
         case 'points':
           setShowPointPrompt(false)
@@ -132,22 +199,24 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const handleComplete = async () => {
     if (isCompletingRef.current) return
     isCompletingRef.current = true
-    setShowCardPayment(false)
-    setShowCashPayment(false)
-    setShowPayPayment(false)
+    setPaymentError('')
     try {
-      const { orderNum, orderId } = await createOrder({
-        items: cart, total, orderType, phone: confirmedPhone,
+      const { orderId, orderNum } = await createOrder({
+        orderType,
+        phone: confirmedPhone.replace(/\D/g, '') || null,
+        couponCode: couponCode.trim() || null,
       })
-      await processPayment({ method: paymentMethod, amount: total, orderId, phone: confirmedPhone })
-      if (confirmedPhone) {
-        await addPoints({ phone: confirmedPhone, amount: total, orderId }).catch(() => {})
-      }
+      const { success } = await processPayment({ orderId, method: paymentMethod, amount: total })
+      if (!success) throw new Error('결제가 승인되지 않았습니다')
+      setShowCardPayment(false)
+      setShowCashPayment(false)
+      setShowPayPayment(false)
       setOrderNum(orderNum)
       clearCart()
       nav('complete')
     } catch (err) {
       console.error('결제 중 오류:', err)
+      setPaymentError(err.message || '결제 처리 중 오류가 발생했습니다. 다시 시도해 주세요.')
       isCompletingRef.current = false
     }
   }
@@ -231,12 +300,17 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             {total.toLocaleString()} {t('won')}
           </span>
         </div>
+        {emptyCartNotice && (
+          <p style={{ textAlign: 'right', color: '#e44', fontSize: 14, fontWeight: 700, marginBottom: 10 }}>
+            장바구니가 비어있습니다
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 12 }}>
           <button onClick={() => setShowPointsPopup(true)} style={{
             flex: 1, padding: '22px 0', border: 'none', borderRadius: 12,
             background: '#d0d0d0', color: '#444', fontSize: 22, fontWeight: 700, cursor: 'pointer',
           }}>{t('points')}</button>
-          <button onClick={handlePayClick} disabled={cart.length === 0} style={{
+          <button onClick={handlePayClick} style={{
             flex: 2, padding: '22px 0', border: 'none', borderRadius: 12,
             background: cart.length > 0 ? '#F5B800' : '#ccc',
             color: '#1a1a1a', fontSize: 22, fontWeight: 900,
@@ -244,6 +318,35 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           }}>{t('checkout')}</button>
         </div>
       </div>
+
+      {/* ── 매장/포장 재확인 팝업 ── */}
+      {showOrderTypeConfirm && (
+        <ModalBase onClose={() => setShowOrderTypeConfirm(false)}>
+          <p style={{ fontSize: 20, fontWeight: 900, textAlign: 'center', marginBottom: 20 }}>
+            주문 유형을 확인해 주세요
+          </p>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+            <OrderTypeChip
+              label={t('dineIn')}
+              image="/images/sets/F버거 세트.webp"
+              active={orderType === 'dine-in'}
+              onClick={() => setOrderType('dine-in')}
+            />
+            <OrderTypeChip
+              label={t('takeout')}
+              image="/images/etc/Takeout.webp"
+              active={orderType === 'takeout'}
+              onClick={() => setOrderType('takeout')}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <ModalBtn label={t('cancel')} color="#d4d4d4" textColor="#555"
+              onClick={() => setShowOrderTypeConfirm(false)} />
+            <ModalBtn label={t('confirm')} color="#F5B800" textColor="#1a1a1a"
+              onClick={confirmOrderType} />
+          </div>
+        </ModalBase>
+      )}
 
       {/* ── 포인트 적립 확인 팝업 ── */}
       {showPointPrompt && (
@@ -300,12 +403,17 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {/* ── 결제 수단 선택 팝업 ── */}
       {showPaymentPopup && (
         <ModalBase onClose={() => setShowPaymentPopup(false)} minHeight="clamp(500px,76vh,700px)">
-          {/* 인사말 + 금액 */}
+          {/* 인사말 + 금액 — 회원+이름 / 회원인데 이름없음 / 미회원(주문 시 자동 임시 등록) 3가지 상태 표시 */}
           <div style={{ marginBottom: 28 }}>
-            {confirmedName && (
+            {confirmedRegistered !== null && (
               <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
                 안녕하세요,{' '}
-                <span style={{ color: '#744032' }}>{confirmedName}</span>님
+                <span style={{ color: '#744032' }}>
+                  {confirmedRegistered
+                    ? (confirmedName || '이름없음')
+                    : '고객님(미가입)'}
+                </span>
+                {confirmedRegistered ? '님' : ''}
               </div>
             )}
             <div style={{ fontSize: 13, color: '#aaa', fontWeight: 600, marginBottom: 6 }}>
@@ -315,6 +423,31 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               {total.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>{t('won')}</span>
             </div>
           </div>
+
+          {/* 쿠폰 (선택) — QR/바코드 스캔 또는 수동 입력, 결제 전에 미리 검증해 할인 금액을 보여준다 */}
+          <button
+            onClick={() => { setCouponInfo(null); setShowCouponScan(true) }}
+            disabled={couponChecking}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              width: '100%', boxSizing: 'border-box', border: '1.5px solid #e0e0e0',
+              borderRadius: 10, padding: '12px 14px', fontSize: 15, fontWeight: 700,
+              background: '#fafafa', color: '#744032', cursor: 'pointer', marginBottom: 6,
+            }}
+          >
+            📷 {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
+          </button>
+          {couponInfo && (
+            <p style={{
+              fontSize: 13, fontWeight: 700, marginTop: 0, marginBottom: 18,
+              color: couponInfo.valid ? '#2e7d32' : '#e44',
+            }}>
+              {couponInfo.valid
+                ? `${couponInfo.discountAmount.toLocaleString()}원 할인 적용됩니다 (결제 예정 ${couponInfo.finalAmount.toLocaleString()}원)`
+                : couponInfo.message}
+            </p>
+          )}
+          {!couponInfo && <div style={{ marginBottom: 18 }} />}
 
           {/* 신용카드+삼성페이 | 현금 — 2×1 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
@@ -386,6 +519,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
           <CardIllustration />
         </PayWaitPopup>
@@ -399,6 +533,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
           <CashIllustration />
         </PayWaitPopup>
@@ -412,9 +547,24 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
+          error={paymentError}
         >
-          <BarcodeIllustration />
+          {/* 간편결제 QR/바코드 인식을 흉내내기 위해 실제 카메라를 켠다(결제 자체는 시뮬레이션) */}
+          <div style={{ position: 'relative', width: '100%', maxWidth: 240, aspectRatio: '1 / 1' }}>
+            <CameraPreview style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 12 }} />
+            <div style={{
+              position: 'absolute', inset: '12%', border: '3px solid #F5B800',
+              borderRadius: 10, pointerEvents: 'none',
+            }} />
+          </div>
         </PayWaitPopup>
+      )}
+
+      {showCouponScan && (
+        <CouponScanModal
+          onDetect={handleCouponDetected}
+          onClose={() => setShowCouponScan(false)}
+        />
       )}
 
       <IdleOverlay onExpire={() => { clearCart(); nav('start') }} />
@@ -423,7 +573,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 }
 
 /* ── 결제 대기 팝업 ── */
-function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
+function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error }) {
   const t = useT()
   useEffect(() => {
     const timer = setTimeout(() => onComplete?.(), 5000)
@@ -436,6 +586,13 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children }) {
         <div style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.4 }}>
           {title}
         </div>
+
+        {error && (
+          <div style={{
+            background: '#fdecea', color: '#c62828', borderRadius: 8,
+            padding: '10px 14px', fontSize: 14, fontWeight: 600,
+          }}>{error}</div>
+        )}
 
         <div style={{
           background: '#616161', borderRadius: 8,
@@ -535,40 +692,20 @@ function CashIllustration() {
   )
 }
 
-/* ── 일러스트: 바코드 ── */
-function BarcodeIllustration() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
-      <div style={{ position: 'relative' }}>
-        <div style={{
-          width: 72, height: 110, borderRadius: 10, border: '3px solid #bbb', background: '#f5f5f5',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          padding: 8, overflow: 'hidden',
-        }}>
-          <div style={{ fontSize: 8, color: '#aaa', marginBottom: 4 }}>10:00</div>
-          <div style={{ display: 'flex', gap: 1, alignItems: 'flex-end', height: 40 }}>
-            {[3,5,2,4,3,5,2,4,3,5,2,4,3,5,2,4].map((h, i) => (
-              <div key={i} style={{ width: 2, height: h * 6, background: '#222' }} />
-            ))}
-          </div>
-          <div style={{ fontSize: 7, color: '#555', marginTop: 3, letterSpacing: 0.5 }}>1234567890</div>
-          <div style={{ position: 'absolute', left: 8, right: 8, top: '52%', height: 1.5, background: '#f00', opacity: 0.8 }} />
-        </div>
-        <div style={{ textAlign: 'center', fontSize: 30, marginTop: -4 }}>✊</div>
-      </div>
-      <div style={{
-        width: 64, height: 64, borderRadius: 8, background: '#424242',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#ef5350', boxShadow: '0 0 8px rgba(239,83,80,0.6)' }} />
-      </div>
-    </div>
-  )
+function translateOptionName(korName, locale) {
+  if (!korName || locale === 'ko') return korName
+  const all = [...SET_SIDES, ...SET_DRINKS]
+  const found = all.find(x => x.name === korName)
+  if (!found) return korName
+  if (locale === 'ja') return found.nameJa ?? found.nameEn ?? korName
+  if (locale === 'zh') return found.nameZh ?? found.nameEn ?? korName
+  return found.nameEn ?? korName
 }
 
 /* ── CartItem ── */
 function CartItem({ item, onUpdateQty }) {
   const t = useT()
+  const { locale } = useLocale()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
   return (
     <div style={{
@@ -622,8 +759,8 @@ function CartItem({ item, onUpdateQty }) {
             borderRadius: 10, overflow: 'hidden', alignSelf: 'center', marginTop: 4,
           }}>
             {item.exclusion && item.exclusion !== '없음' && <SubRow label={item.exclusion} extra={0} />}
-            {item.side  && <SubRow label={item.side}  extra={item.sideExtra}  />}
-            {item.drink && <SubRow label={item.drink} extra={item.drinkExtra} />}
+            {item.side  && <SubRow label={translateOptionName(item.side,  locale)} extra={item.sideExtra}  />}
+            {item.drink && <SubRow label={translateOptionName(item.drink, locale)} extra={item.drinkExtra} />}
           </div>
         )}
       </div>
@@ -671,6 +808,31 @@ function PayBadge({ bg, color, small, children }) {
     }}>
       {children}
     </div>
+  )
+}
+
+function OrderTypeChip({ label, image, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      flex: 1, padding: '14px 8px 12px', borderRadius: 14,
+      border: active ? '2.5px solid #744032' : '1.5px solid #ddd',
+      background: active ? '#fbf3f0' : '#fff',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+      cursor: 'pointer',
+    }}>
+      <img
+        src={image}
+        alt={label}
+        style={{
+          width: '100%', maxWidth: 120, aspectRatio: '1 / 1',
+          objectFit: 'contain', borderRadius: 10,
+        }}
+      />
+      <span style={{
+        fontSize: 16, fontWeight: 800,
+        color: active ? '#744032' : '#555',
+      }}>{label}</span>
+    </button>
   )
 }
 

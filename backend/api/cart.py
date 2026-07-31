@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 from core.db import get_session
 from dao.cart_dao import (
-    get_or_create_cart, get_cart_with_items,
+    get_or_create_cart, get_cart_with_items, get_cart_item_with_menu,
     add_cart_item, update_cart_item, delete_cart_item, clear_cart
 )
 from dao.menu_dao import get_menu_item_by_id
@@ -65,12 +65,21 @@ async def update_item(
     session_id: str, cart_item_id: str, body: CartItemUpdateIn,
     db: AsyncSession = Depends(get_session)
 ):
-    item = await update_cart_item(
-        db, cart_item_id,
-        quantity=body.quantity,
-        selected_options=[o.model_dump() for o in body.selected_options] if body.selected_options else None,
-        special_note=body.special_note,
-    )
+    kwargs = {"quantity": body.quantity, "special_note": body.special_note}
+
+    if body.selected_options is not None:
+        item_row = await get_cart_item_with_menu(db, cart_item_id)
+        if item_row is None:
+            raise HTTPException(status_code=404, detail="장바구니 항목을 찾을 수 없습니다")
+        option_extra = Decimal("0")
+        for sel in body.selected_options:
+            opt = next((o for o in item_row.menu_item.options if o.id == sel.option_id), None)
+            if opt:
+                option_extra += opt.additional_price
+        kwargs["selected_options"] = [o.model_dump() for o in body.selected_options]
+        kwargs["unit_price"] = item_row.menu_item.base_price + option_extra
+
+    item = await update_cart_item(db, cart_item_id, **kwargs)
     if item is None:
         raise HTTPException(status_code=404, detail="장바구니 항목을 찾을 수 없습니다")
     await db.commit()

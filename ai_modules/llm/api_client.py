@@ -108,19 +108,10 @@ async def get_user_points(phone: str) -> dict | None:
         return res.json()
 
 
-async def create_order(session_id: str, user_phone: str = None) -> dict:
-    """
-    POST /api/orders
-    기존 스텁에 있던 주문 생성 함수 (향후 checkout 툴 연동용 보존)
-    """
-    payload = {"session_id": session_id}
-    if user_phone:
-        payload["phone"] = user_phone
-        
-    async with httpx.AsyncClient() as client:
-        res = await client.post(f"{API_BASE_URL}/api/orders", json=payload)
-        res.raise_for_status()
-        return res.json()
+# ★ 여기 있던 create_order()(POST /api/orders 직접 호출)는 제거했다. 결제를 전혀 거치지 않고도
+# DB에 진짜 주문을 만들 수 있는 유일한 경로였던 action_tools.py의 confirm_order 툴이 이 함수의
+# 유일한 호출자였다. 주문 생성은 반드시 프론트 CartScreen.jsx의 결제 성공 확인 이후에만
+# (frontend/src/services/orderService.js를 통해) 이루어져야 한다.
 
 
 # ── 지시서 1단계 수록 명세 함수명 매핑 호환용 별칭 (Alias) ──

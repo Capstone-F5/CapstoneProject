@@ -1,44 +1,47 @@
 // ─────────────────────────────────────────────────────────────────
-// 포인트/고객 서비스 — 회원 DB 연동 시 이 파일만 수정하세요.
+// GET /api/user/points/{phone} → UserPointsOut{ user_id, phone_number, name, current_points, tier }
+// POST /api/user/register     → 정식 회원가입 (별도 회원가입 화면 전용)
 //
-// GET /api/points/lookup?phone={digits}
-//   Response : { name: string, points: number }
-//
-// POST /api/points/add
-//   Request  : { phone: string, amount: number, orderId: string }
-//   Response : { success: boolean, newTotal: number }
+// 전화번호를 결제 시 한 번 입력했다고 회원가입이 되는 게 아니다 — 포인트는 전화번호 기준으로
+// 자동 추적(비회원, is_guest=True)되지만, 정식 회원(is_guest=False)이 되려면 반드시
+// /api/user/register 를 거쳐야 한다.
 // ─────────────────────────────────────────────────────────────────
 
 const API_BASE = import.meta.env.VITE_API_URL
 
 /**
- * 전화번호로 고객 정보를 조회합니다.
- * @param {string} phoneDigits - 숫자만 추출된 전화번호 (11자리)
- * @returns {Promise<{ name: string, points: number }>}
+ * 전화번호로 고객 정보를 조회한다. 미등록(404)이어도 에러를 던지지 않고 registered:false 를
+ * 반환한다 — 결제는 그대로 진행되고, 정식 회원가입 여부와 무관하게 포인트만 자동 추적된다.
  */
 export async function lookupCustomer(phoneDigits) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/points/lookup?phone=${phoneDigits}`)
-    if (!res.ok) throw new Error(`고객 조회 실패 (${res.status})`)
-    return res.json() // { name, points }
-  }
-  return { name: '고객', points: 0 }
+  const res = await fetch(`${API_BASE}/api/user/points/${phoneDigits}`)
+  if (res.status === 404) return { name: null, points: null, tier: null, registered: false }
+  if (!res.ok) throw new Error(`고객 조회 실패 (${res.status})`)
+  const d = await res.json()
+  return { name: d.name ?? null, points: d.current_points, tier: d.tier, registered: true }
 }
 
 /**
- * 결제 완료 후 포인트를 적립합니다.
- * @param {{ phone: string, amount: number, orderId: string }} params
- * @returns {Promise<{ success: boolean, newTotal: number }>}
+ * 정식 회원가입(별도 회원가입 화면 전용). 이미 포인트 추적용 비회원 레코드가 있으면
+ * 그대로 정식 회원으로 전환된다(포인트 유지).
  */
-export async function addPoints({ phone, amount, orderId }) {
-  if (API_BASE) {
-    const res = await fetch(`${API_BASE}/api/points/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, amount, orderId }),
-    })
-    if (!res.ok) throw new Error(`포인트 적립 실패 (${res.status})`)
-    return res.json() // { success, newTotal }
+export async function registerCustomer(phoneDigits, name) {
+  const res = await fetch(`${API_BASE}/api/user/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits, name: name || null }),
+  })
+  if (!res.ok) {
+    let detail
+    try { detail = (await res.json()).detail } catch { /* ignore */ }
+    throw new Error(detail || `회원가입 실패 (${res.status})`)
   }
-  return { success: true, newTotal: 0 }
+  const d = await res.json()
+  return {
+    userId: d.user_id,
+    phone: d.phone_number,
+    name: d.name,
+    points: d.current_points,
+    alreadyMember: d.already_member,
+  }
 }

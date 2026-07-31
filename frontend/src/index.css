@@ -3,16 +3,29 @@
   margin: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
+  /* 키오스크 전용 화면 — 길게 눌러도 텍스트 선택/콜아웃 메뉴가 뜨지 않게, 탭 지연도 없앤다 */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+/* 입력창은 예외 — 쿠폰 코드 등 직접 입력 시 커서 이동·선택이 정상 동작해야 한다 */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 html {
   height: 100%;
+  overscroll-behavior: none;
 }
 
 body {
   font-family: 'Pretendard', -apple-system, sans-serif;
   background: #f5f5f5;
   min-height: 100dvh;
+  overscroll-behavior: none;
 }
 
 #root {

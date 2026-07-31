@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.core.db import SessionLocal
-from backend.core.models import MenuItem
+from backend.core.models import MenuItem, MenuItemAllergen
 
 
 _index: FAISS | None = None
@@ -34,7 +34,10 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
     """DB 에서 메뉴 + 옵션을 읽어 Document 와 메타맵을 만든다."""
     async with SessionLocal() as session:
         result = await session.execute(
-            select(MenuItem).options(selectinload(MenuItem.options))
+            select(MenuItem).options(
+                selectinload(MenuItem.options),
+                selectinload(MenuItem.allergen_links).selectinload(MenuItemAllergen.allergen),
+            )
         )
         items = result.scalars().all()
 
@@ -50,6 +53,10 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             }
             for opt in item.options
         ]
+        allergens = [
+            {"code": link.allergen.code, "name_ko": link.allergen.name_ko, "name_en": link.allergen.name_en}
+            for link in item.allergen_links
+        ]
         meta = {
             "id": item.id,
             "name_ko": item.name_ko,
@@ -58,14 +65,19 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             "description": item.description,
             "options": options,
             "is_available": item.is_available,
+            "is_popular": item.is_popular,
+            "allergens": allergens,
         }
         meta_map[item.id] = meta
 
         # 검색 텍스트: 한국어/영어 이름 + 설명 모두 포함
+        # 인기 메뉴는 "추천메뉴/인기메뉴" 문구를 섞어 넣어 관련 질의("추천해줘", "인기메뉴 뭐야")로도 검색되게 한다.
+        popular_tag = "\n추천메뉴, 인기메뉴" if item.is_popular else ""
+        allergen_tag = f"\n알레르기 유발물질: {', '.join(a['name_ko'] for a in allergens)}" if allergens else "\n알레르기 유발물질 없음"
         searchable = (
             f"{item.name_ko} ({item.name_en})\n"
             f"가격: {meta['base_price']}원\n"
-            f"{item.description}"
+            f"{item.description}{popular_tag}{allergen_tag}"
         )
         docs.append(Document(page_content=searchable, metadata={"menu_item_id": item.id}))
 
@@ -83,24 +95,29 @@ async def _build_index() -> FAISS:
     if not api_key:
         # API 키가 설정되지 않은 경우 모의 임베딩 또는 예외 우회 처리
         api_key = "dummy_key_for_local_health_check"
-        
+
     embeddings = OpenAIEmbeddings(
         model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
         api_key=api_key,
     )
     # FAISS.from_documents 는 동기 호출 → 스레드로 오프로드
     try:
-        _index = await asyncio.to_thread(FAISS.from_documents, docs, embeddings)
+        index = await asyncio.to_thread(FAISS.from_documents, docs, embeddings)
+        _index = index  # 성공했을 때만 전역 캐시에 반영
+        return index
     except Exception as e:
-        # 로컬 헬스 체크 중 인덱스 빌드 실패 방어
+        # 로컬 헬스 체크(API 키 미설정) 또는 일시적 API 오류(레이트리밋 등) 방어.
         print(f"[RAG 경고] 인덱스 빌드 건너뜀 (API Key 유효성 이슈): {e}")
         # 빈 인덱스로 헬스 체크 통과 유도
-        from langchain_community.vectorstores import FAISS
+        # (FAISS는 이미 상단에서 import됨 — 여기서 재import하면 함수 전체에서 지역변수로
+        #  취급되어 위 try 블록의 FAISS.from_documents 호출이 UnboundLocalError가 나던 버그 수정)
         from langchain_core.embeddings import FakeEmbeddings
         fake_emb = FakeEmbeddings(size=1536)
-        _index = await asyncio.to_thread(FAISS.from_documents, docs[:1], fake_emb)
-        
-    return _index
+        # ★ 전역 _index 캐시에는 반영하지 않는다 — 여기서 캐시해버리면 한 번의 일시적 오류로
+        #   전체 메뉴 중 1개짜리 가짜 임베딩 인덱스가 서버 재시작 전까지 영구 고정되어
+        #   search_menu가 항상 엉뚱한 결과만 반환하는 문제가 있었음. 다음 호출에서 실제
+        #   임베딩으로 다시 빌드를 시도하도록 _index는 None 상태로 남겨둔다.
+        return await asyncio.to_thread(FAISS.from_documents, docs[:1], fake_emb)
 
 
 async def get_index() -> FAISS:
@@ -108,7 +125,9 @@ async def get_index() -> FAISS:
     if _index is None:
         async with _build_lock:
             if _index is None:
-                await _build_index()
+                # _build_index()가 실패 시 전역 _index를 None으로 남겨두므로(다음 호출에서
+                # 재시도하기 위함), 이번 호출에서 쓸 인덱스는 반환값에서 직접 받는다.
+                return await _build_index()
     return _index  # type: ignore[return-value]
 
 

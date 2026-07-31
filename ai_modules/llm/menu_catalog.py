@@ -20,9 +20,11 @@ def render_vocab_for_stt() -> str:
     """
     Whisper `prompt`로 전달할 메뉴 어휘 힌트 문자열.
     고유 메뉴명과 세트 옵션명을 Whisper에 미리 흘려서 "F버거"를 "에프버거" 등으로 잘못 인식하는 것을 방지합니다.
+    결제 수단 키워드도 포함해 간편결제 관련 발화 인식을 개선합니다.
     """
     menu_str = ", ".join(_VOCAB_ITEMS)
-    return f"햄버거 키오스크 주문. 세트, 단품, 결제. 메뉴: {menu_str}."
+    payment_str = "카드, 신용카드, 삼성페이, 현금, 간편결제, 네이버페이, 카카오페이, 제로페이, 페이코, QR코드"
+    return f"햄버거 키오스크 주문. 세트, 단품. 결제 수단: {payment_str}. 메뉴: {menu_str}."
 
 # 백엔드 모듈(stt_service.py 등)과의 하위 호환성을 유지하기 위한 레거시 스텁 변수
 MENU_CATALOG: list = []

@@ -8,6 +8,14 @@ class MenuOptionOut(BaseModel):
     additional_price: Decimal
     is_available: bool
     display_order: int
+    option_group: str  # SET_UPGRADE | EXCLUDE | SET_SIDE | SET_DRINK
+
+    model_config = {"from_attributes": True}
+
+class AllergenOut(BaseModel):
+    code: str
+    name_ko: str
+    name_en: str
 
     model_config = {"from_attributes": True}
 
@@ -18,11 +26,13 @@ class MenuItemOut(BaseModel):
     base_price: Decimal
     description: str
     image_url: str | None
+    set_image_url: str | None
     is_available: bool
     is_popular: bool
     is_new: bool
     display_order: int
     options: list[MenuOptionOut] = []
+    allergens: list[AllergenOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -65,6 +75,8 @@ class MenuItemIn(BaseModel):
     name_en: str
     base_price: Decimal
     description: str = ""
+    image_url: str | None = None
+    set_image_url: str | None = None
     is_available: bool = True
     is_popular: bool = False
     is_new: bool = False
@@ -78,6 +90,7 @@ class MenuItemPatchIn(BaseModel):
     base_price: Decimal | None = None
     description: str | None = None
     image_url: str | None = None
+    set_image_url: str | None = None
     is_available: bool | None = None
     is_popular: bool | None = None
     is_new: bool | None = None

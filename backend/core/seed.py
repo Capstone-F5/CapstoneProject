@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Category, MenuItem, MenuOption
+from .models import Allergen, Category, MenuItem, MenuItemAllergen, MenuOption, StartScreenImage
 
 
 _CATEGORIES = [
@@ -107,11 +107,137 @@ _MENU = [
 ]
 
 
+# 세트 사이드/음료 선택 옵션 — frontend/src/data/menuData.js 의 SET_SIDES/SET_DRINKS 와
+# 이름을 반드시 동일하게 유지한다(프론트가 이름으로 옵션을 찾아 selected_options 를 조립함).
+_SET_SIDES = [
+    ("감자튀김", "French Fries", 0),
+    ("치즈스틱", "Cheese Sticks", 0),
+    ("치킨너겟", "Chicken Nuggets", 0),
+    ("양념감자튀김", "Seasoned French Fries", 0),
+]
+_SET_DRINKS = [
+    ("콜라", "Coke", 0),
+    ("제로콜라", "Zero Coke", 0),
+    ("사이다", "Sprite", 0),
+    ("제로사이다", "Zero Sprite", 0),
+    ("생수", "Water", 0),
+    ("뽀로로음료", "Pororo Drink", 0),
+    ("오렌지주스", "Orange Juice", 0),
+]
+
+# 추천메뉴 탭(is_popular) — frontend mock 의 recommended 3종과 동일
+_POPULAR_SLUGS = {"burger_f", "burger_crab", "burger_vegan"}
+
+# 메뉴 slug → (단품 이미지 경로, 세트 이미지 경로). frontend/public/images/ 아래 정적 파일을 가리킨다.
+# (image_url, set_image_url) 모두 DB 컬럼이므로 이미지 교체·추가는 이제 이 값만 바꾸면 된다.
+_IMAGES: dict[str, tuple[str | None, str | None]] = {
+    "burger_f": ("/images/burgers/F버거.webp", "/images/sets/F버거 세트.webp"),
+    "burger_grilled_beef": ("/images/burgers/그릴드비프버거.webp", "/images/sets/그릴드비프버거 세트.webp"),
+    "burger_mozzarella": ("/images/burgers/모짜렐라버거.webp", "/images/sets/모짜렐라버거 세트.webp"),
+    "burger_vegan": ("/images/burgers/비건버거.webp", "/images/sets/비건버거 세트.webp"),
+    "burger_crab": ("/images/burgers/게살버거.webp", "/images/sets/게살버거 세트.webp"),
+    "burger_chicken_thigh": ("/images/burgers/치킨다릿살버거.webp", "/images/sets/치킨다릿살버거 세트.webp"),
+    "burger_double_bulgogi": ("/images/burgers/더블불고기버거.webp", "/images/sets/더블불고기버거 세트.webp"),
+    "burger_double_cheese": (None, None),  # 대응하는 이미지 에셋이 아직 없음
+    "burger_chicken_breast": ("/images/burgers/치킨가슴살버거.webp", "/images/sets/치킨가슴살버거 세트.webp"),
+    "burger_shrimp": ("/images/burgers/새우버거.webp", "/images/sets/새우버거 세트.webp"),
+    "burger_bulgogi": ("/images/burgers/불고기버거.webp", "/images/sets/불고기버거 세트.webp"),
+    "burger_cheese": ("/images/burgers/치즈버거.webp", "/images/sets/치즈버거 세트.webp"),
+    "burger_teri": ("/images/burgers/데리버거.webp", "/images/sets/데리버거 세트.webp"),
+    "side_seasoned_fries": ("/images/sides/양념감튀.webp", None),
+    "side_nuggets": ("/images/sides/너겟.webp", None),
+    "side_cheese_sticks": ("/images/sides/치즈스틱.webp", None),
+    "side_fries_m": ("/images/sides/감튀.webp", None),
+    "side_corn_salad": ("/images/sides/콘샐러드.webp", None),
+    "side_coleslaw": ("/images/sides/코울슬로.webp", None),
+    "bev_orange_juice": ("/images/drinks/오렌지주스.webp", None),
+    "bev_coke_m": ("/images/drinks/콜라.webp", None),
+    "bev_zero_coke_m": ("/images/drinks/콜라.webp", None),
+    "bev_sprite_m": ("/images/drinks/사이다.webp", None),
+    "bev_zero_sprite_m": ("/images/drinks/사이다.webp", None),
+    "bev_pororo": ("/images/drinks/뽀로로음료.webp", None),
+    "bev_water": ("/images/drinks/생수.webp", None),
+}
+
+# 식품위생법 표시 대상 알레르기 유발물질 19종 (code, name_ko, name_en)
+_ALLERGENS = [
+    ("EGG", "난류", "Egg"),
+    ("MILK", "우유", "Milk"),
+    ("BUCKWHEAT", "메밀", "Buckwheat"),
+    ("PEANUT", "땅콩", "Peanut"),
+    ("SOY", "대두", "Soybean"),
+    ("WHEAT", "밀", "Wheat"),
+    ("MACKEREL", "고등어", "Mackerel"),
+    ("CRAB", "게", "Crab"),
+    ("SHRIMP", "새우", "Shrimp"),
+    ("PORK", "돼지고기", "Pork"),
+    ("PEACH", "복숭아", "Peach"),
+    ("TOMATO", "토마토", "Tomato"),
+    ("SULFITE", "아황산류", "Sulfites"),
+    ("WALNUT", "호두", "Walnut"),
+    ("CHICKEN", "닭고기", "Chicken"),
+    ("BEEF", "쇠고기", "Beef"),
+    ("SQUID", "오징어", "Squid"),
+    ("SHELLFISH", "조개류", "Shellfish"),
+    ("PINE_NUT", "잣", "Pine Nut"),
+]
+
+# 메뉴 slug → 포함 알레르기 유발물질 코드 목록.
+# ⚠️ 실제 조리법 검증 데이터가 아니라 재료 설명(주요 재료 문구) 기반으로 추정한 예시 데이터.
+# 운영 반영 전 반드시 실제 레시피 기준으로 재검증해야 한다.
+_MENU_ALLERGENS: dict[str, list[str]] = {
+    "burger_f": ["WHEAT", "SOY", "CHICKEN", "BEEF"],
+    "burger_grilled_beef": ["WHEAT", "BEEF", "MILK"],
+    "burger_mozzarella": ["WHEAT", "BEEF", "MILK", "EGG", "TOMATO"],
+    "burger_vegan": ["WHEAT", "SOY"],
+    "burger_crab": ["WHEAT", "CRAB", "EGG"],
+    "burger_chicken_thigh": ["WHEAT", "CHICKEN", "EGG"],
+    "burger_double_bulgogi": ["WHEAT", "BEEF", "SOY"],
+    "burger_double_cheese": ["WHEAT", "BEEF", "MILK"],
+    "burger_chicken_breast": ["WHEAT", "CHICKEN", "MILK", "EGG"],
+    "burger_shrimp": ["WHEAT", "SHRIMP", "EGG"],
+    "burger_bulgogi": ["WHEAT", "BEEF", "SOY"],
+    "burger_cheese": ["WHEAT", "BEEF", "MILK", "TOMATO"],
+    "burger_teri": ["WHEAT", "BEEF", "PORK", "SOY", "EGG"],
+    "side_seasoned_fries": ["WHEAT"],
+    "side_nuggets": ["WHEAT", "CHICKEN", "EGG"],
+    "side_cheese_sticks": ["WHEAT", "MILK", "EGG"],
+    "side_fries_m": [],
+    "side_corn_salad": ["EGG", "MILK"],
+    "side_coleslaw": ["EGG", "MILK"],
+    "bev_orange_juice": [],
+    "bev_coke_m": [],
+    "bev_zero_coke_m": [],
+    "bev_sprite_m": [],
+    "bev_zero_sprite_m": [],
+    "bev_pororo": [],
+    "bev_water": [],
+}
+
+
+async def seed_allergens(session: AsyncSession) -> dict[str, str]:
+    """알레르기 유발물질 마스터 데이터를 시드하고 code → id 매핑을 반환한다."""
+    result = await session.execute(select(Allergen))
+    existing = {a.code: a.id for a in result.scalars().all()}
+    if existing:
+        return existing
+
+    code_map: dict[str, str] = {}
+    for i, (code, name_ko, name_en) in enumerate(_ALLERGENS):
+        allergen = Allergen(code=code, name_ko=name_ko, name_en=name_en, display_order=i)
+        session.add(allergen)
+        await session.flush()
+        code_map[code] = allergen.id
+    return code_map
+
+
 async def seed_menu(session: AsyncSession) -> None:
     """이미 시드되어 있으면 skip."""
     existing = (await session.execute(select(MenuItem))).first()
     if existing:
         return
+
+    allergen_code_map = await seed_allergens(session)
 
     # 카테고리
     cat_map: dict[str, str] = {}
@@ -125,12 +251,16 @@ async def seed_menu(session: AsyncSession) -> None:
 
     # 메뉴 + 옵션
     for slug, cat_slug, name_ko, name_en, price, desc, excludes, has_set in _MENU:
+        image_url, set_image_url = _IMAGES.get(slug, (None, None))
         item = MenuItem(
             category_id=cat_map[cat_slug],
             name_ko=name_ko,
             name_en=name_en,
             base_price=Decimal(str(price)),
             description=desc,
+            image_url=image_url,
+            set_image_url=set_image_url,
+            is_popular=slug in _POPULAR_SLUGS,
         )
         session.add(item)
         await session.flush()
@@ -145,9 +275,36 @@ async def seed_menu(session: AsyncSession) -> None:
                     description="세트 음료 및 사이드(감자튀김 M) 포함",
                     additional_price=Decimal("2000"),
                     display_order=order,
+                    option_group="SET_UPGRADE",
                 )
             )
             order += 1
+            for name_ko_s, name_en_s, extra in _SET_SIDES:
+                session.add(
+                    MenuOption(
+                        menu_item_id=item.id,
+                        name_ko=name_ko_s,
+                        name_en=name_en_s,
+                        description="세트 사이드 선택",
+                        additional_price=Decimal(str(extra)),
+                        display_order=order,
+                        option_group="SET_SIDE",
+                    )
+                )
+                order += 1
+            for name_ko_d, name_en_d, extra in _SET_DRINKS:
+                session.add(
+                    MenuOption(
+                        menu_item_id=item.id,
+                        name_ko=name_ko_d,
+                        name_en=name_en_d,
+                        description="세트 음료 선택",
+                        additional_price=Decimal(str(extra)),
+                        display_order=order,
+                        option_group="SET_DRINK",
+                    )
+                )
+                order += 1
         for veg in excludes:
             session.add(
                 MenuOption(
@@ -157,8 +314,33 @@ async def seed_menu(session: AsyncSession) -> None:
                     description="알레르기 및 고령자 섭취 불편 호소 시 자동 차단 옵션",
                     additional_price=Decimal("0"),
                     display_order=order,
+                    option_group="EXCLUDE",
                 )
             )
             order += 1
+
+        for allergen_code in _MENU_ALLERGENS.get(slug, []):
+            session.add(
+                MenuItemAllergen(menu_item_id=item.id, allergen_id=allergen_code_map[allergen_code])
+            )
+
+    await session.commit()
+
+
+# 대기화면 배경 슬라이드 초기값 — 여러 장 추가하려면 관리자가 DB에 행을 더 넣으면 된다
+# (프론트는 GET /api/settings/start-screen-images 로 display_order 순으로 받아와 순환 표시)
+_START_SCREEN_IMAGES = [
+    ("/bg.png", 0),
+]
+
+
+async def seed_start_screen_images(session: AsyncSession) -> None:
+    """이미 시드되어 있으면 skip."""
+    existing = (await session.execute(select(StartScreenImage))).first()
+    if existing:
+        return
+
+    for image_url, display_order in _START_SCREEN_IMAGES:
+        session.add(StartScreenImage(image_url=image_url, display_order=display_order))
 
     await session.commit()

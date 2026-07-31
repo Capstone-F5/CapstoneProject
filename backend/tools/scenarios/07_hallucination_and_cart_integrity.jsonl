@@ -1,0 +1,3 @@
+{"scenario": "add_item 없이 '담겠습니다' 금지 + 카트 위치 수정", "session_id": "test-cart-integrity-01"}
+{"turn": 1, "input": "치즈버거 세트 감자튀김 콜라로", "language": "ko", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"action_types": ["add_item"], "note": "옵션 모두 언급 → 이번 턴 add_item 필수"}}
+{"turn": 2, "input": "첫번째 담은 세트 음료 바꿔줘", "language": "ko", "screen": "menu", "order_type": "dine-in", "cart": [{"cart_id": "cart-001", "menu_id": "item-chez--0001-0000-000000000001", "name": "치즈 버거", "item_type": "set", "quantity": 1, "unit_price": 6200, "exclusion": "없음", "side": "감자튀김", "drink": "콜라"}], "expect": {"note": "음료 뭐로 바꿀지 물어봐야. update_item 아직 없어야", "no_action_types": ["update_item"]}}

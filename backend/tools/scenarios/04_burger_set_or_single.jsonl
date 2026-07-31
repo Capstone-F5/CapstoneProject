@@ -1,0 +1,4 @@
+{"scenario": "버거 수량만 말했을 때 단품/세트 반드시 질문", "session_id": "test-set-single-01"}
+{"turn": 1, "input": "치즈버거 한개 담아줘", "language": "ko", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"no_action_types": ["add_item"], "note": "한개 만으로는 단품/세트 미결정 → add_item 없어야"}}
+{"turn": 2, "input": "세트로요", "language": "ko", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"no_action_types": ["add_item"], "note": "세트 확정 → 사이드/음료 질문해야. add_item 아직 없어야"}}
+{"turn": 3, "input": "감자튀김이랑 콜라로", "language": "ko", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"action_types": ["add_item"], "note": "사이드+음료 모두 선택 → add_item 호출"}}

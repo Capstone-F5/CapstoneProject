@@ -1,0 +1,2 @@
+{"scenario": "결제 수단 매핑 검증 (각각 독립 세션)", "session_id": "test-pay-variants"}
+{"turn": 1, "input": "카드로 할게요", "language": "ko", "screen": "cart", "order_type": "dine-in", "cart": [{"cart_id": "c1", "menu_id": "item-fbur--0001-0000-000000000001", "name": "F 버거", "item_type": "single", "quantity": 1, "unit_price": 7500, "exclusion": "없음", "side": null, "drink": null}], "_memo": "이 시나리오는 세션 메모리상 포인트 스텝 이후 상태여야 payment_method가 동작함. LLM이 포인트 먼저 묻는 것은 올바른 동작.", "expect": {"note": "카드 → 포인트 질문 혹은 card action. 포인트 질문이 나오면 PASS(올바른 순서)", "no_action_types": ["order_type"]}}

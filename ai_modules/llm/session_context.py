@@ -1,7 +1,7 @@
 """
 요청별 세션 식별자를 tool 안에서 읽기 위한 ContextVar.
 
-엔드포인트(/ai_modules/llm) 진입 시 set, tools (add_to_cart, approve_payment) 가 get.
+엔드포인트(/ai_modules/llm) 진입 시 set, tools 가 get.
 """
 from __future__ import annotations
 

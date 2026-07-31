@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocale } from '../i18n/LocaleContext'
 import useT from '../i18n/useT'
 import IdleOverlay from '../components/IdleOverlay'
+import { fetchStartScreenImages } from '../services/settingsService'
 
 const LANGS = [
   { code: 'ko', label: '한글' },
@@ -10,41 +11,34 @@ const LANGS = [
   { code: 'ja', label: '日本語' },
 ]
 
-export default function StartScreen({
-  nav,
-  gestureEnabled, setGestureEnabled,
-  pipEnabled,     setPipEnabled,
-}) {
+// 대기화면 배경 — DB(GET /api/settings/start-screen-images)에서 받아온 목록을 5초 간격으로
+// 부드럽게 크로스페이드 순환한다. 관리자가 나중에 이미지를 교체/추가하면 코드 수정 없이 반영된다.
+// 한 장뿐이면 그냥 고정 배경으로 표시되고 순환 타이머 자체가 돌지 않는다.
+const BG_INTERVAL_MS = 5000
+const BG_FADE_MS = 1200
+
+export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
+  const [bgImages, setBgImages] = useState(['/bg.png'])
+  const [bgIndex, setBgIndex] = useState(0)
 
   useEffect(() => { setLocale('ko') }, [])
 
-  // 작은 토글 버튼 스타일
-  const toggleBtn = (active, disabled = false) => ({
-    padding: '8px 14px',
-    background: disabled
-      ? 'rgba(255,255,255,0.18)'
-      : active ? 'rgba(80,200,140,0.92)' : 'rgba(40,40,40,0.78)',
-    color: disabled ? 'rgba(255,255,255,0.55)' : '#fff',
-    border: '1.5px solid rgba(255,255,255,0.55)',
-    borderRadius: 22,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-    display: 'flex', alignItems: 'center', gap: 6,
-    transition: 'background 0.18s',
-  })
+  useEffect(() => {
+    let cancelled = false
+    fetchStartScreenImages().then(urls => { if (!cancelled) setBgImages(urls) })
+    return () => { cancelled = true }
+  }, [])
 
-  const dot = (on) => (
-    <span style={{
-      width: 8, height: 8, borderRadius: '50%',
-      background: on ? '#7fff9f' : 'rgba(255,255,255,0.4)',
-      boxShadow: on ? '0 0 6px #7fff9f' : 'none',
-    }} />
-  )
+  useEffect(() => {
+    setBgIndex(0)
+    if (bgImages.length < 2) return
+    const timer = setInterval(() => {
+      setBgIndex(i => (i + 1) % bgImages.length)
+    }, BG_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [bgImages])
 
   return (
     <>
@@ -52,10 +46,7 @@ export default function StartScreen({
       onClick={() => nav('orderType')}
       style={{
         height: '100%',
-        backgroundImage: "url('/bg.png')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center center',
-        backgroundRepeat: 'no-repeat',
+        position: 'relative',
         overflow: 'hidden',
         userSelect: 'none',
         display: 'flex',
@@ -65,39 +56,46 @@ export default function StartScreen({
         padding: '0 36px 78px',
       }}
     >
-      {/* 설정 토글 — 좌측 상단 */}
-      {setGestureEnabled && (
+      {/* 배경 이미지 크로스페이드 스택 */}
+      {bgImages.map((src, i) => (
         <div
-          onClick={e => e.stopPropagation()}
+          key={src}
           style={{
-            position: 'absolute',
-            top: 16, left: 16,
-            display: 'flex', gap: 8,
-            zIndex: 10,
+            position: 'absolute', inset: 0,
+            backgroundImage: `url('${src}')`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center',
+            backgroundRepeat: 'no-repeat',
+            opacity: i === bgIndex ? 1 : 0,
+            transition: `opacity ${BG_FADE_MS}ms ease-in-out`,
           }}
-        >
-          <button
-            onClick={() => setGestureEnabled(v => !v)}
-            style={toggleBtn(gestureEnabled)}
-            title="손동작 인식 켜기/끄기"
-          >
-            {dot(gestureEnabled)} 손동작 {gestureEnabled ? 'ON' : 'OFF'}
-          </button>
-          <button
-            onClick={() => gestureEnabled && setPipEnabled(v => !v)}
-            disabled={!gestureEnabled}
-            style={toggleBtn(pipEnabled && gestureEnabled, !gestureEnabled)}
-            title="카메라 미리보기 켜기/끄기"
-          >
-            {dot(pipEnabled && gestureEnabled)} 카메라 {pipEnabled ? 'ON' : 'OFF'}
-          </button>
-        </div>
-      )}
+        />
+      ))}
+
+      {/* 회원가입 — 키오스크 주문 SPA와 완전히 분리된 별도 페이지(signup.html)로 실제 이동.
+          내부 nav() 화면 전환이 아니라 브라우저 페이지 전환이므로 세션/카트 상태와 무관하다. */}
+      <button
+        onClick={e => { e.stopPropagation(); window.location.href = './signup.html' }}
+        style={{
+          position: 'absolute', top: 20, right: 20, zIndex: 1,
+          background: 'rgba(0,0,0,0.35)',
+          border: '1.5px solid rgba(255,255,255,0.6)',
+          borderRadius: 20,
+          color: '#fff',
+          fontSize: 15,
+          fontWeight: 700,
+          padding: '9px 18px',
+          cursor: 'pointer',
+        }}
+      >
+        회원가입
+      </button>
 
       {/* 주문 시작 버튼 */}
       <button
         onClick={e => { e.stopPropagation(); nav('orderType') }}
         style={{
+          position: 'relative',
           width: '100%',
           maxWidth: 480,
           padding: '19px 0',
@@ -116,7 +114,7 @@ export default function StartScreen({
       </button>
 
       {/* 언어 선택 */}
-      <div style={{ display: 'flex', gap: 36 }}>
+      <div style={{ position: 'relative', display: 'flex', gap: 36 }}>
         {LANGS.map(({ code, label }) => (
           <button
             key={code}

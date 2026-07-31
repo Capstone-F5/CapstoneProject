@@ -1,0 +1,4 @@
+{"scenario": "일본어 응답에 한글 없음 (TTS 언어 순수성)", "session_id": "test-ja-purity-01"}
+{"turn": 1, "input": "店内で食べます", "language": "ja", "screen": "orderType", "order_type": null, "cart": [], "expect": {"action_types": ["order_type"], "output_no_hangul": true, "note": "일본어 응답에 한글(한국어) 없어야"}}
+{"turn": 2, "input": "Fバーガーセットで。サイドはフライドポテトで、飲み物はコーラで", "language": "ja", "screen": "menu", "order_type": "dine-in", "cart": [], "expect": {"action_types": ["add_item"], "output_no_hangul": true, "note": "세트 추가 → 응답에 한글 없어야"}}
+{"turn": 3, "input": "チーズバーガーも一個", "language": "ja", "screen": "menu", "order_type": "dine-in", "cart": [{"cart_id": "c1", "menu_id": "item-fbur--0001-0000-000000000001", "name": "F 버거", "item_type": "set", "quantity": 1, "unit_price": 9500, "exclusion": "없음", "side": "감자튀김", "drink": "콜라"}], "expect": {"no_action_types": ["add_item"], "output_no_hangul": true, "note": "치즈버거 한개 = 미결정 → 단품/세트 질문, 응답에 한글 없어야"}}

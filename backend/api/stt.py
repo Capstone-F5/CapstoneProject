@@ -8,7 +8,7 @@ POST /ai_modules/stt
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from core.stt_service import transcribe_bytes
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/ai_modules", tags=["stt"])
 
 
 @router.post("/stt")
-async def stt(audio: UploadFile = File(...)):
+async def stt(audio: UploadFile = File(...), language: str | None = Form(None)):
     if not audio.filename:
         raise HTTPException(400, "오디오 파일이 필요합니다.")
 
@@ -26,7 +26,7 @@ async def stt(audio: UploadFile = File(...)):
         raise HTTPException(400, "오디오 파일이 비어 있습니다.")
 
     try:
-        result = await transcribe_bytes(data, filename=audio.filename or "audio.webm")
+        result = await transcribe_bytes(data, filename=audio.filename or "audio.webm", language=language)
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     except Exception as e:  # noqa: BLE001  — OpenAI 호출 오류 사용자 노출

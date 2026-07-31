@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMicVAD, utils } from '@ricky0123/vad-react'
 import { useLocale } from '../i18n/LocaleContext'
+import { getSessionId, newSessionId } from '../services/session'
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -19,6 +20,16 @@ const CSS = `
 const NATIVE_LOCALES = new Set(['ko', 'zh', 'ja'])
 const langToLocale = (lang) => NATIVE_LOCALES.has(lang) ? lang : 'en'
 
+// 서버 연결 실패 시 보여줄 안내문 — LLM이 만드는 문장이 아니라 고정 문자열이므로
+// UI 지원 4개 언어로만 준비한다.
+const CONNECTION_ERROR_MESSAGES = {
+  ko: '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.',
+  en: "Sorry, I'm having trouble connecting to the server. Please try again in a moment.",
+  zh: '抱歉，服务器连接暂时出现问题。请稍后再试。',
+  ja: '申し訳ございません、サーバーとの接続が不安定です。しばらくしてからもう一度お試しください。',
+}
+const connectionErrorMessage = (lang) => CONNECTION_ERROR_MESSAGES[langToLocale(lang)]
+
 const INIT_MESSAGES = [
   {
     id: 'init', role: 'bot',
@@ -26,22 +37,11 @@ const INIT_MESSAGES = [
   },
 ]
 
-const SESSION_KEY = 'kiosk_llm_session_id'
-const LANG_KEY    = 'kiosk_detected_lang'
+const LANG_KEY = 'kiosk_detected_lang'
 
-function getSessionId() {
-  // 페이지 로드마다 새 세션 — beforeunload 에서 삭제해 새로고침 시 초기화
-  let sid = sessionStorage.getItem(SESSION_KEY)
-  if (!sid) {
-    sid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    sessionStorage.setItem(SESSION_KEY, sid)
-  }
-  return sid
-}
-
-// 페이지 새로고침/닫기 시 세션·언어 초기화 (다음 로드에서 새 세션 시작)
+// 페이지 새로고침/닫기 시 언어 감지 상태만 초기화 (세션 ID는 카트와 공유되므로 유지 —
+// 새로고침해도 서버에 이미 담긴 카트를 App.jsx 의 refreshCart 가 복원한다)
 window.addEventListener('beforeunload', () => {
-  sessionStorage.removeItem(SESSION_KEY)
   sessionStorage.removeItem(LANG_KEY)
 })
 
@@ -95,10 +95,10 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const vad = useMicVAD({
     // startOnLoad: false — 앱 시작 시 모델만 미리 로드, 마이크는 채팅 열 때만 시작
     startOnLoad: false,
-    positiveSpeechThreshold: 0.7,  // 짧고 작은 발화도 감지 (0.8→0.7)
-    negativeSpeechThreshold: 0.3,  // 말 끝을 조금 늦게 판정해 짧은 단어 보존
-    minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게 (4→2)
-    preSpeechPadFrames: 5,         // 첫 음절 잘림 방지 (~160ms 선행 패딩)
+    positiveSpeechThreshold: 0.75, // 더 확실한 음성만 시작으로 인정 (0.7→0.75, 노이즈 트리거 감소)
+    negativeSpeechThreshold: 0.35, // 말 끝 판정 (0.3→0.35)
+    minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게
+    preSpeechPadFrames: 8,         // 첫 음절 잘림 방지 (~256ms 선행 패딩, 5→8)
     redemptionFrames: 12,          // 짧은 끊김에 말 끝 조기 종료 방지
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
@@ -136,6 +136,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
     const form = new FormData()
     form.append('audio', wavBlob, 'audio.wav')
+    // 이미 감지된 언어가 있으면 함께 보내 Whisper가 매번 다시 추측하다 엉뚱한 언어로
+    // 튀는 것을 막는다(특히 한국어 메뉴 어휘 힌트로 인한 오인식 방지 — stt_service.py 참고).
+    if (detectedLangRef.current) form.append('language', detectedLangRef.current)
 
     try {
       const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form })
@@ -184,7 +187,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       res = await fetch('/ai_modules/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, format: 'mp3' }),
+        body: JSON.stringify({ text, format: 'mp3', language: detectedLangRef.current || 'ko' }),
       })
       if (!res.ok) return
     } catch { return }
@@ -381,12 +384,24 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
               setMessages(prev =>
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
               )
+              // 첫 발화에서 locale이 "en"으로 잘못 설정된 경우 LLM 응답 언어로 보정
+              if (detectedLangRef.current === 'en' || !detectedLangRef.current) {
+                const hasCJK  = /[一-鿿]/.test(replyText)
+                const hasKana = /[　-ヿ]/.test(replyText)
+                const hasHan  = /[가-힣]/.test(replyText)
+                const corrected = hasCJK ? 'zh' : hasKana ? 'ja' : hasHan ? 'ko' : null
+                if (corrected && corrected !== detectedLangRef.current) {
+                  detectedLangRef.current = corrected
+                  sessionStorage.setItem(LANG_KEY, corrected)
+                  setLocale(corrected)
+                }
+              }
             }
           } catch { /* JSON 파싱 실패 무시 */ }
         }
       }
     } catch (e) {
-      replyText = '죄송해요, 서버와 연결이 잠시 어려워요. 잠시 후 다시 말씀해 주세요.'
+      replyText = connectionErrorMessage(detectedLangRef.current)
       flushTtsBuf(true)
       setMessages(prev =>
         prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
@@ -456,10 +471,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         await fetch(`/ai_modules/llm/reset?session_id=${oldSid}`, { method: 'POST' })
       } catch {}
 
-      // 새 세션 ID 발급
-      const newSid = crypto.randomUUID?.() ?? `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      sessionIdRef.current = newSid
-      sessionStorage.setItem(SESSION_KEY, newSid)
+      // 새 세션 ID 발급 (카트 API도 동일 모듈을 통해 이 새 세션을 바라보게 됨)
+      sessionIdRef.current = newSessionId()
 
       // 프론트 상태 초기화
       detectedLangRef.current = null

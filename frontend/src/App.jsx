@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useGesture } from './hooks/useGesture'
 import { LocaleProvider, useLocale } from './i18n/LocaleContext'
+import * as cartService from './services/cartService'
 import CollectTool from './tools/CollectTool'
 import StartScreen from './screens/StartScreen'
 import OrderTypeScreen from './screens/OrderTypeScreen'
@@ -29,6 +30,52 @@ const GESTURE_LABELS = {
 }
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
+
+// orderType 화면 진입 직후, 직전 화면의 OK 핀치 해제 과도기 동작을 매장/포장 선택으로
+// 오인식하지 않도록 무시하는 유예 구간(ms)
+const ORDER_TYPE_GESTURE_GRACE_MS = 900
+
+// 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
+const CONTROL_BAR_HEIGHT = 58
+
+// 메뉴 원본(options 포함)에서 특정 그룹의 옵션을 이름으로 찾는다.
+// name이 없으면(SET_UPGRADE처럼 단일 옵션인 경우) 그룹만으로 찾는다.
+function findOption(menu, group, name) {
+  return menu?.options?.find(o => o.option_group === group && (name == null || o.name_ko === name))
+}
+
+// 백엔드 CartItemOut → 화면(CartItem 등)이 기대하는 로컬 카트 항목 형태로 역매핑.
+function adaptCartItem(ci, menuById) {
+  const menu = menuById[ci.menu_item_id]
+  const opts = ci.selected_options || []
+  const matchGroup = (group) => {
+    for (const sel of opts) {
+      const opt = menu?.options?.find(o => o.id === sel.option_id)
+      if (opt && opt.option_group === group) return opt
+    }
+    return null
+  }
+  const isSet    = !!matchGroup('SET_UPGRADE')
+  const exclOpt  = matchGroup('EXCLUDE')
+  const sideOpt  = matchGroup('SET_SIDE')
+  const drinkOpt = matchGroup('SET_DRINK')
+  return {
+    cartId: ci.cart_item_id,
+    id: ci.menu_item_id,
+    name: menu?.name ?? ci.name_ko,
+    image: isSet ? (menu?.setImage ?? menu?.image) : menu?.image,
+    type: isSet ? 'set' : 'single',
+    qty: ci.quantity,
+    unitPrice: Number(ci.unit_price),
+    exclusion: exclOpt?.name_ko ?? '없음',
+    side: sideOpt?.name_ko ?? null,
+    sideExtra: Number(sideOpt?.additional_price ?? 0),
+    drink: drinkOpt?.name_ko ?? null,
+    drinkExtra: Number(drinkOpt?.additional_price ?? 0),
+    special_note: ci.special_note,
+    key: ci.cart_item_id,
+  }
+}
 
 // LocaleProvider 바깥에서는 useLocale() 호출 불가 → AppContent로 분리
 function AppContent() {
@@ -98,7 +145,13 @@ function AppContent() {
 
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
-  useEffect(() => { screenRef.current = screen }, [screen])
+  // 화면 진입 시각 — 전환 직후 잔여 손동작(직전 화면의 OK 핀치를 풀며 손을 펴는 과도기 동작)이
+  // finger_1/finger_2로 오인식되어 매장/포장이 자동 선택되는 것을 막기 위한 유예 구간 기준점
+  const screenEnteredAtRef = useRef(performance.now())
+  useEffect(() => {
+    screenRef.current = screen
+    screenEnteredAtRef.current = performance.now()
+  }, [screen])
 
   // 화면별 제스처 액션 — 렌더마다 최신 클로저를 갱신
   const gestureActionsRef = useRef({})
@@ -317,9 +370,12 @@ function AppContent() {
       const { dineIn, takeout } = gestureActionsRef.current.orderType
       const activeHand  = hands?.right || hands?.left
       const fingerCount = activeHand?.finger_count ?? -1
-      if      (gesture === 'ok')                              { fireOk(); showLabel(GESTURE_LABELS.ok) }
-      else if (gesture === 'finger_1' && fingerCount <= 1)   { dineIn();  showLabel('☝ 매장') }
-      else if (gesture === 'finger_2' && fingerCount >= 2)   { takeout(); showLabel('✌ 포장') }
+      // 화면 진입 직후 짧은 유예 구간 — 직전 화면(start)의 OK 핀치를 풀며 손을 펴는 동작이
+      // finger_1/finger_2로 오인식되어 매장/포장이 사용자 의도 없이 자동 선택되는 것을 방지
+      const settled = performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS
+      if      (gesture === 'ok')                                        { fireOk(); showLabel(GESTURE_LABELS.ok) }
+      else if (settled && gesture === 'finger_1' && fingerCount <= 1)  { dineIn();  showLabel('☝ 매장') }
+      else if (settled && gesture === 'finger_2' && fingerCount >= 2)  { takeout(); showLabel('✌ 포장') }
       return
     }
 
@@ -383,72 +439,76 @@ function AppContent() {
       setChatOpen(false)
       setLocale('ko')
       sessionStorage.removeItem('kiosk_detected_lang')
-      sessionStorage.removeItem('kiosk_llm_session_id')
-      // 항상 마운트된 ChatPanel에 리셋 신호 전달
+      // 세션 ID 재발급은 ChatPanel의 kiosk-session-reset 핸들러(newSessionId())가 전담
+      // (카트 API도 동일 session.js를 통해 이 새 세션을 바라보게 됨 — 경쟁 상태 방지)
       window.dispatchEvent(new CustomEvent('kiosk-session-reset'))
     }
     setScreen(s)
   }
 
-  const addToCart = (item) => {
-    setCart(prev => {
-      const key = `${item.id}-${item.type}-${item.exclusion}-${item.side ?? ''}-${item.drink ?? ''}`
-      const existing = prev.find(c => c.key === key)
-      if (existing) {
-        return prev.map(c => c.key === key ? { ...c, qty: c.qty + item.qty } : c)
-      }
-      return [...prev, { ...item, key, cartId: Date.now() + Math.random() }]
-    })
+  // 백엔드 카트(session_id 기준)가 단일 소스 — 서버에서 다시 받아와 로컬 state에 반영한다.
+  const refreshCart = useCallback(async () => {
+    try {
+      const data = await cartService.fetchCart()
+      setCart(data.items.map(ci => adaptCartItem(ci, menuByIdRef.current)))
+    } catch (e) {
+      console.error('[cart] refresh 실패:', e)
+      showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // draft: ItemDetailModal 이 onAdd 로 넘기는 형태 { id, type, qty, exclusion, side, drink, special_note? }
+  const addToCart = async (draft) => {
+    const menu = menuByIdRef.current[draft.id]
+    if (!menu) { console.warn('[cart] 알 수 없는 메뉴:', draft.id); return }
+
+    const selected_options = []
+    if (draft.type === 'set') {
+      const su = findOption(menu, 'SET_UPGRADE')
+      if (su) selected_options.push({ option_id: su.id, name: su.name_ko })
+      if (draft.side)  { const s = findOption(menu, 'SET_SIDE',  draft.side);  if (s) selected_options.push({ option_id: s.id, name: s.name_ko }) }
+      if (draft.drink) { const d = findOption(menu, 'SET_DRINK', draft.drink); if (d) selected_options.push({ option_id: d.id, name: d.name_ko }) }
+    }
+    if (draft.exclusion && draft.exclusion !== '없음') {
+      const ex = findOption(menu, 'EXCLUDE', draft.exclusion)
+      if (ex) selected_options.push({ option_id: ex.id, name: ex.name_ko })
+    }
+
+    try {
+      await cartService.addCartItem({
+        menu_item_id: draft.id,
+        quantity: draft.qty ?? 1,
+        selected_options,
+        special_note: draft.special_note ?? null,
+      })
+      await refreshCart()
+    } catch (e) {
+      console.error('[cart] 담기 실패:', e)
+      showVoiceToast(`오류: ${e.message || '장바구니 담기에 실패했습니다'}`)
+    }
   }
 
-  const updateQty = (cartId, qty) => {
-    if (qty <= 0) setCart(prev => prev.filter(c => c.cartId !== cartId))
-    else setCart(prev => prev.map(c => c.cartId === cartId ? { ...c, qty } : c))
+  // 낙관적 업데이트(즉각 반응) 후 서버에 반영, 실패하면 refreshCart로 서버 진실을 되돌림
+  const updateQty = async (cartId, qty) => {
+    setCart(prev => qty <= 0 ? prev.filter(c => c.cartId !== cartId)
+                              : prev.map(c => c.cartId === cartId ? { ...c, qty } : c))
+    try {
+      if (qty <= 0) await cartService.removeCartItem(cartId)
+      else          await cartService.updateCartItem(cartId, { quantity: qty })
+    } catch (e) {
+      console.error('[cart] 수량 변경 실패:', e)
+      showVoiceToast(`오류: ${e.message || '수량 변경에 실패했습니다'}`)
+      await refreshCart()
+    }
   }
 
-  const clearCart = () => setCart([])
-
-  // 기존 장바구니 라인의 옵션을 제자리에서 변경 (cartId·위치 유지)
-  // a: { item_type?, quantity?, exclusion?, side?, drink? } — 제공된 필드만 변경
-  const updateItemOptions = (cartId, a) => {
-    setCart(prev => prev.map(c => {
-      if (c.cartId !== cartId) return c
-      const menu = menuByIdRef.current[c.id]
-      if (!menu) return c
-      const md        = menuDataRef.current
-      const sides     = md?.setSides    ?? []
-      const drinks    = md?.setDrinks   ?? []
-      const surcharge = md?.setSurcharge ?? 0
-
-      const type = a.item_type ?? c.type
-      const isSet = type === 'set'
-      const qty   = a.quantity ?? c.qty
-      // 변경 요청 없는 옵션은 기존값 유지
-      const exclusionReq = a.exclusion ?? c.exclusion
-      const exclusion = menu.exclusions?.includes(exclusionReq) ? exclusionReq : '없음'
-
-      let sideObj = null, drinkObj = null
-      if (isSet) {
-        const sideName  = a.side  ?? c.side
-        const drinkName = a.drink ?? c.drink
-        sideObj  = sides.find(s => s.name === sideName)   ?? sides[0]  ?? null
-        drinkObj = drinks.find(d => d.name === drinkName) ?? drinks[0] ?? null
-      }
-      const unitPrice = menu.price
-        + (isSet ? surcharge : 0)
-        + (isSet ? (sideObj?.extra ?? 0) + (drinkObj?.extra ?? 0) : 0)
-
-      const side  = isSet ? (sideObj?.name ?? null) : null
-      const drink = isSet ? (drinkObj?.name ?? null) : null
-      const key = `${c.id}-${type}-${exclusion}-${side ?? ''}-${drink ?? ''}`
-      return {
-        ...c, type, qty, unitPrice, exclusion,
-        side, sideExtra: isSet ? (sideObj?.extra ?? 0) : 0,
-        drink, drinkExtra: isSet ? (drinkObj?.extra ?? 0) : 0,
-        image: isSet ? (menu.setImage ?? menu.image) : menu.image,
-        key,
-      }
-    }))
+  const clearCart = async () => {
+    setCart([])
+    try {
+      await cartService.clearCartApi()
+    } catch (e) {
+      console.error('[cart] 초기화 실패:', e)
+    }
   }
 
   // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
@@ -475,98 +535,35 @@ function AppContent() {
   }, [menuData])
   menuByIdRef.current = _menuById   // 항상 최신 맵을 ref에 반영
 
-  // LLM add_item 액션 → addToCart 스키마로 변환
-  // ref 경유로 읽어 stale closure 완전 차단
-  function buildCartItem(a) {
-    const menu = menuByIdRef.current[a.menu_id]
-    if (!menu) return null
-
-    const md        = menuDataRef.current
-    const isSet     = a.item_type === 'set'
-    const sides     = md?.setSides    ?? []
-    const drinks    = md?.setDrinks   ?? []
-    const surcharge = md?.setSurcharge ?? 0
-
-    let sideObj = null, drinkObj = null
-    if (isSet) {
-      sideObj  = sides.find(s  => s.name  === a.side)  ?? sides[0]  ?? null
-      drinkObj = drinks.find(d => d.name === a.drink) ?? drinks[0] ?? null
+  // 메뉴 데이터가 준비되면(옵션 조회를 위해 필요) 서버 카트를 1회 복원한다.
+  // — 새로고침/재방문 시에도 기존에 담아둔(또는 음성으로 담긴) 항목이 그대로 보이게 함.
+  const cartRestoredRef = useRef(false)
+  useEffect(() => {
+    if (menuData && !cartRestoredRef.current) {
+      cartRestoredRef.current = true
+      refreshCart()
     }
-
-    const unitPrice = menu.price
-      + (isSet ? surcharge : 0)
-      + (isSet ? (sideObj?.extra ?? 0) + (drinkObj?.extra ?? 0) : 0)
-
-    const validExclusion = menu.exclusions?.includes(a.exclusion) ? a.exclusion : '없음'
-
-    return {
-      id:         menu.id,
-      name:       menu.name,
-      image:      isSet ? (menu.setImage ?? menu.image) : menu.image,
-      type:       isSet ? 'set' : 'single',
-      qty:        a.quantity ?? 1,
-      unitPrice,
-      exclusion:  validExclusion,
-      side:       isSet ? (sideObj?.name ?? null) : null,
-      sideExtra:  isSet ? (sideObj?.extra ?? 0)   : 0,
-      drink:      isSet ? (drinkObj?.name ?? null) : null,
-      drinkExtra: isSet ? (drinkObj?.extra ?? 0)  : 0,
-      ...(a.special_note ? { special_note: a.special_note } : {}),
-    }
-  }
-
-  // match 규칙: cart_id 우선, 없으면 menu_id 로 마지막 라인 탐색.
-  // appCartRef.current 로 읽어 stale closure 와 무관하게 항상 최신 cart 참조.
-  function resolveCartId(match) {
-    if (!match) return null
-    const cur = appCartRef.current
-    if (match.cart_id != null) {
-      const found = cur.find(c => c.cartId === match.cart_id)
-      return found ? found.cartId : null
-    }
-    if (match.menu_id != null) {
-      const matches = cur.filter(c => c.id === match.menu_id)
-      return matches.length ? matches[matches.length - 1].cartId : null
-    }
-    return null
-  }
+  }, [menuData, refreshCart])
 
   // App 레벨에서 처리 가능한 액션 실행.
   // 반환: 'nav'(화면 전환 발생) | 'handled'(처리됨) | 'no'(App 레벨 아님 → 화면 브릿지로)
   function execAppAction(a) {
     switch (a.type) {
       case 'add_item': {
-        // 메뉴 화면이 마운트되어 있으면 UI 모달을 통해 시각적으로 처리
-        // (SingleSetModal → ItemDetailModal → 자동 확인 → addToCart)
-        const visuallyHandled = screenVoiceRef.current?.({...a, type: 'add_item'})
-        if (!visuallyHandled) {
-          // 메뉴 화면이 아닌 경우: 직접 장바구니에 추가
-          const item = buildCartItem(a)
-          if (item) addToCart(item)
-          else console.warn('[voice] buildCartItem 실패: 알 수 없는 menu_id', a.menu_id)
-        }
+        // 백엔드 카트는 LLM 툴 실행 시점에 이미 반영을 끝냈다 — 로컬에서 재구성하지 않고
+        // 메뉴 화면이 마운트되어 있으면 시각적 확인(모달 워크스루)만 띄운 뒤 refreshCart로 동기화.
+        screenVoiceRef.current?.({...a, type: 'add_item'})
+        refreshCart()
         return 'handled'
       }
-      case 'update_qty': {
-        const id = resolveCartId(a.match)
-        if (id != null) updateQty(id, a.quantity)
-        else console.warn('[voice] update_qty: 장바구니에서 찾지 못함', a.match)
+      case 'update_qty':
+        // 현재 어떤 LLM 툴도 이 액션 타입을 발생시키지 않음(터치 전용 함수) — 안전하게 무시
         return 'handled'
-      }
-      case 'remove_item': {
-        const id = resolveCartId(a.match)
-        if (id != null) updateQty(id, 0)
-        else console.warn('[voice] remove_item: 장바구니에서 찾지 못함', a.match)
-        return 'handled'
-      }
-      case 'update_item': {
-        const id = resolveCartId(a.match)
-        if (id != null) updateItemOptions(id, a)
-        else console.warn('[voice] update_item: 장바구니에서 찾지 못함', a.match)
-        return 'handled'
-      }
+      case 'remove_item':
+      case 'update_item':
       case 'clear_cart':
-        clearCart()
+        // 백엔드가 이미 반영을 끝냈으므로 최신 카트만 다시 받아온다
+        refreshCart()
         return 'handled'
       case 'navigate':
         nav(a.screen)
@@ -607,7 +604,12 @@ function AppContent() {
       }
       if (res === 'handled') { q.shift(); continue }
       // 화면 종속 액션 → 현재 화면 브릿지에 위임
-      const handled = screenVoiceRef.current?.(a)
+      // screenVoiceRef.current가 null이면 화면이 아직 핸들러 등록 전 — 재시도
+      if (!screenVoiceRef.current) {
+        scheduleDrainRetry()
+        break
+      }
+      const handled = screenVoiceRef.current(a)
       if (handled) { q.shift(); continue }
       // 처리 못 함: 화면 전환 대기 중이면 보존하고 잠시 후 재시도
       if (awaitingScreenRef.current) {
@@ -691,16 +693,10 @@ function AppContent() {
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
-  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, chatOpen }
-
-  const startProps = {
-    ...props,
-    gestureEnabled, setGestureEnabled,
-    pipEnabled,     setPipEnabled,
-  }
+  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen }
 
   const screens = {
-    start:       <StartScreen {...startProps} />,
+    start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
@@ -835,6 +831,7 @@ function AppContent() {
           display: 'flex', flexDirection: 'column',
           height: '100dvh', minHeight: '100vh',
           overflow: 'hidden',
+          paddingBottom: CONTROL_BAR_HEIGHT,
         }}>
           {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
@@ -862,32 +859,68 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── 채팅 FAB — 항상 최상단에 고정 ── */}
-        {screen === 'start' && (
-          <button
+        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 항상 화면 맨 아래 고정
+             (음성인식 UI가 열려도 그 아래에 그대로 고정 — 위로 밀려 올라가지 않음) ── */}
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0, right: 0,
+            zIndex: 500,
+            height: CONTROL_BAR_HEIGHT,
+            boxSizing: 'border-box',
+            background: '#000',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 40,
+            fontSize: 14,
+          }}
+        >
+          <ControlText
             onClick={() => setChatOpen(o => !o)}
-            style={{
-              position: 'fixed',
-              bottom: chatOpen ? 'calc(33vh + 20px)' : 20,
-              right: 20,
-              zIndex: 500,
-              width: 60, height: 60,
-              borderRadius: '50%',
-              border: '2px solid rgba(255,255,255,0.65)',
-              background: chatOpen ? 'rgba(50,50,50,0.92)' : 'rgba(116,64,50,0.92)',
-              color: '#fff',
-              fontSize: chatOpen ? 20 : 24,
-              cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.38)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'bottom 0.35s ease, background 0.2s',
-            }}
-            title={chatOpen ? '채팅 닫기' : '대화형 주문 도우미'}
-          >
-            {chatOpen ? '✕' : '💬'}
-          </button>
-        )}
+            ko={`음성인식 ${chatOpen ? 'ON' : 'OFF'}`}
+            en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
+          />
+          <ControlText
+            onClick={() => setGestureEnabled(v => !v)}
+            ko={`제스처 ${gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Gesture ${gestureEnabled ? 'ON' : 'OFF'}`}
+          />
+          <ControlText
+            disabled={!gestureEnabled}
+            onClick={() => gestureEnabled && setPipEnabled(v => !v)}
+            ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+          />
+        </div>
       </>
+  )
+}
+
+// 접근성 컨트롤 바의 텍스트 버튼 — 한국어(위, 크게) + 영어(아래, 작게) 동시 표기
+function ControlText({ onClick, disabled = false, ko, en }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: disabled ? 'rgba(255,255,255,0.4)' : '#fff',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        padding: '4px 0',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+        lineHeight: 1.3,
+      }}
+    >
+      <span style={{ fontSize: 15, fontWeight: 700 }}>{ko}</span>
+      <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.75 }}>{en}</span>
+    </button>
   )
 }
 

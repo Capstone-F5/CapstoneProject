@@ -22,8 +22,8 @@ router = APIRouter(prefix="/ai_modules", tags=["llm"])
 
 
 class CartLine(BaseModel):
-    cart_id: float | int | None = None
-    menu_id: int
+    cart_id: str | float | int | None = None
+    menu_id: str | int
     name: str | None = None
     item_type: str = "single"
     quantity: int = 1
@@ -34,7 +34,7 @@ class CartLine(BaseModel):
 
 
 class ModalState(BaseModel):
-    menu_id:   int
+    menu_id:   str | int
     name:      str | None = None
     item_type: str = "single"
     qty:       int = 1
