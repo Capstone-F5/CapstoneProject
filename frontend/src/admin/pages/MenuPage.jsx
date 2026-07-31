@@ -5,6 +5,7 @@ import {
   createCategory, updateCategory, deleteCategory,
   createMenuOption, updateMenuOption, deleteMenuOption,
   uploadMenuImage,
+  fetchSetOptions, updateSetOption,
 } from '../api/adminApi.js'
 
 const OPTION_GROUPS = [
@@ -404,8 +405,109 @@ function OptionGroupSection({ group, options, item, onAdd, onEdit, onDelete, onT
   )
 }
 
+// ─── SetOptionsPanel ── 세트 공통 구성 일괄 편집 ─────────────────────────────
+function SetOptionsPanel() {
+  const [setOpts,    setSetOpts]    = useState(null)   // { SET_SIDE: [], SET_DRINK: [] }
+  const [editing,    setEditing]    = useState({})     // { "SET_SIDE::감자튀김": "500" }
+  const [saving,     setSaving]     = useState({})
+  const [loadErr,    setLoadErr]    = useState('')
+
+  const load = () =>
+    fetchSetOptions()
+      .then(d => { setSetOpts(d); setEditing({}) })
+      .catch(e => setLoadErr(e.message))
+
+  useEffect(() => { load() }, [])
+
+  const key = (grp, name) => `${grp}::${name}`
+
+  const handleSave = async (grp, name, price) => {
+    const k = key(grp, name)
+    setSaving(s => ({ ...s, [k]: true }))
+    try {
+      await updateSetOption({ option_group: grp, name_ko: name, additional_price: Number(price) })
+      setEditing(e => { const n = { ...e }; delete n[k]; return n })
+      load()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSaving(s => { const n = { ...s }; delete n[k]; return n })
+    }
+  }
+
+  if (loadErr) return <div style={{ color: '#c00', padding: 16, fontSize: 13 }}>{loadErr}</div>
+  if (!setOpts) return <div className="loading-text" style={{ fontSize: 12 }}>로딩 중…</div>
+
+  const renderGroup = (grp, label) => (
+    <div key={grp}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: '#744032', marginBottom: 8, padding: '4px 0' }}>{label}</div>
+      <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', marginBottom: 0 }}>
+        <colgroup>
+          <col /><col style={{ width: 130 }} /><col style={{ width: 90 }} />
+        </colgroup>
+        <thead>
+          <tr><th>이름</th><th>추가금 (원)</th><th></th></tr>
+        </thead>
+        <tbody>
+          {(setOpts[grp] ?? []).map(opt => {
+            const k = key(grp, opt.name_ko)
+            const isEdit = k in editing
+            const val = isEdit ? editing[k] : String(opt.additional_price)
+            return (
+              <tr key={opt.name_ko}>
+                <td style={{ fontWeight: 500 }}>{opt.name_ko}</td>
+                <td>
+                  {isEdit ? (
+                    <input
+                      className="form-input"
+                      type="number" min="0" step="100"
+                      value={val}
+                      style={{ padding: '4px 8px', fontSize: 13, height: 32 }}
+                      onChange={e => setEditing(ed => ({ ...ed, [k]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSave(grp, opt.name_ko, val) }}
+                      autoFocus
+                    />
+                  ) : (
+                    <span style={{ color: Number(opt.additional_price) > 0 ? '#F5B800' : '#aaa', fontWeight: 600 }}>
+                      {Number(opt.additional_price) > 0 ? `+${Number(opt.additional_price).toLocaleString('ko-KR')}원` : '–'}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  {isEdit ? (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn-primary btn-sm" disabled={saving[k]} onClick={() => handleSave(grp, opt.name_ko, val)}>
+                        {saving[k] ? '…' : '저장'}
+                      </button>
+                      <button className="btn-outline btn-sm" onClick={() => setEditing(e => { const n = { ...e }; delete n[k]; return n })}>
+                        취소
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="btn-outline btn-sm" onClick={() => setEditing(e => ({ ...e, [k]: String(opt.additional_price) }))}>
+                      수정
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {renderGroup('SET_SIDE',  '사이드 선택 옵션')}
+      {renderGroup('SET_DRINK', '음료 선택 옵션')}
+    </div>
+  )
+}
+
 // ─── MenuPage ────────────────────────────────────────────────────────────────
 export default function MenuPage() {
+  const [activeTab,     setActiveTab]     = useState('menu')   // 'menu' | 'set'
   const [data,          setData]          = useState(null)
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState('')
@@ -570,7 +672,38 @@ export default function MenuPage() {
   const selectedItemFull = selectedItem ? allItems.find(i => i.id === selectedItem) ?? null : null
 
   return (
-    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── 탭 ── */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #eee' }}>
+        {[
+          { key: 'menu', label: '메뉴 관리' },
+          { key: 'set',  label: '세트 구성' },
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '10px 22px', fontSize: 14, fontWeight: activeTab === tab.key ? 700 : 500,
+              color: activeTab === tab.key ? '#744032' : '#888',
+              borderBottom: activeTab === tab.key ? '2px solid #744032' : '2px solid transparent',
+              marginBottom: -2, transition: 'all 0.15s',
+            }}
+          >{tab.label}</button>
+        ))}
+      </div>
+
+      {/* ── 세트 구성 탭 ── */}
+      {activeTab === 'set' && (
+        <div className="card" style={{ maxWidth: 560 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 20 }}>세트 구성 일괄 편집</div>
+          <SetOptionsPanel />
+        </div>
+      )}
+
+      {/* ── 메뉴 관리 탭 ── */}
+      {activeTab === 'menu' && <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
 
       {/* ── 카테고리 패널 ── */}
       <div className="card" style={{ width: 200, minWidth: 200, padding: '8px 0' }}>
@@ -768,6 +901,8 @@ export default function MenuPage() {
           onSave={handleSaveOption}
         />
       )}
+      </div>}
+
     </div>
   )
 }

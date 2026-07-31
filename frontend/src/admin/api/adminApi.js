@@ -81,6 +81,14 @@ export async function deleteMenuItem(id) {
   return req('DELETE', `/api/admin/menu/items/${id}`)
 }
 
+export async function fetchSetOptions() {
+  return req('GET', '/api/admin/set-options')
+}
+
+export async function updateSetOption(payload) {
+  return req('PATCH', '/api/admin/set-options', payload)
+}
+
 export async function uploadMenuImage(file) {
   const fd = new FormData()
   fd.append('file', file)

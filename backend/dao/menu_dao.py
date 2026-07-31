@@ -169,3 +169,47 @@ async def update_menu_option(db: AsyncSession, option: MenuOption, data: dict) -
 async def delete_menu_option(db: AsyncSession, option: MenuOption) -> None:
     await db.delete(option)
     await db.flush()
+
+
+# ── 세트 공통 구성 (SET_SIDE / SET_DRINK) ─────────────────────────────────
+
+async def get_set_common_options(db: AsyncSession) -> dict[str, list]:
+    """
+    SET_SIDE / SET_DRINK 그룹의 '대표' 옵션 목록을 반환한다.
+    동일 name_ko 기준 첫 번째 레코드를 대표값으로 사용한다.
+    반환 형태: {"SET_SIDE": [...], "SET_DRINK": [...]}
+    """
+    from sqlalchemy import or_
+    result = await db.execute(
+        select(MenuOption)
+        .where(or_(MenuOption.option_group == "SET_SIDE", MenuOption.option_group == "SET_DRINK"))
+        .order_by(MenuOption.option_group, MenuOption.display_order)
+    )
+    options = result.scalars().all()
+
+    seen: dict[str, set] = {"SET_SIDE": set(), "SET_DRINK": set()}
+    out:  dict[str, list] = {"SET_SIDE": [],    "SET_DRINK": []}
+    for opt in options:
+        grp = opt.option_group
+        if opt.name_ko not in seen[grp]:
+            seen[grp].add(opt.name_ko)
+            out[grp].append(opt)
+    return out
+
+
+async def bulk_update_set_option(
+    db: AsyncSession, group: str, name_ko: str, additional_price: float
+) -> int:
+    """
+    같은 그룹(SET_SIDE / SET_DRINK) + name_ko를 가진 모든 MenuOption의
+    additional_price를 일괄 수정한다. 수정된 행 수를 반환한다.
+    """
+    from sqlalchemy import update as sa_update
+    from decimal import Decimal
+    result = await db.execute(
+        sa_update(MenuOption)
+        .where(MenuOption.option_group == group)
+        .where(MenuOption.name_ko == name_ko)
+        .values(additional_price=Decimal(str(additional_price)))
+    )
+    return result.rowcount

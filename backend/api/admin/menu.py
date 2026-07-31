@@ -212,3 +212,45 @@ async def delete_menu_option(
     await db.commit()
     invalidate_cache()
     return {"ok": True}
+
+
+# --- 세트 공통 구성 (SET_SIDE / SET_DRINK) 일괄 관리 -------------------------
+
+@router.get("/set-options")
+async def get_set_options(db: AsyncSession = Depends(get_session)):
+    """SET_SIDE / SET_DRINK 대표 옵션 목록 조회"""
+    data = await menu_dao.get_set_common_options(db)
+    def _fmt(opt):
+        return {
+            "name_ko": opt.name_ko,
+            "name_en": opt.name_en,
+            "additional_price": float(opt.additional_price),
+            "option_group": opt.option_group,
+        }
+    return {
+        "SET_SIDE":  [_fmt(o) for o in data["SET_SIDE"]],
+        "SET_DRINK": [_fmt(o) for o in data["SET_DRINK"]],
+    }
+
+
+from pydantic import BaseModel as _BaseModel
+
+class _SetOptionPatch(_BaseModel):
+    option_group: str          # SET_SIDE | SET_DRINK
+    name_ko: str
+    additional_price: float
+
+
+@router.patch("/set-options")
+async def update_set_option(payload: _SetOptionPatch, db: AsyncSession = Depends(get_session)):
+    """name_ko 기준으로 해당 그룹의 모든 옵션 additional_price 일괄 수정"""
+    if payload.option_group not in ("SET_SIDE", "SET_DRINK"):
+        raise HTTPException(400, "option_group은 SET_SIDE 또는 SET_DRINK여야 합니다")
+    count = await menu_dao.bulk_update_set_option(
+        db, payload.option_group, payload.name_ko, payload.additional_price
+    )
+    if count == 0:
+        raise HTTPException(404, f"'{payload.name_ko}' 옵션을 찾을 수 없습니다")
+    await db.commit()
+    invalidate_cache()
+    return {"ok": True, "updated": count}
