@@ -21,6 +21,7 @@ class AllergenOut(BaseModel):
 
 class MenuItemOut(BaseModel):
     id: str
+    category_id: str
     name_ko: str
     name_en: str
     base_price: Decimal

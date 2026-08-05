@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import Logo from '../components/Logo'
 import { lookupCustomer } from '../services/pointsService'
-import { createOrder, validateCoupon, previewDiscount } from '../services/orderService'
+import { createOrder, validateCoupon, previewDiscount, fetchActiveDiscounts } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
 import { triggerHardwareAction } from '../services/hardwareService'
 import IdleOverlay from '../components/IdleOverlay'
@@ -12,6 +12,27 @@ import { useLocale } from '../i18n/LocaleContext'
 import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
+
+function computeItemDiscount(itemId, categoryId, unitPrice, activeDiscounts) {
+  if (!activeDiscounts?.length) return null
+  const today = new Date().toISOString().split('T')[0]
+  let price = unitPrice
+  for (const d of activeDiscounts) {
+    if (!d.is_active) continue
+    if (d.applicable_tier !== 'ALL') continue
+    if (d.valid_from && today < d.valid_from) continue
+    if (d.valid_until && today > d.valid_until) continue
+    const matches =
+      d.target_type === 'ALL' ||
+      (d.target_type === 'MENU' && d.menu_item_id === itemId) ||
+      (d.target_type === 'CATEGORY' && d.category_id === categoryId)
+    if (!matches) continue
+    if (d.discount_type === 'PERCENT') price = Math.round(price * (1 - Number(d.discount_value) / 100))
+    else price = Math.max(0, price - Number(d.discount_value))
+  }
+  if (price === unitPrice) return null
+  return { discountedPrice: price, savings: unitPrice - price }
+}
 
 // 결제 수단 이미지 경로 — null 이면 기존 이모티콘/텍스트 폴백 표시
 // 예: card: '/assets/payment/card.png'
@@ -56,6 +77,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [showCouponScan,   setShowCouponScan]   = useState(false)
   const [discountPreview,  setDiscountPreview]  = useState(null)  // { discountAmount, applicable }
+  const [activeDiscounts,  setActiveDiscounts]  = useState([])
 
   const isCompletingRef = useRef(false)
 
@@ -207,6 +229,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     previewDiscount().then(r => setDiscountPreview(r.discountAmount > 0 ? r : null))
   }, [cart.length])
 
+  useEffect(() => {
+    fetchActiveDiscounts().then(setActiveDiscounts)
+  }, [])
+
   const handleComplete = async () => {
     if (isCompletingRef.current) return
     isCompletingRef.current = true
@@ -296,9 +322,17 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             {t('cartEmpty')}
           </div>
         ) : (
-          cart.map(item => (
-            <CartItem key={item.cartId} item={item} onUpdateQty={updateQty} />
-          ))
+          cart.map(item => {
+            const disc = computeItemDiscount(item.id, item.categoryId ?? null, item.unitPrice, activeDiscounts)
+            return (
+              <CartItem
+                key={item.cartId}
+                item={item}
+                onUpdateQty={updateQty}
+                discountedUnitPrice={disc ? disc.discountedPrice : null}
+              />
+            )
+          })
         )}
       </div>
 
@@ -737,7 +771,7 @@ function translateOptionName(korName, locale) {
 }
 
 /* ── CartItem ── */
-function CartItem({ item, onUpdateQty }) {
+function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
   const t = useT()
   const { locale } = useLocale()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
@@ -780,7 +814,18 @@ function CartItem({ item, onUpdateQty }) {
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
           alignSelf: 'center',
         }}>
-          <span style={{ fontSize: 18, fontWeight: 800 }}>{(item.unitPrice * item.qty).toLocaleString()}{t('won')}</span>
+          {discountedUnitPrice != null && discountedUnitPrice < item.unitPrice ? (
+            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+              <span style={{ fontSize: 14, color: '#bbb', textDecoration: 'line-through', fontWeight: 400 }}>
+                {(item.unitPrice * item.qty).toLocaleString()}{t('won')}
+              </span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: '#e44' }}>
+                {(discountedUnitPrice * item.qty).toLocaleString()}{t('won')}
+              </span>
+            </span>
+          ) : (
+            <span style={{ fontSize: 18, fontWeight: 800 }}>{(item.unitPrice * item.qty).toLocaleString()}{t('won')}</span>
+          )}
           <button onClick={() => onUpdateQty(item.cartId, 0)} style={{
             background: 'none', border: 'none', color: '#bbb',
             fontSize: 20, lineHeight: 1, cursor: 'pointer', padding: 0, flexShrink: 0,

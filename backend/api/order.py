@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.models import Order, OrderItem
 from schemas.order_schemas import OrderIn, OrderOut, OrderItemOut
+from schemas.coupon_schemas import DiscountOut
 from dao import user_dao, order_dao, cart_dao, discount_dao
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -22,6 +23,12 @@ def _to_order_item_out(item: OrderItem) -> OrderItemOut:
         selected_options=item.selected_options or [],
         special_note=item.special_note,
     )
+
+
+@router.get("/active-discounts", response_model=list[DiscountOut])
+async def get_active_discounts_public(db: AsyncSession = Depends(get_session)):
+    """현재 활성화된 할인 목록 (인증 불필요, 키오스크 화면용)."""
+    return await discount_dao.get_active_discounts(db)
 
 
 @router.get("/validate-coupon")

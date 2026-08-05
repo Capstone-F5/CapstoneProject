@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.core.models import Order, OrderItem, MenuItem, Category, Payment
+from core.models import Order, OrderItem, MenuItem, Category, Payment
 
 
 async def get_today_summary(db: AsyncSession) -> dict:

@@ -48,6 +48,7 @@ function adaptItem(i, locale) {
   const desc = isKo ? stripNamePrefix(i.description) : parseKcalStr(i.description)
   return {
     id: i.id,
+    categoryId: i.category_id,
     name,
     price: Number(i.base_price),
     kcal: parseKcal(i.description),
@@ -64,8 +65,22 @@ function adaptItem(i, locale) {
   }
 }
 
+export async function fetchActiveDiscounts() {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/active-discounts`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch {
+    return []
+  }
+}
+
 export async function fetchMenuData(locale = 'ko') {
-  const res = await fetch(`${API_BASE}/api/menu?locale=${encodeURIComponent(locale)}`)
+  const [menuRes, activeDiscounts] = await Promise.all([
+    fetch(`${API_BASE}/api/menu?locale=${encodeURIComponent(locale)}`),
+    fetchActiveDiscounts(),
+  ])
+  const res = menuRes
   if (!res.ok) throw new Error(`menu fetch failed (${res.status})`)
   const raw = await res.json()
 
@@ -97,6 +112,7 @@ export async function fetchMenuData(locale = 'ko') {
   return {
     categories,
     menuItems,
+    activeDiscounts,
     // 세트 사이드/음료 선택 UI는 이름·이미지 표시용으로 menuData.js 상수를 계속 사용한다.
     // (실제 가격·주문 반영은 백엔드의 SET_SIDE/SET_DRINK 옵션이 담당 — 이름 문자열이
     //  backend/core/seed.py 의 시드값과 반드시 동일해야 한다)

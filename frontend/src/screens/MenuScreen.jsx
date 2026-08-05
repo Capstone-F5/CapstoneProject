@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react'
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Logo from '../components/Logo'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
@@ -9,6 +9,35 @@ import useT from '../i18n/useT'
 
 const COLS = 3
 const GRID_GAP = 9
+
+// 아이템에 적용되는 모든 할인을 합산해 할인된 단가 정보를 반환한다.
+// 할인이 없으면 null 반환.
+function computeItemDiscount(itemId, categoryId, unitPrice, activeDiscounts) {
+  if (!activeDiscounts?.length) return null
+  const today = new Date().toISOString().split('T')[0]
+  let price = unitPrice
+  const labels = []
+  for (const d of activeDiscounts) {
+    if (!d.is_active) continue
+    if (d.applicable_tier !== 'ALL') continue
+    if (d.valid_from && today < d.valid_from) continue
+    if (d.valid_until && today > d.valid_until) continue
+    const matches =
+      d.target_type === 'ALL' ||
+      (d.target_type === 'MENU' && d.menu_item_id === itemId) ||
+      (d.target_type === 'CATEGORY' && d.category_id === categoryId)
+    if (!matches) continue
+    if (d.discount_type === 'PERCENT') {
+      price = Math.round(price * (1 - Number(d.discount_value) / 100))
+      labels.push(`-${d.discount_value}%`)
+    } else {
+      price = Math.max(0, price - Number(d.discount_value))
+      labels.push(`-${Number(d.discount_value).toLocaleString()}원`)
+    }
+  }
+  if (price === unitPrice) return null
+  return { discountedPrice: price, savings: unitPrice - price, label: labels[0] ?? '' }
+}
 
 const CAT_IMAGE = {
   recommended: '/images/sets/F버거 세트.webp',
@@ -91,6 +120,16 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   const itemsPerPage = chatOpen ? COLS : 2 * COLS
   const items        = menuData ? (menuData.menuItems?.[catId] ?? []) : []
   const totalPages   = Math.max(1, Math.ceil(items.length / itemsPerPage))
+
+  // 카트 항목의 categoryId 조회용 (할인 계산에 사용)
+  const menuItemById = useMemo(() => {
+    if (!menuData?.menuItems) return {}
+    const map = {}
+    for (const catItems of Object.values(menuData.menuItems)) {
+      for (const item of catItems) map[item.id] = item
+    }
+    return map
+  }, [menuData])
 
   useEffect(() => {
     setPage(p => Math.min(p, Math.max(0, totalPages - 1)))
@@ -263,7 +302,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     )
   }
 
-  const { categories, menuItems, setSides, setDrinks, setSurcharge } = menuData
+  const { categories, menuItems, setSides, setDrinks, setSurcharge, activeDiscounts = [] } = menuData
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -372,7 +411,12 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
         }}>
           {pageItems.map(item => (
             <div key={item.id + '-' + catId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <FoodCard item={item} onClick={() => handleItemTap(item)} chatOpen={chatOpen} />
+              <FoodCard
+                item={item}
+                onClick={() => handleItemTap(item)}
+                chatOpen={chatOpen}
+                discount={computeItemDiscount(item.id, item.categoryId, item.price, activeDiscounts)}
+              />
             </div>
           ))}
         </div>
@@ -419,9 +463,19 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
               overflowY: 'auto',
               transition: 'max-height 0.35s ease',
             }}>
-              {cart.map(item => (
-                <MiniCartItem key={item.cartId} item={item} updateQty={updateQty} chatOpen={chatOpen} />
-              ))}
+              {cart.map(item => {
+                const menuItem = menuItemById[item.id]
+                const disc = computeItemDiscount(item.id, menuItem?.categoryId ?? null, item.unitPrice, activeDiscounts)
+                return (
+                  <MiniCartItem
+                    key={item.cartId}
+                    item={item}
+                    updateQty={updateQty}
+                    chatOpen={chatOpen}
+                    discountedUnitPrice={disc ? disc.discountedPrice : null}
+                  />
+                )
+              })}
             </div>
 
             {/* 합계 + 결제하기 */}
@@ -430,9 +484,26 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
               borderTop: '1px solid #f0f0f0',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-              <span style={{ fontSize: 24, color: '#888' }}>
-                {t('cartSummary', cart.reduce((s, c) => s + c.qty, 0), cart.reduce((s, c) => s + c.unitPrice * c.qty, 0))}
-              </span>
+              {(() => {
+                const totalQty = cart.reduce((s, c) => s + c.qty, 0)
+                const grossTotal = cart.reduce((s, c) => s + c.unitPrice * c.qty, 0)
+                const discountedTotal = cart.reduce((s, c) => {
+                  const mi = menuItemById[c.id]
+                  const d = computeItemDiscount(c.id, mi?.categoryId ?? null, c.unitPrice, activeDiscounts)
+                  return s + (d ? d.discountedPrice : c.unitPrice) * c.qty
+                }, 0)
+                const hasDis = discountedTotal < grossTotal
+                return (
+                  <span style={{ fontSize: 24, color: '#888' }}>
+                    {t('cartSummary', totalQty, discountedTotal)}
+                    {hasDis && (
+                      <span style={{ fontSize: 16, color: '#e44', fontWeight: 700, marginLeft: 6 }}>
+                        (-{(grossTotal - discountedTotal).toLocaleString()}원)
+                      </span>
+                    )}
+                  </span>
+                )
+              })()}
               <button onClick={() => nav('cart')} style={{
                 background: '#F5B800', color: '#1a1a1a',
                 border: 'none', borderRadius: 15,
@@ -487,7 +558,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   )
 }
 
-function MiniCartItem({ item, updateQty, chatOpen }) {
+function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
   const t = useT()
   const compact = !!chatOpen
   const btnSize  = compact ? 36 : 44
@@ -574,7 +645,21 @@ function MiniCartItem({ item, updateQty, chatOpen }) {
         fontSize: compact ? 19 : 24, fontWeight: 700, color: '#222',
         flexShrink: 0, minWidth: compact ? 90 : 120, textAlign: 'right',
       }}>
-        {(item.unitPrice * item.qty).toLocaleString()}{t('won')}
+        {discountedUnitPrice != null && discountedUnitPrice < item.unitPrice ? (
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+            <span style={{
+              fontSize: compact ? 13 : 16, color: '#bbb',
+              textDecoration: 'line-through', fontWeight: 400,
+            }}>
+              {(item.unitPrice * item.qty).toLocaleString()}{t('won')}
+            </span>
+            <span style={{ color: '#e44' }}>
+              {(discountedUnitPrice * item.qty).toLocaleString()}{t('won')}
+            </span>
+          </span>
+        ) : (
+          <>{(item.unitPrice * item.qty).toLocaleString()}{t('won')}</>
+        )}
       </span>
 
       <button onClick={() => updateQty(item.cartId, 0)} style={{
@@ -586,12 +671,15 @@ function MiniCartItem({ item, updateQty, chatOpen }) {
   )
 }
 
-function FoodCard({ item, onClick, chatOpen }) {
+function FoodCard({ item, onClick, chatOpen, discount }) {
   const compact = !!chatOpen
+  const priceFontSize = compact ? 'clamp(11px, 3.0vw, 14px)' : 'clamp(14px, 3.8vw, 17px)'
+  const smallFontSize = compact ? 'clamp(9px, 2.4vw, 11px)' : 'clamp(11px, 3.0vw, 13px)'
   return (
     <button onClick={onClick} style={{
       background: '#ffffff',
-      border: '1px solid #f1f1f1', borderRadius: 16,
+      border: discount ? '1px solid #ffd0d0' : '1px solid #f1f1f1',
+      borderRadius: 16,
       padding: 0, overflow: 'hidden', cursor: 'pointer',
       boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
       display: 'flex', flexDirection: 'column',
@@ -604,6 +692,7 @@ function FoodCard({ item, onClick, chatOpen }) {
         padding: compact ? 4 : 6,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',
+        position: 'relative',
       }}>
         {item.image ? (
           <img
@@ -616,6 +705,17 @@ function FoodCard({ item, onClick, chatOpen }) {
             {item.emoji ?? '🍔'}
           </span>
         )}
+        {discount && (
+          <span style={{
+            position: 'absolute', top: 4, right: 4,
+            background: '#e44', color: '#fff',
+            fontSize: smallFontSize, fontWeight: 800,
+            borderRadius: 5, padding: '2px 5px',
+            lineHeight: 1.2,
+          }}>
+            {discount.label}
+          </span>
+        )}
       </div>
       <div style={{ padding: compact ? '6px 8px 7px' : '8px 8px 9px', flexShrink: 0 }}>
         <div style={{
@@ -626,10 +726,26 @@ function FoodCard({ item, onClick, chatOpen }) {
         }}>
           {item.name}
         </div>
-        <div style={{
-          fontSize: compact ? 'clamp(11px, 3.0vw, 14px)' : 'clamp(14px, 3.8vw, 17px)',
-          color: '#744032', textAlign: 'center', fontWeight: 700,
-        }}>{item.price.toLocaleString()}~</div>
+        {discount ? (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              fontSize: smallFontSize, color: '#bbb',
+              textDecoration: 'line-through', lineHeight: 1.2,
+            }}>
+              {item.price.toLocaleString()}원~
+            </div>
+            <div style={{
+              fontSize: priceFontSize, color: '#e44', fontWeight: 800,
+            }}>
+              {discount.discountedPrice.toLocaleString()}원~
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            fontSize: priceFontSize,
+            color: '#744032', textAlign: 'center', fontWeight: 700,
+          }}>{item.price.toLocaleString()}~</div>
+        )}
       </div>
     </button>
   )

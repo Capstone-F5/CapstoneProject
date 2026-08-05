@@ -47,6 +47,16 @@ export async function validateCoupon(code, subtotal) {
   return { valid: true, discountAmount: Number(d.discount_amount), finalAmount: Number(d.final_amount) }
 }
 
+export async function fetchActiveDiscounts() {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/active-discounts`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch {
+    return []
+  }
+}
+
 export async function previewDiscount() {
   try {
     const res = await fetch(`${API_BASE}/api/orders/preview-discount?session_id=${getSessionId()}`)

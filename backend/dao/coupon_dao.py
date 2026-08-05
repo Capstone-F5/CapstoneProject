@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from backend.core.models import Coupon, UserCoupon, User
-from backend.schemas.coupon_schemas import CouponIn
+from core.models import Coupon, UserCoupon, User
+from schemas.coupon_schemas import CouponIn
 
 
 async def list_coupons(db: AsyncSession) -> list[Coupon]:
