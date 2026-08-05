@@ -21,6 +21,7 @@ class AllergenOut(BaseModel):
 
 class MenuItemOut(BaseModel):
     id: str
+    category_id: str
     name_ko: str
     name_en: str
     base_price: Decimal
@@ -104,6 +105,7 @@ class MenuOptionIn(BaseModel):
     additional_price: Decimal = Decimal("0")
     is_available: bool = True
     display_order: int = 0
+    option_group: str = "EXCLUDE"  # SET_UPGRADE | EXCLUDE | SET_SIDE | SET_DRINK
 
 
 class MenuOptionPatchIn(BaseModel):
@@ -113,3 +115,4 @@ class MenuOptionPatchIn(BaseModel):
     additional_price: Decimal | None = None
     is_available: bool | None = None
     display_order: int | None = None
+    option_group: str | None = None

@@ -6,7 +6,7 @@
 // 전부 payPayment 대기화면(바코드/QR 일러스트)으로 수렴하므로 'pay' → QR_PAY 가 가장 근접.
 // ─────────────────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 const METHOD_MAP = { card: 'CARD', cash: 'CASH', pay: 'QR_PAY' }
 
 export async function processPayment({ orderId, method, amount }) {

@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
         input: {
           main:   fileURLToPath(new URL('./index.html', import.meta.url)),
           signup: fileURLToPath(new URL('./signup.html', import.meta.url)),
+          admin:  fileURLToPath(new URL('./admin.html', import.meta.url)),
         },
         onwarn(warning, warn) {
           if (warning.code === 'SOURCEMAP_ERROR') return
@@ -63,6 +64,7 @@ export default defineConfig(({ mode }) => {
         '/ws': { target: 'ws://localhost:8000', ws: true },
         '/api': { target: 'http://localhost:8000' },
         '/ai_modules': { target: 'http://localhost:8000' },
+        '/static': { target: 'http://localhost:8000' },
       },
     },
   }

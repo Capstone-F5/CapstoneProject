@@ -197,6 +197,20 @@ async def get_user_coupon_by_code(db: AsyncSession, user_id: str, code: str) -> 
     return result.scalar_one_or_none()
 
 
+VALID_TIERS = {"BASIC", "SILVER", "GOLD"}
+
+
+async def update_user_tier(db: AsyncSession, user_id: str, tier: str) -> Membership:
+    membership = await get_membership(db, user_id)
+    if membership is None:
+        membership = Membership(user_id=user_id, tier=tier)
+        db.add(membership)
+    else:
+        membership.tier = tier
+    await db.flush()
+    return membership
+
+
 async def mark_coupon_used(db: AsyncSession, user_coupon_id: str) -> None:
     """쿠폰 사용 완료 처리. is_used=True, used_at=now(), coupons.used_count += 1."""
     user_coupon = await db.get(UserCoupon, user_coupon_id)

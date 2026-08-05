@@ -1,7 +1,7 @@
 // 카드리더/현금수납기 등 물리적 결제 장치 트리거 — 지금은 백엔드(api/hardware.py)가
 // 시뮬레이션만 한다. 나중에 아두이노 등 실제 하드웨어를 연동할 때는 백엔드 내부 구현만
 // 바꾸면 되고, 이 함수의 시그니처·호출부(CartScreen.jsx)는 그대로 유지된다.
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 export async function triggerHardwareAction(action, orderId = null) {
   try {

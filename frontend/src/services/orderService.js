@@ -1,6 +1,6 @@
 import { getSessionId } from './session'
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 const ORDER_TYPE_MAP = { 'dine-in': 'EAT_IN', takeout: 'TAKE_OUT' }
 
 async function safeDetail(res) {
@@ -45,6 +45,27 @@ export async function validateCoupon(code, subtotal) {
   }
   const d = await res.json()
   return { valid: true, discountAmount: Number(d.discount_amount), finalAmount: Number(d.final_amount) }
+}
+
+export async function fetchActiveDiscounts() {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/active-discounts`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch {
+    return []
+  }
+}
+
+export async function previewDiscount() {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/preview-discount?session_id=${getSessionId()}`)
+    if (!res.ok) return { discountAmount: 0, applicable: [] }
+    const d = await res.json()
+    return { discountAmount: d.discount_amount, finalAmount: d.final_amount, applicable: d.applicable }
+  } catch {
+    return { discountAmount: 0, applicable: [] }
+  }
 }
 
 export async function getOrderStatus(orderId) {

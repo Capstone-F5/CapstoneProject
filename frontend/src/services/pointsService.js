@@ -7,7 +7,7 @@
 // /api/user/register 를 거쳐야 한다.
 // ─────────────────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_API_URL
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 /**
  * 전화번호로 고객 정보를 조회한다. 미등록(404)이어도 에러를 던지지 않고 registered:false 를

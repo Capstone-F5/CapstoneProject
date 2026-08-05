@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import uuid
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,13 +20,53 @@ from schemas.menu_schemas import (
     MenuOptionIn,
     MenuOptionOut,
     MenuOptionPatchIn,
+    MenuResponse,
 )
+
+_UPLOAD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "static", "uploads", "menu",
+)
+_ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 
 router = APIRouter(
     prefix="/api/admin",
     tags=["admin-menu"],
     dependencies=[Depends(get_current_admin)],
 )
+
+
+# --- 이미지 업로드 -----------------------------------------------------------
+@router.post("/upload/image")
+async def upload_menu_image(file: UploadFile = File(...)):
+    if file.content_type not in _ALLOWED_MIME:
+        raise HTTPException(400, "jpg, png, webp, gif 이미지만 업로드 가능합니다")
+    content = await file.read()
+    if len(content) > _MAX_BYTES:
+        raise HTTPException(400, "파일 크기는 5MB 이하여야 합니다")
+    os.makedirs(_UPLOAD_DIR, exist_ok=True)
+    ext = (file.filename or "img").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+        ext = "jpg"
+    filename = f"{uuid.uuid4()}.{ext}"
+    with open(os.path.join(_UPLOAD_DIR, filename), "wb") as f:
+        f.write(content)
+    return {"url": f"/static/uploads/menu/{filename}"}
+
+
+# --- 관리자용 메뉴 전체 조회 (숨김 카테고리 + 품절 메뉴 포함) --------------
+@router.get("/menu", response_model=MenuResponse)
+async def get_admin_menu(db: AsyncSession = Depends(get_session)):
+    categories = await menu_dao.get_all_categories_admin(db)
+    menu_items: dict[str, list] = {}
+    for cat in categories:
+        items = await menu_dao.get_menu_items_by_category_admin(db, cat.id)
+        menu_items[cat.name_en.lower()] = [MenuItemOut.model_validate(i) for i in items]
+    return MenuResponse(
+        categories=[CategoryOut.model_validate(c) for c in categories],
+        menu_items=menu_items,
+    )
 
 
 # --- 카테고리 ---------------------------------------------------------------
@@ -168,3 +212,45 @@ async def delete_menu_option(
     await db.commit()
     invalidate_cache()
     return {"ok": True}
+
+
+# --- 세트 공통 구성 (SET_SIDE / SET_DRINK) 일괄 관리 -------------------------
+
+@router.get("/set-options")
+async def get_set_options(db: AsyncSession = Depends(get_session)):
+    """SET_SIDE / SET_DRINK 대표 옵션 목록 조회"""
+    data = await menu_dao.get_set_common_options(db)
+    def _fmt(opt):
+        return {
+            "name_ko": opt.name_ko,
+            "name_en": opt.name_en,
+            "additional_price": float(opt.additional_price),
+            "option_group": opt.option_group,
+        }
+    return {
+        "SET_SIDE":  [_fmt(o) for o in data["SET_SIDE"]],
+        "SET_DRINK": [_fmt(o) for o in data["SET_DRINK"]],
+    }
+
+
+from pydantic import BaseModel as _BaseModel
+
+class _SetOptionPatch(_BaseModel):
+    option_group: str          # SET_SIDE | SET_DRINK
+    name_ko: str
+    additional_price: float
+
+
+@router.patch("/set-options")
+async def update_set_option(payload: _SetOptionPatch, db: AsyncSession = Depends(get_session)):
+    """name_ko 기준으로 해당 그룹의 모든 옵션 additional_price 일괄 수정"""
+    if payload.option_group not in ("SET_SIDE", "SET_DRINK"):
+        raise HTTPException(400, "option_group은 SET_SIDE 또는 SET_DRINK여야 합니다")
+    count = await menu_dao.bulk_update_set_option(
+        db, payload.option_group, payload.name_ko, payload.additional_price
+    )
+    if count == 0:
+        raise HTTPException(404, f"'{payload.name_ko}' 옵션을 찾을 수 없습니다")
+    await db.commit()
+    invalidate_cache()
+    return {"ok": True, "updated": count}

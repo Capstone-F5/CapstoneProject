@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # 제스처/수집 라우터는 mediapipe 의존 — 환경에 따라 로드 실패할 수 있으므로 가드.
 try:
@@ -84,6 +85,11 @@ app.include_router(admin_coupons_router)
 app.include_router(admin_discounts_router)
 app.include_router(admin_payments_router)
 app.include_router(admin_stats_router)
+
+
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
 @app.get("/health")

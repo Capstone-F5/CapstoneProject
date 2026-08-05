@@ -62,6 +62,7 @@ function adaptCartItem(ci, menuById) {
   return {
     cartId: ci.cart_item_id,
     id: ci.menu_item_id,
+    categoryId: menu?.categoryId ?? null,
     name: menu?.name ?? ci.name_ko,
     image: isSet ? (menu?.setImage ?? menu?.image) : menu?.image,
     type: isSet ? 'set' : 'single',
