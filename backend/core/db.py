@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv(os.path.join(_project_root, ".env"))
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -61,6 +62,16 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all은 기존 테이블의 새 컬럼을 추가하지 않으므로 로컬 DB를 보정한다.
+        has_admin_note = await conn.scalar(text("""
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'orders'
+              AND COLUMN_NAME = 'admin_note'
+        """))
+        if not has_admin_note:
+            await conn.execute(text("ALTER TABLE orders ADD COLUMN admin_note TEXT NULL"))
 
     async with SessionLocal() as session:
         await seed_menu(session)

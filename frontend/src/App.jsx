@@ -82,7 +82,8 @@ function adaptCartItem(ci, menuById) {
 function AppContent() {
   const { setLocale } = useLocale()
   // UI에서 쓰는 메뉴 데이터와 동일한 소스 — API 연동 시에도 자동 반영
-  const { menuData } = useMenuData()
+  const { menuData, isLoading: isMenuLoading, error: menuError, retry: retryMenu } = useMenuData()
+  const activeDiscounts = menuData?.activeDiscounts ?? []
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
   const [orderType, setOrderType] = useState(null)
@@ -694,7 +695,7 @@ function AppContent() {
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
-  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen }
+  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, menuData, activeDiscounts, isLoading: isMenuLoading, error: menuError, retry: retryMenu }
 
   const screens = {
     start:       <StartScreen {...props} />,

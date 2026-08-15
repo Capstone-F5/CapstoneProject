@@ -1,6 +1,6 @@
 import useT from '../i18n/useT'
 
-export default function SingleSetModal({ item, onSelect, onClose, setSurcharge }) {
+export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, singleDiscount, setDiscount }) {
   const t = useT()
   if (!item) return null
 
@@ -67,6 +67,7 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge }
             image={item.image}
             alt={item.name}
             price={item.price}
+            discountedPrice={singleDiscount?.discountedPrice}
             kcal={item.kcal}
             label={t('singleLabel')}
             won={t('won')}
@@ -76,6 +77,7 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge }
             image={item.setImage ?? item.image}
             alt={`${item.name} ${t('set')}`}
             price={setPrice}
+            discountedPrice={setDiscount?.discountedPrice}
             kcal={setKcal}
             label={t('setLabel')}
             won={t('won')}
@@ -87,7 +89,7 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge }
   )
 }
 
-function ChoiceCard({ image, alt, price, kcal, label, won, onClick }) {
+function ChoiceCard({ image, alt, price, discountedPrice, kcal, label, won, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -104,12 +106,16 @@ function ChoiceCard({ image, alt, price, kcal, label, won, onClick }) {
         style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
       />
       <div style={{ padding: '10px 8px 14px', textAlign: 'center' }}>
-        <div style={{
-          fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900,
-          color: '#1a1a1a', marginBottom: 2,
-        }}>
-          {price.toLocaleString()} {won}
-        </div>
+        {discountedPrice != null && discountedPrice < price ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 2 }}>
+            <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{price.toLocaleString()} {won}</span>
+            <span style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#e44' }}>{discountedPrice.toLocaleString()} {won}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
+            {price.toLocaleString()} {won}
+          </div>
+        )}
         <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
           {kcal != null ? `${kcal} kcal` : '- kcal'}
         </div>

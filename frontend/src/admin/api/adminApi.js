@@ -140,8 +140,16 @@ export async function fetchAdminOrders(status) {
   return req('GET', `/api/admin/orders${q}`)
 }
 
+export async function fetchAdminOrder(orderId) {
+  return req('GET', `/api/admin/orders/${encodeURIComponent(orderId)}`)
+}
+
 export async function updateOrderStatus(orderId, status) {
   return req('PATCH', `/api/admin/orders/${orderId}/status?status=${encodeURIComponent(status)}`)
+}
+
+export async function updateOrderNote(orderId, adminNote) {
+  return req('PATCH', `/api/admin/orders/${orderId}/note`, { admin_note: adminNote })
 }
 
 // ── Payments (Real API) ───────────────────────────────

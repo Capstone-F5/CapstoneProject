@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from decimal import Decimal
-from core.models import Order, OrderItem, Cart
+from core.models import Order, OrderItem, Cart, Payment
 
 async def create_order_from_cart(
     db: AsyncSession,
@@ -66,6 +66,7 @@ async def get_recent_orders_by_user(
 ) -> list[Order]:
     result = await db.execute(
         select(Order)
+        .join(Payment, Payment.order_id == Order.id)
         .where(Order.user_id == user_id)
         .options(
             selectinload(Order.items).selectinload(OrderItem.menu_item),
@@ -74,14 +75,14 @@ async def get_recent_orders_by_user(
         .order_by(Order.created_at.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    return result.scalars().unique().all()
 
 
 async def list_orders(
     db: AsyncSession, status: str | None = None, order_type: str | None = None
 ) -> list[Order]:
     """관리자용 주문 목록 조회 (최신순 정렬)"""
-    query = select(Order).options(
+    query = select(Order).join(Payment, Payment.order_id == Order.id).options(
         selectinload(Order.items).selectinload(OrderItem.menu_item),
         selectinload(Order.payments),
     )
@@ -91,7 +92,7 @@ async def list_orders(
         query = query.where(Order.order_type == order_type)
 
     result = await db.execute(query.order_by(Order.created_at.desc()))
-    return result.scalars().all()
+    return result.scalars().unique().all()
 
 
 async def update_order_status(db: AsyncSession, order_id: str, new_status: str) -> Order | None:
@@ -99,5 +100,13 @@ async def update_order_status(db: AsyncSession, order_id: str, new_status: str) 
     order = await get_order_by_id(db, order_id)
     if order:
         order.status = new_status
+        await db.flush()
+    return order
+
+
+async def update_order_note(db: AsyncSession, order_id: str, admin_note: str) -> Order | None:
+    order = await get_order_by_id(db, order_id)
+    if order:
+        order.admin_note = admin_note or None
         await db.flush()
     return order

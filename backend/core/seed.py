@@ -138,7 +138,7 @@ _IMAGES: dict[str, tuple[str | None, str | None]] = {
     "burger_crab": ("/images/burgers/게살버거.webp", "/images/sets/게살버거 세트.webp"),
     "burger_chicken_thigh": ("/images/burgers/치킨다릿살버거.webp", "/images/sets/치킨다릿살버거 세트.webp"),
     "burger_double_bulgogi": ("/images/burgers/더블불고기버거.webp", "/images/sets/더블불고기버거 세트.webp"),
-    "burger_double_cheese": (None, None),  # 대응하는 이미지 에셋이 아직 없음
+    "burger_double_cheese": ("/images/burgers/더블치즈버거.png", None),
     "burger_chicken_breast": ("/images/burgers/치킨가슴살버거.webp", "/images/sets/치킨가슴살버거 세트.webp"),
     "burger_shrimp": ("/images/burgers/새우버거.webp", "/images/sets/새우버거 세트.webp"),
     "burger_bulgogi": ("/images/burgers/불고기버거.webp", "/images/sets/불고기버거 세트.webp"),
@@ -235,6 +235,13 @@ async def seed_menu(session: AsyncSession) -> None:
     """이미 시드되어 있으면 skip."""
     existing = (await session.execute(select(MenuItem))).first()
     if existing:
+        # 기존 개발 DB에도 새 메뉴 이미지를 반영한다.
+        double_cheese = await session.scalar(
+            select(MenuItem).where(MenuItem.name_en == "Double Cheese Burger")
+        )
+        if double_cheese and double_cheese.image_url != "/images/burgers/더블치즈버거.png":
+            double_cheese.image_url = "/images/burgers/더블치즈버거.png"
+            await session.commit()
         return
 
     allergen_code_map = await seed_allergens(session)

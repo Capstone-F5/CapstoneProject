@@ -4,7 +4,7 @@ import { validateCoupon } from '../services/orderService'
 
 // QR/바코드 스캔 + 수동 입력 겸용 쿠폰 입력 → 검증 → 확인 모달
 // onDetect(code, validationInfo): 사용하기 버튼 클릭 시 호출
-export default function CouponScanModal({ onDetect, onClose, total }) {
+export default function CouponScanModal({ onDetect, onClose, total, phone = null }) {
   const videoRef  = useRef(null)
   const readerRef = useRef(null)
 
@@ -50,7 +50,7 @@ export default function CouponScanModal({ onDetect, onClose, total }) {
     setChecking(true)
     stopCamera()
     try {
-      const info = await validateCoupon(trimmed, total)
+      const info = await validateCoupon(trimmed, total, phone)
       if (!info.valid) {
         setCheckError(info.message || '유효하지 않은 쿠폰입니다')
         setChecking(false)

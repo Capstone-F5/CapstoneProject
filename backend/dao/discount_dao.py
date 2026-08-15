@@ -1,5 +1,7 @@
+from datetime import date
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from core.models import Discount
 from schemas.coupon_schemas import DiscountIn
 
@@ -9,9 +11,16 @@ async def list_discounts(db: AsyncSession) -> list[Discount]:
     return result.scalars().all()
 
 
-async def get_active_discounts(db: AsyncSession) -> list[Discount]:
-    """현재 활성화된 할인 목록 (주문 계산에 사용)"""
-    result = await db.execute(select(Discount).where(Discount.is_active == True))
+async def get_active_discounts(db: AsyncSession, *, today: date | None = None) -> list[Discount]:
+    """오늘 적용 가능한 활성 할인 목록 (주문 계산과 공개 조회에 공통 사용)."""
+    today = today or date.today()
+    result = await db.execute(
+        select(Discount).where(
+            Discount.is_active.is_(True),
+            or_(Discount.valid_from.is_(None), Discount.valid_from <= today),
+            or_(Discount.valid_until.is_(None), Discount.valid_until >= today),
+        )
+    )
     return result.scalars().all()
 
 

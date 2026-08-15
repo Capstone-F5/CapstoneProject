@@ -37,8 +37,9 @@ export async function createOrder({ orderType, phone = null, couponCode = null, 
 /**
  * 결제 진행 전 쿠폰 코드를 미리 검증한다 (주문 생성 없이 할인 금액만 미리 확인).
  */
-export async function validateCoupon(code, subtotal) {
-  const res = await fetch(`${API_BASE}/api/orders/validate-coupon?code=${encodeURIComponent(code)}&subtotal=${subtotal}`)
+export async function validateCoupon(code, subtotal, phone = null) {
+  const phoneParam = phone ? `&phone=${encodeURIComponent(phone)}` : ''
+  const res = await fetch(`${API_BASE}/api/orders/validate-coupon?code=${encodeURIComponent(code)}&subtotal=${subtotal}${phoneParam}`)
   if (!res.ok) {
     const message = (await safeDetail(res)) || `쿠폰 확인 실패 (${res.status})`
     return { valid: false, message }
@@ -49,7 +50,7 @@ export async function validateCoupon(code, subtotal) {
 
 export async function fetchActiveDiscounts() {
   try {
-    const res = await fetch(`${API_BASE}/api/orders/active-discounts`)
+    const res = await fetch(`${API_BASE}/api/discounts/active`)
     if (!res.ok) return []
     return await res.json()
   } catch {

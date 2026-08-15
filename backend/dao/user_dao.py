@@ -69,7 +69,6 @@ async def get_coupon_by_code(db: AsyncSession, code: str) -> Coupon | None:
     result = await db.execute(
         select(Coupon)
         .where(Coupon.code == code)
-        .where(Coupon.is_active == True)
     )
     return result.scalar_one_or_none()
 
@@ -220,6 +219,9 @@ async def mark_coupon_used(db: AsyncSession, user_coupon_id: str) -> None:
         coupon = await db.get(Coupon, user_coupon.coupon_id)
         if coupon:
             coupon.used_count += 1
+            # 사용 횟수가 제한된 쿠폰은 마지막 사용 즉시 비활성화한다.
+            if coupon.max_usage_count > 0 and coupon.used_count >= coupon.max_usage_count:
+                coupon.is_active = False
         await db.flush()
 
 
@@ -231,5 +233,8 @@ async def restore_coupon(db: AsyncSession, user_coupon_id: str) -> None:
         user_coupon.used_at = None
         coupon = await db.get(Coupon, user_coupon.coupon_id)
         if coupon:
-            coupon.used_count -= 1
+            coupon.used_count = max(0, coupon.used_count - 1)
+            # 환불로 사용 횟수가 다시 남으면 재사용 가능 상태로 복구한다.
+            if coupon.max_usage_count > 0 and coupon.used_count < coupon.max_usage_count:
+                coupon.is_active = True
         await db.flush()

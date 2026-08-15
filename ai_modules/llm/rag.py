@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.core.db import SessionLocal
-from backend.core.models import MenuItem, MenuItemAllergen
+from backend.core.models import Category, Discount, MenuItem, MenuItemAllergen
 
 
 _index: FAISS | None = None
@@ -85,6 +85,54 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
 
 
 _meta_map: dict[str, dict[str, Any]] = {}
+_discount_context: str | None = None
+
+
+async def get_active_discount_context() -> str:
+    """Return a small, factual discount summary for the assistant system context."""
+    global _discount_context
+    if _discount_context is not None:
+        return _discount_context
+
+    from datetime import date
+
+    today = date.today()
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(Discount).where(
+                Discount.is_active.is_(True),
+                Discount.applicable_tier == "ALL",
+                (Discount.valid_from.is_(None) | (Discount.valid_from <= today)),
+                (Discount.valid_until.is_(None) | (Discount.valid_until >= today)),
+            )
+        )
+        discounts = result.scalars().all()
+        category_ids = [d.category_id for d in discounts if d.category_id]
+        menu_ids = [d.menu_item_id for d in discounts if d.menu_item_id]
+        categories = {}
+        menu_names = {}
+        if category_ids:
+            category_rows = await session.execute(select(Category).where(Category.id.in_(category_ids)))
+            categories = {category.id: category.name_ko for category in category_rows.scalars()}
+        if menu_ids:
+            menu_rows = await session.execute(select(MenuItem).where(MenuItem.id.in_(menu_ids)))
+            menu_names = {menu.id: menu.name_ko for menu in menu_rows.scalars()}
+
+    if not discounts:
+        _discount_context = "현재 안내할 자동 할인은 없습니다. 할인이나 무료 제공을 임의로 약속하지 마세요."
+        return _discount_context
+
+    labels = []
+    for discount in discounts:
+        target = "전체 메뉴"
+        if discount.target_type == "CATEGORY":
+            target = f"{categories.get(discount.category_id, '해당')} 카테고리"
+        elif discount.target_type == "MENU":
+            target = menu_names.get(discount.menu_item_id, "해당 메뉴")
+        value = f"{discount.discount_value}%" if discount.discount_type == "PERCENT" else f"{discount.discount_value}원"
+        labels.append(f"- {discount.name_ko}: {target} {value} 자동 할인")
+    _discount_context = "현재 적용 가능한 자동 할인:\n" + "\n".join(labels)
+    return _discount_context
 
 
 async def _build_index() -> FAISS:
@@ -147,9 +195,10 @@ async def search_menu(query: str, k: int = 5) -> list[dict[str, Any]]:
 
 def invalidate_cache() -> None:
     """메뉴 변경 시 RAG 캐시 무효화."""
-    global _index, _meta_map
+    global _index, _meta_map, _discount_context
     _index = None
     _meta_map = {}
+    _discount_context = None
 
 # --- 지시서 명세 4단계 규격 호환을 위한 스텁/래퍼 인터페이스 함수 ---
 

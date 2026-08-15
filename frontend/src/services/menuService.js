@@ -67,7 +67,7 @@ function adaptItem(i, locale) {
 
 export async function fetchActiveDiscounts() {
   try {
-    const res = await fetch(`${API_BASE}/api/orders/active-discounts`)
+    const res = await fetch(`${API_BASE}/api/discounts/active`)
     if (!res.ok) return []
     return await res.json()
   } catch {
