@@ -15,10 +15,40 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ai_modules.llm.memory import reset_memory
+from core.db import SessionLocal
 from core.llm_service import run_agent, run_agent_stream
+from dao import cart_dao
 
 
 router = APIRouter(prefix="/ai_modules", tags=["llm"])
+
+
+async def _authoritative_cart(session_id: str, fallback: list[dict]) -> list[dict]:
+    """LLM 컨텍스트는 React state가 아닌 DB 장바구니를 최우선으로 사용한다.
+
+    터치 담기 직후에는 브라우저의 cart state가 아직 재렌더되지 않을 수 있다. 이때
+    빈 스냅샷을 그대로 LLM에 넘기면 실제로 담긴 메뉴가 없다고 잘못 안내할 수 있다.
+    """
+    try:
+        async with SessionLocal() as db:
+            cart = await cart_dao.get_cart_with_items(db, session_id)
+            if cart is None:
+                return []
+            return [
+                {
+                    "cart_id": item.id,
+                    "menu_id": item.menu_item_id,
+                    "name": item.menu_item.name_ko if item.menu_item else None,
+                    "quantity": item.quantity,
+                    "unit_price": float(item.unit_price),
+                    "item_type": "single",
+                    "exclusion": item.special_note or "없음",
+                }
+                for item in cart.items
+            ]
+    except Exception:
+        # DB가 일시적으로 읽히지 않는 경우에는 기존 클라이언트 스냅샷으로 계속 처리한다.
+        return fallback
 
 
 class CartLine(BaseModel):
@@ -55,7 +85,7 @@ class LLMRequest(BaseModel):
 @router.post("/llm")
 async def llm(req: LLMRequest):
     try:
-        cart_dicts = [c.model_dump() for c in req.cart]
+        cart_dicts = await _authoritative_cart(req.session_id, [c.model_dump() for c in req.cart])
         return await run_agent(
             req.session_id,
             req.input,
@@ -75,7 +105,7 @@ async def llm(req: LLMRequest):
 async def llm_stream(req: LLMRequest):
     """SSE 스트리밍 엔드포인트 — 토큰 단위로 text/event-stream 반환."""
     try:
-        cart_dicts = [c.model_dump() for c in req.cart]
+        cart_dicts = await _authoritative_cart(req.session_id, [c.model_dump() for c in req.cart])
         return StreamingResponse(
             run_agent_stream(
                 req.session_id,

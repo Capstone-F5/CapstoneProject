@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +15,13 @@ router = APIRouter(
 )
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """DB의 naive UTC datetime을 timezone-aware UTC 값으로 직렬화한다."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _to_payment_admin_out(p) -> PaymentAdminOut:
     return PaymentAdminOut(
         payment_id=p.id,
@@ -23,8 +32,8 @@ def _to_payment_admin_out(p) -> PaymentAdminOut:
         status=p.status,
         pg_transaction_id=p.pg_transaction_id,
         failure_reason=p.failure_reason,
-        paid_at=p.paid_at,
-        refunded_at=p.refunded_at,
+        paid_at=_as_utc(p.paid_at),
+        refunded_at=_as_utc(p.refunded_at),
     )
 
 

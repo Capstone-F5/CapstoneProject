@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from decimal import Decimal
 
 class OrderIn(BaseModel):
@@ -44,3 +44,8 @@ class OrderAdminOut(BaseModel):
     created_at: str
     items: list[OrderItemOut]
     payment_status: str | None  # 연결된 Payment.status, 결제 전이면 None
+    admin_note: str | None = None
+
+
+class OrderAdminNoteIn(BaseModel):
+    admin_note: str = Field(max_length=500)

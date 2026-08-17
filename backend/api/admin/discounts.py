@@ -5,6 +5,7 @@ from core.db import get_session
 from core.security import get_current_admin
 from dao import discount_dao
 from schemas.coupon_schemas import DiscountIn, DiscountOut
+from ai_modules.llm.rag import invalidate_cache
 
 router = APIRouter(
     prefix="/api/admin/discounts",
@@ -29,6 +30,7 @@ async def create_discount(body: DiscountIn, db: AsyncSession = Depends(get_sessi
     discount = await discount_dao.create_discount(db, body)
     await db.commit()
     await db.refresh(discount)
+    invalidate_cache()
     return discount
 
 
@@ -39,6 +41,7 @@ async def toggle_discount(id: str, db: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=404, detail="할인을 찾을 수 없습니다.")
     await db.commit()
     await db.refresh(discount)
+    invalidate_cache()
     return discount
 
 
@@ -48,4 +51,5 @@ async def delete_discount(id: str, db: AsyncSession = Depends(get_session)):
     if not ok:
         raise HTTPException(status_code=404, detail="할인을 찾을 수 없습니다.")
     await db.commit()
+    invalidate_cache()
     return {"ok": True}

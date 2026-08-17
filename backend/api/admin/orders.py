@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.security import get_current_admin
 from dao import order_dao
-from schemas.order_schemas import OrderAdminOut, OrderItemOut
+from schemas.order_schemas import OrderAdminNoteIn, OrderAdminOut, OrderItemOut
 
 # 명세서 규칙: 상태 전이는 앞으로만 가능 (CANCELLED는 COMPLETED 제외하고 항상 허용)
 _ORDER_STEPS = ["RECEIVED", "COOKING", "READY", "COMPLETED"]
@@ -54,6 +54,7 @@ def _to_order_admin_out(order) -> OrderAdminOut:
         items=items_out,
         created_at=order.created_at.isoformat(),
         payment_status=payment_status,
+        admin_note=order.admin_note,
     )
 
 
@@ -66,6 +67,18 @@ async def get_admin_orders(
     """관리자 주문 목록 조회"""
     orders = await order_dao.list_orders(db, status=status, order_type=order_type)
     return [_to_order_admin_out(order) for order in orders]
+
+
+@router.get("/{order_id}", response_model=OrderAdminOut)
+async def get_admin_order_detail(
+    order_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """관리자는 주문 생성 주체와 관계없이 모든 주문 상세를 조회할 수 있다."""
+    order = await order_dao.get_order_by_id(db, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    return _to_order_admin_out(order)
 
 
 @router.patch("/{order_id}/status", response_model=OrderAdminOut)
@@ -91,3 +104,16 @@ async def update_status(
 
     updated_order = await order_dao.get_order_by_id(db, order_id)
     return _to_order_admin_out(updated_order)
+
+
+@router.patch("/{order_id}/note", response_model=OrderAdminOut)
+async def update_note(
+    order_id: str,
+    payload: OrderAdminNoteIn,
+    db: AsyncSession = Depends(get_session),
+):
+    order = await order_dao.update_order_note(db, order_id, payload.admin_note.strip())
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    await db.commit()
+    return _to_order_admin_out(order)

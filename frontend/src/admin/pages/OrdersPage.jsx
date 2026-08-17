@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { fetchAdminOrders, updateOrderStatus } from '../api/adminApi.js'
+import { fetchAdminOrders, updateOrderNote, updateOrderStatus } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 
 const STATUS_FILTERS = [
@@ -19,8 +19,122 @@ function nextStatus(current) {
   return idx >= 0 && idx < ORDER_STATUSES.length - 1 ? ORDER_STATUSES[idx + 1] : null
 }
 
+const STATUS_LABELS = { COOKING: '조리중', READY: '준비완료', COMPLETED: '완료' }
+
+function StatusAdvanceControl({ status, onChange, compact = false, openUp = false }) {
+  const [open, setOpen] = useState(false)
+  const index = ORDER_STATUSES.indexOf(status)
+  const options = index >= 0 ? ORDER_STATUSES.slice(index + 1) : []
+  if (!options.length) return null
+
+  const next = options[0]
+  return (
+    <div style={{ display:'inline-flex', alignItems:'stretch', verticalAlign:'middle', position:'relative' }}>
+      <button
+        type="button"
+        className={`btn-primary${compact ? ' btn-sm' : ''}`}
+        style={{
+          borderTopRightRadius: 0,
+          borderBottomRightRadius: 0,
+          ...(compact ? { padding: '4px 8px' } : { flex: 1, padding: '12px', fontSize: '14px' }),
+        }}
+        onClick={() => onChange(next)}
+      >
+        {nextLabel(status)}
+      </button>
+      <button
+        type="button"
+        className="btn-primary"
+        style={{
+          width: compact ? '30px' : '40px',
+          padding: 0,
+          borderTopLeftRadius: 0,
+          borderBottomLeftRadius: 0,
+          borderLeft: '1px solid rgba(255,255,255,.45)',
+          cursor: 'pointer',
+          textAlign: 'center',
+        }}
+        aria-label="다른 주문 상태 선택"
+        aria-expanded={open}
+        onClick={() => setOpen(prev => !prev)}
+      >
+        ▾
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position:'absolute',
+            ...(openUp ? { bottom:'calc(100% + 4px)' } : { top:'calc(100% + 4px)' }),
+            right:0, zIndex:30,
+            minWidth: compact ? '132px' : '160px', padding:'4px',
+            border:'1px solid #ddd', borderRadius:'6px', background:'#fff',
+            boxShadow:'0 4px 12px rgba(0,0,0,.16)',
+          }}
+        >
+          {options.map(value => (
+            <button
+              key={value}
+              type="button"
+              role="menuitem"
+              onClick={() => { setOpen(false); onChange(value) }}
+              style={{
+                display:'block', width:'100%', padding:'8px 10px', border:0,
+                borderRadius:'4px', background:'transparent', color:'#333',
+                textAlign:'left', fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#f5f5f5' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              {STATUS_LABELS[value]}로 변경
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrderNoteInput({ order, onSave }) {
+  const [note, setNote] = useState(order.admin_note ?? '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => setNote(order.admin_note ?? ''), [order.order_id, order.admin_note])
+
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(order.order_id, note)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:'4px', minWidth:0 }}>
+      <input
+        value={note}
+        maxLength={500}
+        placeholder="비고 입력"
+        onChange={e => setNote(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') save() }}
+        style={{ minWidth:0, width:'100%', padding:'5px 7px', border:'1px solid #ddd', borderRadius:'4px', fontSize:'12px' }}
+        aria-label={`주문 ${order.order_number} 비고`}
+      />
+      <button type="button" className="chip" disabled={saving} onClick={save} style={{ padding:'4px 7px', fontSize:'11px', whiteSpace:'nowrap' }}>
+        {saving ? '…' : '저장'}
+      </button>
+    </div>
+  )
+}
+
 function nextLabel(status) {
-  return { RECEIVED: '조리중으로', COOKING: '준비완료로', READY: '완료로' }[status]
+  return {
+    RECEIVED: '\uC870\uB9AC\uC911\uC73C\uB85C \uBCC0\uACBD',
+    COOKING: '\uC900\uBE44\uC644\uB8CC\uB85C \uBCC0\uACBD',
+    READY: '\uC644\uB8CC\uB85C \uBCC0\uACBD',
+  }[status]
 }
 
 function fmt(dt) {
@@ -58,9 +172,30 @@ function ElapsedBadge({ createdAt, now }) {
   )
 }
 
+function optionLabels(options) {
+  if (!Array.isArray(options)) {
+    if (typeof options !== 'string') return []
+    try {
+      const parsed = JSON.parse(options)
+      options = Array.isArray(parsed) ? parsed : [options]
+    } catch {
+      options = [options]
+    }
+  }
+
+  return options.map(option => {
+    if (typeof option === 'string' || typeof option === 'number') return String(option)
+    if (option && typeof option === 'object') {
+      return String(option.name_ko ?? option.name ?? option.label ?? option.option_id ?? '')
+    }
+    return ''
+  }).filter(Boolean)
+}
+
 function OrderDetail({ order, onClose, onStatusChange }) {
   if (!order) return null
   const next = nextStatus(order.status)
+  const items = Array.isArray(order.items) ? order.items : []
 
   return (
     <div className="detail-panel" style={{ marginLeft: '16px' }}>
@@ -78,15 +213,17 @@ function OrderDetail({ order, onClose, onStatusChange }) {
 
       <div style={{ fontWeight:'700', fontSize:'14px', marginBottom:'12px' }}>주문 항목</div>
       <div style={{ display:'flex', flexDirection:'column', gap:'14px', marginBottom:'20px' }}>
-        {order.items.map((item, i) => (
+        {items.map((item, i) => {
+          const options = optionLabels(item.selected_options)
+          return (
           <div key={i}>
             <div style={{ display:'flex', justifyContent:'space-between', fontWeight:'500', marginBottom:'4px' }}>
               <span>{item.name_ko} X{item.quantity}</span>
               <span>{Number(item.total_price).toLocaleString('ko-KR')}원</span>
             </div>
-            {item.selected_options?.length > 0 && (
+            {options.length > 0 && (
               <div style={{ fontSize:'12px', color:'#888', paddingLeft:'8px', lineHeight:'1.8' }}>
-                {item.selected_options.map((o,j) => <div key={j}>{o}</div>)}
+                {options.map((option, j) => <div key={j}>{option}</div>)}
               </div>
             )}
             {item.special_note && (
@@ -98,7 +235,8 @@ function OrderDetail({ order, onClose, onStatusChange }) {
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="divider" />
@@ -129,13 +267,13 @@ function OrderDetail({ order, onClose, onStatusChange }) {
 
       {next && order.status !== 'CANCELLED' && (
         <div style={{ marginTop:'20px' }}>
-          <button
-            className="btn-primary"
-            style={{ width:'100%', padding:'12px', fontSize:'14px' }}
-            onClick={() => onStatusChange(order.order_id, next)}
-          >
-            {nextLabel(order.status)}으로 변경
-          </button>
+          <div style={{ display:'flex', width:'100%' }}>
+            <StatusAdvanceControl
+              status={order.status}
+              onChange={status => onStatusChange(order.order_id, status)}
+              openUp
+            />
+          </div>
         </div>
       )}
     </div>
@@ -168,7 +306,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     load()
-    timerRef.current = setInterval(load, 30000)
+    timerRef.current = setInterval(load, 10000)
     clockRef.current = setInterval(() => setNow(new Date()), 15000)
     return () => { clearInterval(timerRef.current); clearInterval(clockRef.current) }
   }, [load])
@@ -183,13 +321,33 @@ export default function OrdersPage() {
     }
   }
 
+  const handleNoteSave = async (orderId, adminNote) => {
+    try {
+      const updated = await updateOrderNote(orderId, adminNote)
+      setOrders(prev => prev.map(o => o.order_id === orderId ? updated : o))
+      setSelected(prev => prev?.order_id === orderId ? updated : prev)
+    } catch (e) {
+      alert(`비고 저장 실패: ${e.message}`)
+    }
+  }
+
+  const handleSelectOrder = (order) => {
+    if (selected?.order_id === order.order_id) {
+      setSelected(null)
+      return
+    }
+    // 목록 응답에 영수증에 필요한 주문·품목 정보가 이미 포함되어 있다.
+    // 클릭 즉시 표시해 상세 API 오류가 패널 렌더링을 막지 않도록 한다.
+    setSelected(order)
+  }
+
   const filtered = orders.filter(o => {
     if (filter === 'all')        return true
     if (filter === 'incomplete') return ['RECEIVED','COOKING','READY'].includes(o.status)
     return o.status === filter
   })
 
-  const selectedOrder = selected ? orders.find(o => o.order_id === selected.order_id) ?? null : null
+  const selectedOrder = selected
 
   if (loading) return <div className="loading-text">주문 로딩 중…</div>
   if (error)   return <div className="loading-text" style={{ color:'#c00' }}>{error}</div>
@@ -210,14 +368,14 @@ export default function OrdersPage() {
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
           <span style={{ fontSize:'12px', color:'#aaa', whiteSpace:'nowrap' }}>
-            마지막 갱신 {lastRefresh.getHours().toString().padStart(2,'0')}:{lastRefresh.getMinutes().toString().padStart(2,'0')}:{lastRefresh.getSeconds().toString().padStart(2,'0')}
+            10초 자동 갱신 · 마지막 갱신 {lastRefresh.getHours().toString().padStart(2,'0')}:{lastRefresh.getMinutes().toString().padStart(2,'0')}:{lastRefresh.getSeconds().toString().padStart(2,'0')}
           </span>
           <button className="btn-outline btn-sm" onClick={load}>새로고침</button>
         </div>
       </div>
 
       <div style={{ display:'flex', alignItems:'flex-start' }}>
-        <div className="card" style={{ flex:1, padding:'0', overflow:'hidden' }}>
+        <div className="card" style={{ flex:1, minWidth:0, padding:'0', overflow:'visible' }}>
           <table className="data-table" style={{ tableLayout:'fixed', width:'100%' }}>
             <colgroup>
               <col style={{ width: 90 }} />
@@ -226,6 +384,7 @@ export default function OrdersPage() {
               <col style={{ width: 72 }} />
               <col style={{ width: 88 }} />
               <col />
+              <col style={{ width: 210 }} />
               <col style={{ width: 170 }} />
             </colgroup>
             <thead>
@@ -237,11 +396,12 @@ export default function OrdersPage() {
                 <th>결제</th>
                 <th>금액(시각)</th>
                 <th>상태변경</th>
+                <th>비고</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={7} className="loading-text">주문이 없습니다</td></tr>
+                <tr><td colSpan={8} className="loading-text">주문이 없습니다</td></tr>
               )}
               {filtered.map(order => {
                 const next = nextStatus(order.status)
@@ -251,7 +411,7 @@ export default function OrdersPage() {
                     key={order.order_id}
                     className={isSelected ? 'selected' : ''}
                     style={{ cursor:'pointer' }}
-                    onClick={() => setSelected(isSelected ? null : order)}
+                    onClick={() => handleSelectOrder(order)}
                   >
                     <td className="order-number">#{order.order_number}</td>
                     <td>{order.order_type === 'EAT_IN' ? '매장' : '포장'}</td>
@@ -262,20 +422,23 @@ export default function OrdersPage() {
                         : <span style={{ color: '#ccc', fontSize: 12 }}>–</span>
                       }
                     </td>
-                    <td><StatusBadge type="payment" value={order.payment_status ?? 'PENDING'} /></td>
+                    <td>
+                      {order.payment_status
+                        ? <StatusBadge type="payment" value={order.payment_status} />
+                        : <span style={{ color:'#ccc', fontSize:12 }}>–</span>}
+                    </td>
                     <td>
                       <span style={{ fontWeight:'500' }}>{Number(order.final_amount).toLocaleString('ko-KR')}원</span>
                       <span style={{ color:'#bbb', marginLeft:'6px', fontSize:'12px' }}>{fmt(order.created_at)}</span>
                     </td>
                     <td onClick={e => e.stopPropagation()}>
                       {next && order.status !== 'CANCELLED' ? (
-                        <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                          <button
-                            className="btn-primary btn-sm"
-                            onClick={() => handleStatusChange(order.order_id, next)}
-                          >
-                            {nextLabel(order.status)} →
-                          </button>
+                        <div style={{ display:'flex', gap:'4px', alignItems:'center', flexWrap:'nowrap', whiteSpace:'nowrap' }}>
+                          <StatusAdvanceControl
+                            status={order.status}
+                            onChange={status => handleStatusChange(order.order_id, status)}
+                            compact
+                          />
                           <button
                             className="chip"
                             style={{ padding:'3px 10px', fontSize:'11px' }}
@@ -289,6 +452,9 @@ export default function OrdersPage() {
                           {order.status === 'COMPLETED' ? '완료됨' : '취소됨'}
                         </span>
                       )}
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <OrderNoteInput order={order} onSave={handleNoteSave} />
                     </td>
                   </tr>
                 )

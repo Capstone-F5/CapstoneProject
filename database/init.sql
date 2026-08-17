@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS orders (
     final_amount    DECIMAL(12, 2) NOT NULL DEFAULT 0,
     points_used     INT            NOT NULL DEFAULT 0,
     points_earned   INT            NOT NULL DEFAULT 0,
+    admin_note      TEXT           NULL,
     created_at      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT fk_orders_cart FOREIGN KEY (cart_id) REFERENCES carts (id),

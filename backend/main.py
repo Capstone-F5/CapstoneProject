@@ -33,6 +33,7 @@ from api.llm import router as llm_router
 from api.menu import router as menu_router
 from api.cart import router as cart_router
 from api.order import router as order_router
+from api.discounts import router as discounts_router
 from api.payment import router as payment_router
 from api.user import router as user_router
 from api.settings import router as settings_router
@@ -73,6 +74,7 @@ app.include_router(llm_router)
 app.include_router(menu_router)
 app.include_router(cart_router)
 app.include_router(order_router)
+app.include_router(discounts_router)
 app.include_router(payment_router)
 app.include_router(user_router)
 app.include_router(settings_router)

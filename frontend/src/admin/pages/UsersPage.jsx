@@ -175,7 +175,11 @@ function UserDetail({ user, onPointsAdjust, onTierChange }) {
                   <td className="order-number">#{order.order_number}</td>
                   <td>{order.order_type === 'EAT_IN' ? '매장' : '포장'}</td>
                   <td><StatusBadge value={order.status} /></td>
-                  <td><StatusBadge type="payment" value={order.payment_status ?? 'PENDING'} /></td>
+                  <td>
+                    {order.payment_status
+                      ? <StatusBadge type="payment" value={order.payment_status} />
+                      : <span style={{ color:'#ccc', fontSize:12 }}>–</span>}
+                  </td>
                   <td style={{ textAlign:'right' }}>
                     <span style={{ fontWeight:'500' }}>{order.final_amount.toLocaleString('ko-KR')}원</span>
                     <span style={{ color:'#bbb', marginLeft:'6px', fontSize:'11px' }}>

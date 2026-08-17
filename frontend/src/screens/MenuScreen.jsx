@@ -4,7 +4,6 @@ import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
 import ItemDetailModal from '../components/ItemDetailModal'
 import IdleOverlay from '../components/IdleOverlay'
-import { useMenuData } from '../hooks/useMenuData'
 import useT from '../i18n/useT'
 
 const COLS = 3
@@ -53,9 +52,8 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef, menuData, activeDiscounts = [], isLoading, error, retry }) {
   const t = useT()
-  const { menuData, isLoading, error, retry } = useMenuData()
 
   const [catId,     setCatId]     = useState('recommended')
   const [page,      setPage]      = useState(0)
@@ -302,7 +300,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     )
   }
 
-  const { categories, menuItems, setSides, setDrinks, setSurcharge, activeDiscounts = [] } = menuData
+  const { categories, menuItems, setSides, setDrinks, setSurcharge } = menuData
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -392,16 +390,18 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
       {/* ── Menu Grid ── */}
       <div
-        style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}
         onTouchStart={e => { swipeStartX.current = e.touches[0].clientX }}
         onTouchEnd={e => {
           if (swipeStartX.current === null) return
           const dx = e.changedTouches[0].clientX - swipeStartX.current
           swipeStartX.current = null
-          if (Math.abs(dx) < 50) return
-          if (dx < 0) setPage(p => Math.min(totalPages - 1, p + 1))
-          else        setPage(p => Math.max(0, p - 1))
+          if (Math.abs(dx) < 25) return
+          // 화면 터치는 제스처 인식과 같은 이동 규칙을 따른다.
+          // 페이지 끝에서는 다음/이전 카테고리로 자연스럽게 이어진다.
+          swipeRef?.current?.(dx < 0 ? 'left' : 'right')
         }}
+        onTouchCancel={() => { swipeStartX.current = null }}
+        style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px', touchAction: 'pan-y' }}
       >
         <div style={{
           display: 'grid',
@@ -532,6 +532,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           onSelect={handleTypeSelect}
           onClose={closeModal}
           setSurcharge={setSurcharge}
+          singleDiscount={computeItemDiscount(modalItem.id, modalItem.categoryId, modalItem.price, activeDiscounts)}
+          setDiscount={computeItemDiscount(modalItem.id, modalItem.categoryId, modalItem.price + setSurcharge, activeDiscounts)}
         />
       )}
 
@@ -545,6 +547,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           setSides={setSides}
           setDrinks={setDrinks}
           setSurcharge={setSurcharge}
+          activeDiscounts={activeDiscounts}
           initialQty={voiceOpts?.qty ?? null}
           initialExclusion={voiceOpts?.exclusion ?? null}
           initialSideName={voiceOpts?.sideName ?? null}
@@ -685,9 +688,10 @@ function FoodCard({ item, onClick, chatOpen, discount }) {
       display: 'flex', flexDirection: 'column',
       textAlign: 'center',
       width: '91%',
+      aspectRatio: '4 / 5',
     }}>
       <div style={{
-        width: '100%', aspectRatio: compact ? '1 / 0.30' : '1 / 0.37',
+        width: '100%', flex: 1, minHeight: 0,
         background: '#ffffff',
         padding: compact ? 4 : 6,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -707,10 +711,10 @@ function FoodCard({ item, onClick, chatOpen, discount }) {
         )}
         {discount && (
           <span style={{
-            position: 'absolute', top: 4, right: 4,
+            position: 'absolute', top: 0, right: 0,
             background: '#e44', color: '#fff',
             fontSize: smallFontSize, fontWeight: 800,
-            borderRadius: 5, padding: '2px 5px',
+            borderRadius: '0 16px 0 8px', padding: '4px 7px',
             lineHeight: 1.2,
           }}>
             {discount.label}

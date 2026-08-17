@@ -28,14 +28,39 @@ def _to_order_item_out(item: OrderItem) -> OrderItemOut:
 @router.get("/active-discounts", response_model=list[DiscountOut])
 async def get_active_discounts_public(db: AsyncSession = Depends(get_session)):
     """현재 활성화된 할인 목록 (인증 불필요, 키오스크 화면용)."""
-    return await discount_dao.get_active_discounts(db)
+    return [d for d in await discount_dao.get_active_discounts(db) if d.applicable_tier == "ALL"]
 
 
 @router.get("/validate-coupon")
-async def validate_coupon(code: str, subtotal: Decimal, db: AsyncSession = Depends(get_session)):
+async def validate_coupon(
+    code: str,
+    subtotal: Decimal,
+    phone: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """쿠폰 인식 직후 실제 결제 가능 여부를 검증한다."""
     coupon = await user_dao.get_coupon_by_code(db, code)
     if coupon is None:
         raise HTTPException(status_code=404, detail="유효하지 않은 쿠폰입니다")
+    today = _date.today()
+    if not coupon.is_active:
+        raise HTTPException(status_code=400, detail="비활성화되었거나 사용량이 소진된 쿠폰입니다")
+    if coupon.max_usage_count > 0 and coupon.used_count >= coupon.max_usage_count:
+        coupon.is_active = False
+        await db.commit()
+        raise HTTPException(status_code=400, detail="사용 횟수가 소진된 쿠폰입니다")
+    if coupon.valid_from and today < coupon.valid_from:
+        raise HTTPException(status_code=400, detail="아직 사용할 수 없는 쿠폰입니다")
+    if coupon.valid_until and today > coupon.valid_until:
+        raise HTTPException(status_code=400, detail="유효기간이 만료된 쿠폰입니다")
+    if not phone:
+        raise HTTPException(status_code=400, detail="쿠폰 사용을 위해 회원 전화번호를 먼저 확인해 주세요")
+    user = await user_dao.get_user_by_phone(db, phone)
+    if not user:
+        raise HTTPException(status_code=400, detail="쿠폰을 보유한 회원을 찾을 수 없습니다")
+    user_coupon = await user_dao.get_user_coupon_by_code(db, user.id, code)
+    if not user_coupon:
+        raise HTTPException(status_code=400, detail="보유하지 않았거나 이미 사용한 쿠폰입니다")
     if subtotal < coupon.min_order_amount:
         raise HTTPException(status_code=400, detail=f"쿠폰 최소 주문금액 {coupon.min_order_amount}원 미달입니다")
     if coupon.discount_type == "CASH":
@@ -138,6 +163,15 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
         coupon = user_coupon.coupon
         if not coupon.is_active:
             raise HTTPException(status_code=400, detail="비활성화된 쿠폰입니다.")
+        today = _date.today()
+        if coupon.max_usage_count > 0 and coupon.used_count >= coupon.max_usage_count:
+            coupon.is_active = False
+            await db.commit()
+            raise HTTPException(status_code=400, detail="사용 횟수가 소진된 쿠폰입니다.")
+        if coupon.valid_from and today < coupon.valid_from:
+            raise HTTPException(status_code=400, detail="아직 사용할 수 없는 쿠폰입니다.")
+        if coupon.valid_until and today > coupon.valid_until:
+            raise HTTPException(status_code=400, detail="유효기간이 만료된 쿠폰입니다.")
         if subtotal < coupon.min_order_amount:
             raise HTTPException(status_code=400, detail=f"최소 주문 금액({coupon.min_order_amount}원)을 충족하지 못했습니다.")
         if coupon.discount_type == "PERCENT":
@@ -147,7 +181,6 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
         user_coupon_id = user_coupon.id
 
     # 4.5. Discount 테이블 할인 적용 (ALL / CATEGORY / MENU, applicable_tier=ALL만)
-    from datetime import date as _date
     active_discounts = await discount_dao.get_active_discounts(db)
     today = _date.today()
     for disc in active_discounts:

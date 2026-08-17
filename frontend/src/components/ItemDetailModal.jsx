@@ -5,6 +5,7 @@ import { useLocale } from '../i18n/LocaleContext'
 const ItemDetailModal = forwardRef(function ItemDetailModal({
   item, type, onClose, onAdd,
   setSides = [], setDrinks = [], setSurcharge = 0,
+  activeDiscounts = [],
   // 음성 주문 시 AI가 선택한 초기값
   initialQty        = null,
   initialExclusion  = null,
@@ -76,6 +77,19 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
   const unitPrice  = item.price
     + (isSet ? setSurcharge : 0)
     + (isSet && side && drink ? side.extra + drink.extra : 0)
+  const today = new Date().toISOString().split('T')[0]
+  let discountedUnitPrice = unitPrice
+  for (const discount of activeDiscounts) {
+    const matches = discount.target_type === 'ALL'
+      || (discount.target_type === 'MENU' && discount.menu_item_id === item.id)
+      || (discount.target_type === 'CATEGORY' && discount.category_id === item.categoryId)
+    if (!matches || discount.applicable_tier !== 'ALL'
+        || (discount.valid_from && today < discount.valid_from)
+        || (discount.valid_until && today > discount.valid_until)) continue
+    discountedUnitPrice = discount.discount_type === 'PERCENT'
+      ? Math.round(discountedUnitPrice * (1 - Number(discount.discount_value) / 100))
+      : Math.max(0, discountedUnitPrice - Number(discount.discount_value))
+  }
 
   const displayImage = isSet ? (item.setImage ?? item.image) : item.image
   const displayName  = isSet ? `${item.name} ${t('set')}` : item.name
@@ -158,9 +172,16 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
               {displayName}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900 }}>
-                {unitPrice.toLocaleString()} {t('won')}
-              </span>
+              {discountedUnitPrice < unitPrice ? (
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{unitPrice.toLocaleString()} {t('won')}</span>
+                  <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900, color: '#e44' }}>{discountedUnitPrice.toLocaleString()} {t('won')}</span>
+                </span>
+              ) : (
+                <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900 }}>
+                  {unitPrice.toLocaleString()} {t('won')}
+                </span>
+              )}
               {displayKcal && (
                 <span style={{ fontSize: 11, color: '#bbb' }}>{displayKcal} kcal</span>
               )}

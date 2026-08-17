@@ -4,7 +4,6 @@ import StatusBadge from '../components/StatusBadge.jsx'
 
 const FILTERS = [
   { key: 'all',      label: '전체' },
-  { key: 'PENDING',  label: '대기' },
   { key: 'SUCCESS',  label: '완료' },
   { key: 'FAILED',   label: '실패' },
   { key: 'REFUNDED', label: '환불됨' },
@@ -12,8 +11,15 @@ const FILTERS = [
 
 function fmtDatetime(dt) {
   if (!dt) return '–'
-  const d = new Date(dt)
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+  // 과거 데이터의 timezone 없는 ISO 문자열도 UTC로 간주해 KST로 표시한다.
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(dt) ? dt : `${dt}Z`
+  const d = new Date(normalized)
+  if (Number.isNaN(d.getTime())) return '–'
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d).reduce((result, part) => ({ ...result, [part.type]: part.value }), {})
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
 }
 
 function RefundModal({ payment, onClose, onConfirm }) {
@@ -91,8 +97,9 @@ export default function PaymentsPage() {
     setPayments(prev => prev.map(p => p.payment_id === paymentId ? updated : p))
   }
 
+  // 현재 결제 흐름은 승인 시 SUCCESS/FAILED를 즉시 기록하므로 대기 결제는 관리자 UI에 노출하지 않는다.
   const filtered = payments.filter(p =>
-    filter === 'all' || p.status === filter
+    p.status !== 'PENDING' && (filter === 'all' || p.status === filter)
   )
 
   if (loading) return <div className="loading-text">결제 내역 로딩 중…</div>

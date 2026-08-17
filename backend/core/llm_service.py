@@ -19,6 +19,7 @@ from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
 from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id
+from ai_modules.llm.rag import get_active_discount_context
 from .conversation_log import log_turn
 
 # 감지된 언어로 답변하도록 지시하는 SystemMessage 텍스트.
@@ -192,7 +193,9 @@ async def run_agent_stream(
         )
 
         # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
-        chat_history = [SystemMessage(content=_context_message(cart, screen, order_type, modal_state))] + chat_history
+        discount_context = await get_active_discount_context()
+        context = _context_message(cart, screen, order_type, modal_state)
+        chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
         async for event in executor.astream_events(
             {"input": user_input, "chat_history": chat_history},
@@ -274,7 +277,9 @@ async def run_agent(
         mem_vars.get("chat_history", []), language
     )
 
-    chat_history = [SystemMessage(content=_context_message(cart, screen, order_type, modal_state))] + chat_history
+    discount_context = await get_active_discount_context()
+    context = _context_message(cart, screen, order_type, modal_state)
+    chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
     result = await executor.ainvoke(
         {"input": user_input, "chat_history": chat_history}

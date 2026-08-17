@@ -336,6 +336,7 @@ class Order(Base):
     final_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     points_used: Mapped[int] = mapped_column(Integer, default=0)
     points_earned: Mapped[int] = mapped_column(Integer, default=0)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     items: Mapped[list["OrderItem"]] = relationship(

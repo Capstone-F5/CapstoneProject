@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import Logo from '../components/Logo'
 import { lookupCustomer } from '../services/pointsService'
-import { createOrder, validateCoupon, previewDiscount, fetchActiveDiscounts } from '../services/orderService'
+import { createOrder, validateCoupon, previewDiscount } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
 import { triggerHardwareAction } from '../services/hardwareService'
 import IdleOverlay from '../components/IdleOverlay'
@@ -55,7 +55,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, activeDiscounts = [] }) {
   const t = useT()
   const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
@@ -77,7 +77,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [showCouponScan,   setShowCouponScan]   = useState(false)
   const [discountPreview,  setDiscountPreview]  = useState(null)  // { discountAmount, applicable }
-  const [activeDiscounts,  setActiveDiscounts]  = useState([])
 
   const isCompletingRef = useRef(false)
 
@@ -153,7 +152,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     if (!code) return
     setCouponChecking(true)
     try {
-      const result = await validateCoupon(code, total)
+      const result = await validateCoupon(code, total, confirmedPhone.replace(/\D/g, '') || null)
       setCouponInfo(result)
     } catch (err) {
       setCouponInfo({ valid: false, message: err.message || '쿠폰 확인에 실패했습니다' })
@@ -171,6 +170,11 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     } else {
       handleCheckCoupon(code)
     }
+  }
+
+  const cancelCoupon = () => {
+    setCouponCode('')
+    setCouponInfo(null)
   }
 
   const goPayment = (dest) => {
@@ -227,11 +231,11 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   useEffect(() => {
     if (cart.length === 0) { setDiscountPreview(null); return }
     previewDiscount().then(r => setDiscountPreview(r.discountAmount > 0 ? r : null))
-  }, [cart.length])
+  }, [cart])
 
-  useEffect(() => {
-    fetchActiveDiscounts().then(setActiveDiscounts)
-  }, [])
+  const automaticDiscount = discountPreview?.discountAmount ?? 0
+  const couponDiscount = couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0
+  const finalDisplayAmount = Math.max(0, total - automaticDiscount - couponDiscount)
 
   const handleComplete = async () => {
     if (isCompletingRef.current) return
@@ -356,6 +360,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             <span style={{ fontSize: 14, color: '#e44', fontWeight: 600 }}>
               쿠폰 -{(couponInfo.discountAmount ?? 0).toLocaleString('ko-KR')}원
             </span>
+            <button onClick={cancelCoupon} style={{ marginLeft: 8, border: 'none', background: 'none', color: '#777', textDecoration: 'underline', cursor: 'pointer' }}>
+              쿠폰 취소
+            </button>
           </div>
         )}
         <div style={{
@@ -364,7 +371,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         }}>
           <span style={{ fontSize: 20, fontWeight: 700, color: '#555' }}>{t('totalAmount')}</span>
           <span style={{ fontSize: 34, fontWeight: 900, color: '#1a1a1a' }}>
-            {total.toLocaleString()} {t('won')}
+            {finalDisplayAmount.toLocaleString()} {t('won')}
           </span>
         </div>
         {emptyCartNotice && (
@@ -486,8 +493,23 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             <div style={{ fontSize: 13, color: '#aaa', fontWeight: 600, marginBottom: 6 }}>
               {t('selectPayMethod')}
             </div>
+            {finalDisplayAmount < total && (
+              <div style={{ fontSize: 15, color: '#aaa', textDecoration: 'line-through', marginBottom: 2 }}>
+                {total.toLocaleString()} {t('won')}
+              </div>
+            )}
+            {automaticDiscount > 0 && (
+              <div style={{ fontSize: 14, color: '#e44', fontWeight: 700, marginBottom: 2 }}>
+                상품 할인 −{automaticDiscount.toLocaleString()} {t('won')}
+              </div>
+            )}
+            {couponDiscount > 0 && (
+              <div style={{ fontSize: 14, color: '#e44', fontWeight: 700, marginBottom: 2 }}>
+                쿠폰 할인 −{couponDiscount.toLocaleString()} {t('won')}
+              </div>
+            )}
             <div style={{ fontSize: 28, fontWeight: 900, color: '#744032' }}>
-              {total.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>{t('won')}</span>
+              {finalDisplayAmount.toLocaleString()}<span style={{ fontSize: 16, color: '#888', marginLeft: 4 }}>{t('won')}</span>
             </div>
           </div>
 
@@ -505,14 +527,18 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             📷 {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
           </button>
           {couponInfo && (
-            <p style={{
-              fontSize: 13, fontWeight: 700, marginTop: 0, marginBottom: 18,
-              color: couponInfo.valid ? '#2e7d32' : '#e44',
-            }}>
-              {couponInfo.valid
-                ? `${couponInfo.discountAmount.toLocaleString()}원 할인 적용됩니다 (결제 예정 ${couponInfo.finalAmount.toLocaleString()}원)`
-                : couponInfo.message}
-            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 0, marginBottom: 18 }}>
+              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: couponInfo.valid ? '#2e7d32' : '#e44' }}>
+                {couponInfo.valid
+                  ? `${couponInfo.discountAmount.toLocaleString()}원 쿠폰 할인 적용됩니다 (최종 결제 예정 ${finalDisplayAmount.toLocaleString()}원)`
+                  : couponInfo.message}
+              </p>
+              {couponInfo.valid && (
+                <button onClick={cancelCoupon} style={{ flexShrink: 0, border: 'none', background: 'none', color: '#777', textDecoration: 'underline', cursor: 'pointer' }}>
+                  쿠폰 취소
+                </button>
+              )}
+            </div>
           )}
           {!couponInfo && <div style={{ marginBottom: 18 }} />}
 
@@ -582,7 +608,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showCardPayment && (
         <PayWaitPopup
           title={t('waitCard')}
-          total={Math.max(0, total - (couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0) - (discountPreview?.discountAmount ?? 0))}
+          total={finalDisplayAmount}
           image={PAYMENT_IMAGES.cardWait}
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
@@ -596,7 +622,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showCashPayment && (
         <PayWaitPopup
           title={t('waitCash')}
-          total={Math.max(0, total - (couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0) - (discountPreview?.discountAmount ?? 0))}
+          total={finalDisplayAmount}
           image={PAYMENT_IMAGES.cashWait}
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
@@ -610,7 +636,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {showPayPayment && (
         <PayWaitPopup
           title={t('waitPay')}
-          total={Math.max(0, total - (couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0) - (discountPreview?.discountAmount ?? 0))}
+          total={finalDisplayAmount}
           image={PAYMENT_IMAGES.payWait}
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
@@ -632,6 +658,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onDetect={handleCouponDetected}
           onClose={() => setShowCouponScan(false)}
           total={total}
+          phone={confirmedPhone.replace(/\D/g, '') || null}
         />
       )}
 
