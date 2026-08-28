@@ -40,7 +40,6 @@ temp/
 backend/logs/
 
 # ML 모델 바이너리 (용량이 크므로 직접 배포)
-*.tflite
 *.pkl
 
 # Python
