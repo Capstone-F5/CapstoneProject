@@ -21,7 +21,8 @@ from fastapi.staticfiles import StaticFiles
 try:
     from api.gesture_ws import router as gesture_router
     from api.collect import router as collect_router
-    _cv_routers = [gesture_router, collect_router]
+    from api.approach_ws import router as approach_router
+    _cv_routers = [gesture_router, collect_router, approach_router]
     _cv_load_error: str | None = None
 except Exception as _e:  # noqa: BLE001
     _cv_routers = []
