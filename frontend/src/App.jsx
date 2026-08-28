@@ -15,6 +15,32 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 
+// 자석 클릭 도우미 함수 추가
+// 포인터 주변 반경(radius) 내에 있는 버튼 찾음
+function getClickableElement(x, y, radius = 30) {
+  // 1순위: 정확히 포인터 위치에 요소가 있는지 확인
+  let el = document.elementFromPoint(x, y)
+  if (el && (el.tagName === 'BUTTON' || el.closest('button'))) {
+    return el.closest('button') || el
+  }
+
+  // 빗나갔다면 주변 반경(30px)을 8방향으로 탐색해서 자석처럼 버튼을 찾음
+  const offsets = [
+    [0, -radius], [0, radius], [-radius, 0], [radius, 0],
+    [-radius, -radius], [radius, -radius], [-radius, radius], [radius, radius]
+  ]
+
+  for (const [dx, dy] of offsets) {
+    const neighbor = document.elementFromPoint(x + dx, y + dy)
+    if (neighbor) {
+      const btn = neighbor.closest('button')
+      if (btn) return btn // 주변에서 버튼을 찾으면 즉시 반환!
+    }
+  }
+
+  return el // 끝끝내 못 찾으면 원래 위치의 요소 반환
+}
+
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
   swipe_right: '→ 다음',
@@ -124,9 +150,10 @@ function AppContent() {
   const edgeRafRef    = useRef(null)
   const edgeLastTRef  = useRef(null)
 
-  // MenuScreen 스와이프 / 모달 imperative 핸들러
-  const menuSwipeRef = useRef(null)
-  const menuModalRef = useRef(null)
+  const menuSwipeRef   = useRef(null)
+  const menuModalRef   = useRef(null)
+  const menuScrollRef  = useRef(null)  // 메뉴 가로 스크롤(쥐고 끌기) 연결용
+  const fingerCountRef = useRef(null)  // 수량 조절 팝업(손가락 개수) 연결용
 
   // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
   const screenVoiceRef    = useRef(null)
@@ -137,7 +164,6 @@ function AppContent() {
   const modalStateRef     = useRef(null)
 
   // 음성 액션 핸들러가 항상 최신 데이터를 읽도록 ref로 유지
-  // (speechEndHandlerRef의 stale closure를 우회하는 유일한 안전한 방법)
   const appCartRef    = useRef(cart)
   const menuDataRef   = useRef(menuData)
   const menuByIdRef   = useRef({})
@@ -146,8 +172,6 @@ function AppContent() {
 
   // 현재 화면을 ref로 유지 — handleGesture 콜백 재생성 없이 참조
   const screenRef = useRef(screen)
-  // 화면 진입 시각 — 전환 직후 잔여 손동작(직전 화면의 OK 핀치를 풀며 손을 펴는 과도기 동작)이
-  // finger_1/finger_2로 오인식되어 매장/포장이 자동 선택되는 것을 막기 위한 유예 구간 기준점
   const screenEnteredAtRef = useRef(performance.now())
   useEffect(() => {
     screenRef.current = screen
@@ -174,8 +198,6 @@ function AppContent() {
   }, [])
 
   // ── 포인터 민감도 ────────────────────────────────────────────────────────
-  // 앵커 기반 매핑을 useGesture 에서 처리하므로 1.0 고정.
-  // 이동 범위는 useGesture.js 의 ANCHOR_WINDOW_HALF 로 조절.
   const POINTER_SENS_X = 1.0
   const POINTER_SENS_Y = 1.0
 
@@ -212,7 +234,6 @@ function AppContent() {
   const handlePointer = useCallback((norm) => {
     if (!norm) {
       pointerRef.current = null
-      // opacity 만 끄기 — DOM은 유지해서 재등장 시 위치가 부드럽게 트랜지션됨
       if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
       clearEdge()
       return
@@ -229,7 +250,6 @@ function AppContent() {
     // ── 엣지 존 감지 ──────────────────────────────────────────────────────
     const nx = p.x / window.innerWidth
     const ny = p.y / window.innerHeight
-    // 강도: 존 경계에서 0, 화면 끝에서 1
     const eL = Math.max(0, (EDGE_MARGIN - nx)       / EDGE_MARGIN)
     const eR = Math.max(0, (EDGE_MARGIN - (1 - nx)) / EDGE_MARGIN)
     const eT = Math.max(0, (EDGE_MARGIN - ny)       / EDGE_MARGIN)
@@ -242,7 +262,6 @@ function AppContent() {
 
     edgeStateRef.current = { left: eL, right: eR, top: eT, bottom: eB }
 
-    // 엣지 자동 스크롤 루프 — 이미 실행 중이면 재시작 안 함
     if ((eL + eR + eT + eB) > 0 && !edgeRafRef.current) {
       edgeLastTRef.current = null
       const tick = (t) => {
@@ -257,7 +276,6 @@ function AppContent() {
         if (dt > 0) {
           const dx = (e.right - e.left) * EDGE_MAX_SPEED * dt
           const dy = (e.bottom - e.top) * EDGE_MAX_SPEED * dt
-          // 커서 위치 아래의 스크롤 가능한 요소 탐색
           let el = document.elementFromPoint(cur.x, cur.y)
           let scrolled = false
           while (el && el !== document.documentElement) {
@@ -274,7 +292,6 @@ function AppContent() {
           }
           if (!scrolled) window.scrollBy(0, dy)
         }
-
         edgeRafRef.current = requestAnimationFrame(tick)
       }
       edgeRafRef.current = requestAnimationFrame(tick)
@@ -283,13 +300,10 @@ function AppContent() {
     dispatchActivity()
   }, [normToScreen, dispatchActivity, clearEdge])
 
-  // OK 이동 취소 임계값 (screen px) — 이 이상 움직이면 링 취소
   const OK_MOVE_THRESHOLD = 80
 
-  // OK: 손을 충분히 안 움직이면 0.5초 후 클릭 — DOM 직접 조작으로 rAF 리렌더 없음
   const fireOk = useCallback(() => {
     if (okRafRef.current !== null) return
-
     const p = pointerRef.current
     if (!p) return
 
@@ -323,14 +337,15 @@ function AppContent() {
       } else {
         okRafRef.current = null
         if (ring) ring.style.display = 'none'
-        const el = document.elementFromPoint(startX, startY)
+        
+        // 자석 클릭 적용
+        const el = getClickableElement(startX, startY, 30)
         if (el) el.click()
       }
     }
     okRafRef.current = requestAnimationFrame(tick)
   }, [])
 
-  // 포인터 위치의 가장 가까운 스크롤 가능 요소를 스크롤
   const scrollAtPointer = useCallback((dy) => {
     const p = pointerRef.current
     let el = p ? document.elementFromPoint(p.x, p.y) : null
@@ -345,20 +360,29 @@ function AppContent() {
     window.scrollBy({ top: dy, behavior: 'smooth' })
   }, [])
 
-  // 테스트용 HUD 상태
   const [gestureHud, setGestureHud] = useState(null)
 
   const handleGesture = useCallback(({ gesture, hands, total_fingers }) => {
-    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신)
+    // HUD 업데이트
     setGestureHud({
       left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
       right: hands?.right ? `${hands.right.finger_count}개` : '-',
       total: total_fingers ?? 0,
     })
 
-    if (!gesture) return
-
     const currentScreen = screenRef.current
+    const activeHand = hands?.right || hands?.left
+    
+    if (activeHand) {
+      if (menuScrollRef.current && (activeHand.is_pinching || activeHand.scroll_dx !== 0)) {
+        menuScrollRef.current(activeHand.scroll_dx, activeHand.is_pinching)
+      }
+      if (fingerCountRef.current && activeHand.stable_fingers !== null) {
+        fingerCountRef.current(activeHand.stable_fingers)
+      }
+    }
+
+    if (!gesture) return
 
     // ── 랜딩 페이지: 커서 + OK만 ─────────────────────
     if (currentScreen === 'start') {
@@ -369,10 +393,7 @@ function AppContent() {
     // ── 식사 장소 선택: OK(포인터 클릭) + 1(매장) + 2(포장) ──
     if (currentScreen === 'orderType') {
       const { dineIn, takeout } = gestureActionsRef.current.orderType
-      const activeHand  = hands?.right || hands?.left
       const fingerCount = activeHand?.finger_count ?? -1
-      // 화면 진입 직후 짧은 유예 구간 — 직전 화면(start)의 OK 핀치를 풀며 손을 펴는 동작이
-      // finger_1/finger_2로 오인식되어 매장/포장이 사용자 의도 없이 자동 선택되는 것을 방지
       const settled = performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS
       if      (gesture === 'ok')                                        { fireOk(); showLabel(GESTURE_LABELS.ok) }
       else if (settled && gesture === 'finger_1' && fingerCount <= 1)  { dineIn();  showLabel('☝ 매장') }
@@ -399,7 +420,7 @@ function AppContent() {
       return
     }
 
-    // 메뉴 화면 모달 제스처 (단품/세트 선택) — 스와이프/스크롤보다 먼저 처리
+    // 메뉴 화면 모달 제스처 (단품/세트 선택)
     if (currentScreen === 'menu' && menuModalRef.current) {
       if (gesture === 'finger_1') { menuModalRef.current('single'); showLabel('☝ 단품'); return }
       if (gesture === 'finger_2') { menuModalRef.current('set');    showLabel('✌ 세트');  return }
@@ -422,7 +443,6 @@ function AppContent() {
     pipCanvasRef: gestureEnabled && pipEnabled ? pipCanvasRef : null,
   })
 
-  // 손동작 OFF: 잔여 포인터/OK 링 UI 즉시 숨김
   useEffect(() => {
     if (gestureEnabled) return
     pointerRef.current = null
@@ -436,18 +456,14 @@ function AppContent() {
 
   const nav = (s) => {
     if (s === 'start') {
-      // 새 손님 시작 — 채팅 닫기, 언어·세션 초기화
       setChatOpen(false)
       setLocale('ko')
       sessionStorage.removeItem('kiosk_detected_lang')
-      // 세션 ID 재발급은 ChatPanel의 kiosk-session-reset 핸들러(newSessionId())가 전담
-      // (카트 API도 동일 session.js를 통해 이 새 세션을 바라보게 됨 — 경쟁 상태 방지)
       window.dispatchEvent(new CustomEvent('kiosk-session-reset'))
     }
     setScreen(s)
   }
 
-  // 백엔드 카트(session_id 기준)가 단일 소스 — 서버에서 다시 받아와 로컬 state에 반영한다.
   const refreshCart = useCallback(async () => {
     try {
       const data = await cartService.fetchCart()
@@ -456,9 +472,8 @@ function AppContent() {
       console.error('[cart] refresh 실패:', e)
       showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
     }
-  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
-  // draft: ItemDetailModal 이 onAdd 로 넘기는 형태 { id, type, qty, exclusion, side, drink, special_note? }
   const addToCart = async (draft) => {
     const menu = menuByIdRef.current[draft.id]
     if (!menu) { console.warn('[cart] 알 수 없는 메뉴:', draft.id); return }
@@ -489,7 +504,6 @@ function AppContent() {
     }
   }
 
-  // 낙관적 업데이트(즉각 반응) 후 서버에 반영, 실패하면 refreshCart로 서버 진실을 되돌림
   const updateQty = async (cartId, qty) => {
     setCart(prev => qty <= 0 ? prev.filter(c => c.cartId !== cartId)
                               : prev.map(c => c.cartId === cartId ? { ...c, qty } : c))
@@ -512,7 +526,6 @@ function AppContent() {
     }
   }
 
-  // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
   const cartForLLM = useMemo(() =>
     cart.map(c => ({
       cart_id:   c.cartId,
@@ -527,17 +540,14 @@ function AppContent() {
     }))
   , [cart])
 
-  // UI와 동일한 menuData 소스로 id → item 맵 구성
   const _menuById = useMemo(() => {
     if (!menuData?.menuItems) return {}
     const map = {}
     Object.values(menuData.menuItems).forEach(list => list.forEach(m => { map[m.id] = m }))
     return map
   }, [menuData])
-  menuByIdRef.current = _menuById   // 항상 최신 맵을 ref에 반영
+  menuByIdRef.current = _menuById
 
-  // 메뉴 데이터가 준비되면(옵션 조회를 위해 필요) 서버 카트를 1회 복원한다.
-  // — 새로고침/재방문 시에도 기존에 담아둔(또는 음성으로 담긴) 항목이 그대로 보이게 함.
   const cartRestoredRef = useRef(false)
   useEffect(() => {
     if (menuData && !cartRestoredRef.current) {
@@ -546,24 +556,18 @@ function AppContent() {
     }
   }, [menuData, refreshCart])
 
-  // App 레벨에서 처리 가능한 액션 실행.
-  // 반환: 'nav'(화면 전환 발생) | 'handled'(처리됨) | 'no'(App 레벨 아님 → 화면 브릿지로)
   function execAppAction(a) {
     switch (a.type) {
       case 'add_item': {
-        // 백엔드 카트는 LLM 툴 실행 시점에 이미 반영을 끝냈다 — 로컬에서 재구성하지 않고
-        // 메뉴 화면이 마운트되어 있으면 시각적 확인(모달 워크스루)만 띄운 뒤 refreshCart로 동기화.
         screenVoiceRef.current?.({...a, type: 'add_item'})
         refreshCart()
         return 'handled'
       }
       case 'update_qty':
-        // 현재 어떤 LLM 툴도 이 액션 타입을 발생시키지 않음(터치 전용 함수) — 안전하게 무시
         return 'handled'
       case 'remove_item':
       case 'update_item':
       case 'clear_cart':
-        // 백엔드가 이미 반영을 끝냈으므로 최신 카트만 다시 받아온다
         refreshCart()
         return 'handled'
       case 'navigate':
@@ -586,13 +590,10 @@ function AppContent() {
         setPipEnabled(a.value === 'on')
         return 'handled'
       default:
-        return 'no'   // 화면 종속 액션
+        return 'no'
     }
   }
 
-  // 큐 드레인: App 레벨 → 화면 브릿지 순으로 처리.
-  // 화면 전환(navigate) 직후 새 화면이 마운트되기 전 도착한 종속 액션은 버리지 않고
-  // 큐에 유지했다가 마운트 후(또는 폴백 타이머) 재드레인한다.
   function drainVoiceActions() {
     const q = pendingActionsRef.current
     while (q.length) {
@@ -600,33 +601,28 @@ function AppContent() {
       const res = execAppAction(a)
       if (res === 'nav') {
         q.shift()
-        awaitingScreenRef.current = true   // 새 화면 마운트 대기 시작
+        awaitingScreenRef.current = true
         break
       }
       if (res === 'handled') { q.shift(); continue }
-      // 화면 종속 액션 → 현재 화면 브릿지에 위임
-      // screenVoiceRef.current가 null이면 화면이 아직 핸들러 등록 전 — 재시도
       if (!screenVoiceRef.current) {
         scheduleDrainRetry()
         break
       }
       const handled = screenVoiceRef.current(a)
       if (handled) { q.shift(); continue }
-      // 처리 못 함: 화면 전환 대기 중이면 보존하고 잠시 후 재시도
       if (awaitingScreenRef.current) {
         scheduleDrainRetry()
         break
       }
-      // 전환 대기도 아닌데 처리 불가 → 현재 화면과 무관한 액션, 무시
       console.warn('[voice] 현재 화면에서 처리할 수 없는 액션, 무시:', a)
       q.shift()
     }
   }
 
-  // 화면 마운트가 늦어질 때 큐를 재드레인하는 폴백 (최대 ~1초)
   function scheduleDrainRetry(attempt = 0) {
     if (drainTimerRef.current) clearTimeout(drainTimerRef.current)
-    if (attempt > 20) {   // 약 1초 후에도 처리 못 하면 포기(무한 보류 방지)
+    if (attempt > 20) {
       awaitingScreenRef.current = false
       if (pendingActionsRef.current.length) {
         console.warn('[voice] 대기 액션 처리 실패, 폐기:', pendingActionsRef.current.splice(0))
@@ -636,7 +632,6 @@ function AppContent() {
     drainTimerRef.current = setTimeout(() => {
       const before = pendingActionsRef.current.length
       drainVoiceActions()
-      // 여전히 남아있고 아직 대기 중이면 다음 시도 예약
       if (pendingActionsRef.current.length && pendingActionsRef.current.length === before
           && awaitingScreenRef.current) {
         scheduleDrainRetry(attempt + 1)
@@ -644,7 +639,6 @@ function AppContent() {
     }, 50)
   }
 
-  // AI 액션 → 한국어 알림 메시지
   function actionToMsg(a) {
     const menuName = a.name || (appCartRef.current.find(c => c.id === a.menu_id)?.name) || `메뉴#${a.menu_id}`
     const catLabel = { recommended: '추천메뉴', burger: '버거', side: '사이드', drink: '음료수' }
@@ -680,26 +674,25 @@ function AppContent() {
     voiceToastTimer.current = setTimeout(() => setVoiceToast(null), 2500)
   }
 
-  // 음성 액션 디스패처 — 큐에 넣고 즉시 드레인 시도
   function handleVoiceAction(a) {
     showVoiceToast(actionToMsg(a))
     pendingActionsRef.current.push(a)
     drainVoiceActions()
   }
 
-  // 화면 전환 후(자식 화면 브릿지 등록 effect가 먼저 실행됨) 남은 액션 이어서 처리
   useEffect(() => {
-    awaitingScreenRef.current = false   // 새 화면 마운트 완료 → 대기 해제
+    awaitingScreenRef.current = false
     if (pendingActionsRef.current.length) drainVoiceActions()
-  }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen]) 
 
   const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
-  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen }
+  
+  const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, fingerCountRef }
 
   const screens = {
     start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
-    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
+    menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} scrollRef={menuScrollRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
@@ -761,7 +754,6 @@ function AppContent() {
           pointerEvents: 'none',
           zIndex: 9000,
           opacity: 0,
-          // 등장/사라짐만 트랜지션 (위치는 이미 OneEuro로 스무딩됨)
           transition: 'opacity 0.18s ease-out',
           willChange: 'left, top, opacity',
         }} />
@@ -781,7 +773,6 @@ function AppContent() {
             pointerEvents: 'none',
             zIndex: 9003,
           }}>
-            {/* canvas 비율은 카메라 해상도에 따라 자동 — width:100% + height:auto 로 왜곡 없이 */}
             <canvas
               ref={pipCanvasRef}
               style={{ display: 'block', width: '100%', height: 'auto' }}
@@ -834,12 +825,10 @@ function AppContent() {
           overflow: 'hidden',
           paddingBottom: CONTROL_BAR_HEIGHT,
         }}>
-          {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
             {screens[screen] ?? screens.start}
           </div>
 
-          {/* 채팅 패널 — 항상 마운트(백그라운드 모델 프리로드), CSS로 열고 닫음 */}
           <div style={{
             flexShrink: 0,
             height: chatOpen ? '33vh' : 0,
@@ -860,8 +849,7 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 항상 화면 맨 아래 고정
-             (음성인식 UI가 열려도 그 아래에 그대로 고정 — 위로 밀려 올라가지 않음) ── */}
+        {/* ── 접근성 컨트롤 바 ── */}
         <div
           style={{
             position: 'fixed',
@@ -900,7 +888,6 @@ function AppContent() {
   )
 }
 
-// 접근성 컨트롤 바의 텍스트 버튼 — 한국어(위, 크게) + 영어(아래, 작게) 동시 표기
 function ControlText({ onClick, disabled = false, ko, en }) {
   return (
     <button

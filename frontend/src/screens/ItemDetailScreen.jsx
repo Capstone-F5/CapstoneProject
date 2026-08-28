@@ -1,11 +1,32 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
 
-export default function ItemDetailScreen({ item, type, addToCart, nav }) {
+// App.jsx에서 손가락 개수 데이터를 꽂아줄 fingerCountRef props 추가
+export default function ItemDetailScreen({ item, type, addToCart, nav, fingerCountRef }) {
   const [qty, setQty]           = useState(1)
   const [exclusion, setExclusion] = useState(item?.exclusions?.[0] ?? '없음')
   const [side, setSide]         = useState(SET_SIDES[0])
   const [drink, setDrink]       = useState(SET_DRINKS[0])
+
+  // 🔥🔥🔥 제스처 인식 피드백용 팝업(토스트) 상태 추가
+  const [toastMsg, setToastMsg] = useState(null)
+
+  useEffect(() => {
+    if (!fingerCountRef) return
+    // App.jsx에서 hand.stable_fingers 값이 들어올 때마다 이 함수가 실행됩니다.
+    fingerCountRef.current = (count) => {
+      // 1~5개의 확정된 손가락 개수가 들어오면 수량을 즉시 변경!
+      if (count >= 1 && count <= 5) {
+        setQty(count)
+        setToastMsg(`손가락 제스처: 수량이 ${count}개로 변경되었습니다 🖐️`)
+        
+        // 2초 뒤에 팝업 자동 숨김
+        setTimeout(() => setToastMsg(null), 2000)
+      }
+    }
+    return () => { fingerCountRef.current = null }
+  }, [fingerCountRef])
+  // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
 
   if (!item) return null
 
@@ -42,6 +63,29 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
       background: '#f5f5f5',
       position: 'relative',
     }}>
+      {/* 🔥🔥🔥 손가락 인식 시 나타나는 시각적 팝업(Toast) UI */}
+      {toastMsg && (
+        <div style={{
+          position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(116, 64, 50, 0.95)', color: '#fff',
+          padding: '12px 24px', borderRadius: 30, zIndex: 999,
+          fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 700,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          animation: 'fadeInDown 0.3s ease-out',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap'
+        }}>
+          {toastMsg}
+          <style>{`
+            @keyframes fadeInDown {
+              from { opacity: 0; transform: translate(-50%, -20px); }
+              to { opacity: 1; transform: translate(-50%, 0); }
+            }
+          `}</style>
+        </div>
+      )}
+      {/* 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥 */}
+
       {/* Back button */}
       <button
         onClick={() => item.hasSet ? nav('singleSet') : nav('menu')}

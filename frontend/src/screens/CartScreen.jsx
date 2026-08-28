@@ -34,18 +34,16 @@ function computeItemDiscount(itemId, categoryId, unitPrice, activeDiscounts) {
   return { discountedPrice: price, savings: unitPrice - price }
 }
 
-// 결제 수단 이미지 경로 — null 이면 기존 이모티콘/텍스트 폴백 표시
-// 예: card: '/assets/payment/card.png'
 const PAYMENT_IMAGES = {
-  card:     null, // 신용카드 / 삼성페이
-  cash:     null, // 현금
-  naver:    null, // 네이버페이
-  kakao:    null, // 카카오페이
-  zero:     null, // 제로페이
-  payco:    null, // 페이코
-  cardWait: null, // 카드 결제 대기 화면
-  cashWait: null, // 현금 결제 대기 화면
-  payWait:  null, // 간편결제 대기 화면
+  card:     null, 
+  cash:     null, 
+  naver:    null, 
+  kakao:    null, 
+  zero:     null, 
+  payco:    null, 
+  cardWait: null, 
+  cashWait: null, 
+  payWait:  null, 
 }
 
 const LIST_PX   = 16
@@ -55,7 +53,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, fingerCountRef }) {
   const t = useT()
   const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
@@ -73,10 +71,10 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [couponCode,       setCouponCode]       = useState('')
   const [paymentError,     setPaymentError]     = useState('')
   const [emptyCartNotice,  setEmptyCartNotice]  = useState(false)
-  const [couponInfo,       setCouponInfo]       = useState(null)   // { valid, message, discountAmount? }
+  const [couponInfo,       setCouponInfo]       = useState(null)   
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [showCouponScan,   setShowCouponScan]   = useState(false)
-  const [discountPreview,  setDiscountPreview]  = useState(null)  // { discountAmount, applicable }
+  const [discountPreview,  setDiscountPreview]  = useState(null)  
   const [activeDiscounts,  setActiveDiscounts]  = useState([])
 
   const isCompletingRef = useRef(false)
@@ -90,11 +88,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setShowOrderTypeConfirm(true)
   }
 
-  // 음성으로 "결제할게"를 말했을 때 진입 지점 — 매장/포장 재확인 팝업은 손으로 카드를 다시
-  // 눌러 바꾸는 터치 전용 UI라 음성으로는 응답할 방법이 없다(order_type ui_action은 전역
-  // 핸들러가 항상 menu 화면으로 이동시켜버려 결제 중간에 재사용할 수 없음, App.jsx 참고).
-  // 주문 유형은 이미 대화로 확인했으므로, 음성 결제 시작은 이 팝업을 띄우지 않고 터치 사용자가
-  // "확인"을 눌렀을 때와 동일한 다음 단계(포인트 질문)로 곧장 진행한다.
   const voiceStartCheckout = () => {
     if (cart.length === 0) {
       setEmptyCartNotice(true)
@@ -138,8 +131,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   }
 
   const handlePointsConfirm = async (phoneArg) => {
-    // 음성 입력(phoneArg)이 있으면 우선 사용 — setState 비동기로 stale 읽는 문제 회피.
-    // onClick 핸들러로 호출되면 이벤트 객체가 들어오므로 문자열일 때만 사용.
     const raw = (typeof phoneArg === 'string' ? phoneArg : null) ?? pointsInput
     const d = raw.replace(/\D/g, '')
     if (!d.length)       { setPointsError(t('phoneError1')); return }
@@ -162,7 +153,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
 
-  // CouponScanModal에서 검증+확인 완료 후 호출됨 (code, validatedInfo)
   const handleCouponDetected = (code, info) => {
     setShowCouponScan(false)
     setCouponCode(code)
@@ -180,8 +170,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     setPaymentMethod(methodMap[dest] ?? 'card')
     if (dest === 'cardPayment') {
       setShowCardPayment(true)
-      // 카드/삼성페이 결제 대기 화면 진입 시 물리적 카드리더 동작 트리거(현재는 시뮬레이션).
-      // ★ 아두이노 등 실제 장치 연동 확장 지점 — hardwareService.js 참고.
       triggerHardwareAction('card_payment')
     } else if (dest === 'cashPayment') {
       setShowCashPayment(true)
@@ -191,7 +179,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
 
-  // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
   useEffect(() => {
     if (!voiceRef) return
     voiceRef.current = (a) => {
@@ -221,9 +208,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       }
     }
     return () => { if (voiceRef) voiceRef.current = null }
-  }, [voiceRef, cart, total])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [voiceRef, cart, total]) 
 
-  // 카트가 바뀔 때마다 적용 가능한 할인 미리보기
   useEffect(() => {
     if (cart.length === 0) { setDiscountPreview(null); return }
     previewDiscount().then(r => setDiscountPreview(r.discountAmount > 0 ? r : null))
@@ -243,9 +229,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         phone: confirmedPhone.replace(/\D/g, '') || null,
         couponCode: couponCode.trim() || null,
       })
-      // 서버가 반환한 finalAmount 사용 (쿠폰 + Discount 테이블 할인 모두 반영됨)
       const payAmount = serverFinalAmount ?? 0
-      // 결제 금액이 0원이면 결제 API 호출 없이 완료 처리
       if (payAmount > 0) {
         const { success } = await processPayment({ orderId, method: paymentMethod, amount: payAmount })
         if (!success) throw new Error('결제가 승인되지 않았습니다')
@@ -262,6 +246,49 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       isCompletingRef.current = false
     }
   }
+
+  const popupOpenedAt = useRef(0)
+
+  useEffect(() => {
+    if (showOrderTypeConfirm || showPointPrompt || showPaymentPopup) {
+      popupOpenedAt.current = performance.now()
+    }
+  }, [showOrderTypeConfirm, showPointPrompt, showPaymentPopup])
+
+  // 🌟🌟🌟 [NEW: 팝업 연속 스킵(Cascading) 완벽 방지 로직] 🌟🌟🌟
+  const lastCountRef = useRef(null)
+
+  useEffect(() => {
+    if (!fingerCountRef) return
+
+    fingerCountRef.current = (count) => {
+      // 1. 방아쇠 리셋 기능: 손가락 개수가 이전 프레임과 동일하면 무시
+      // 즉, 손을 펴고 있다고 연속으로 눌리지 않으며 반드시 손을 오므렸다가(0개) 다시 펴야 작동합니다.
+      if (count === lastCountRef.current) return
+      lastCountRef.current = count
+
+      // 0개(주먹)일 때는 리셋만 해주고 아무 버튼도 누르지 않습니다.
+      if (count === 0 || count === null) return
+
+      // 팝업이 뜬 직후 아주 짧은 찰나(0.3초)만 방어막 적용 (손 펴자마자 눌림 방지)
+      if (performance.now() - popupOpenedAt.current < 300) return
+
+      // 실제 액션 처리
+      if (showOrderTypeConfirm) {
+        if (count === 1) { setOrderType('dine-in'); confirmOrderType() }
+        else if (count === 2) { setOrderType('takeout'); confirmOrderType() }
+      } else if (showPointPrompt) {
+        if (count === 1) { setShowPointPrompt(false); openPayment() }
+        else if (count === 2) { setShowPointPrompt(false); setShowPointsPopup(true) }
+      } else if (showPaymentPopup) {
+        if (count === 1) goPayment('cardPayment')
+        else if (count === 2) goPayment('cashPayment')
+      }
+    }
+
+    return () => { fingerCountRef.current = null }
+  }, [showOrderTypeConfirm, showPointPrompt, showPaymentPopup, setOrderType])
+  // 🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟
 
   return (
     <div style={{
@@ -470,7 +497,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       {/* ── 결제 수단 선택 팝업 ── */}
       {showPaymentPopup && (
         <ModalBase onClose={() => setShowPaymentPopup(false)} minHeight="clamp(500px,76vh,700px)">
-          {/* 인사말 + 금액 — 회원+이름 / 회원인데 이름없음 / 미회원(주문 시 자동 임시 등록) 3가지 상태 표시 */}
+          {/* 인사말 + 금액 */}
           <div style={{ marginBottom: 28 }}>
             {confirmedRegistered !== null && (
               <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
@@ -491,7 +518,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             </div>
           </div>
 
-          {/* 쿠폰 (선택) — QR/바코드 스캔 또는 수동 입력, 결제 전에 미리 검증해 할인 금액을 보여준다 */}
           <button
             onClick={() => { setCouponInfo(null); setShowCouponScan(true) }}
             disabled={couponChecking}
@@ -616,7 +642,6 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onComplete={handleComplete}
           error={paymentError}
         >
-          {/* 간편결제 QR/바코드 인식을 흉내내기 위해 실제 카메라를 켠다(결제 자체는 시뮬레이션) */}
           <div style={{ position: 'relative', width: '100%', maxWidth: 240, aspectRatio: '1 / 1' }}>
             <CameraPreview style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 12 }} />
             <div style={{

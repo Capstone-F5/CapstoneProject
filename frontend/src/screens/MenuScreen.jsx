@@ -53,7 +53,7 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef, scrollRef }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
 
@@ -87,8 +87,6 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   }
 
   const handleAdd = (cartItem) => {
-    // 음성 주문으로 연 모달(voiceOpts)이면 백엔드 카트엔 LLM 툴 실행 시점에 이미 담겨 있으므로
-    // 여기서 다시 addToCart 를 호출하지 않는다(중복 담기 방지) — 시각적 확인용으로만 모달을 띄운 것.
     if (!voiceOpts) addToCart(cartItem)
     setModalItem(null)
     setModalStep(null)
@@ -100,11 +98,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     if (modalStateRef) modalStateRef.current = null
   }
 
-  // 모달 열림/닫힘 시 App.jsx의 modalStateRef 갱신 (LLM 컨텍스트용)
   useEffect(() => {
     if (!modalStateRef) return
     if (modalItem && modalStep === 'detail') {
-      // 실제 선택값은 modalDetailRef.current.getState()에서 실시간으로 읽음
       modalStateRef.current = {
         open: true,
         menu_id:   modalItem.id,
@@ -121,7 +117,6 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
   const items        = menuData ? (menuData.menuItems?.[catId] ?? []) : []
   const totalPages   = Math.max(1, Math.ceil(items.length / itemsPerPage))
 
-  // 카트 항목의 categoryId 조회용 (할인 계산에 사용)
   const menuItemById = useMemo(() => {
     if (!menuData?.menuItems) return {}
     const map = {}
@@ -131,22 +126,28 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     return map
   }, [menuData])
 
-  useEffect(() => {
-    setPage(p => Math.min(p, Math.max(0, totalPages - 1)))
-  }, [totalPages])
-
   // 단품/세트 선택 모달이 열려 있는 동안만 modalRef 에 핸들러 등록
   useEffect(() => {
     if (!modalRef) return
     if (modalStep === 'singleSet') {
-      modalRef.current = (type) => { handleTypeSelect(type) }
+      
+      // 🌟🌟🌟 팝업이 열린 순간의 시간 기록] 🌟🌟🌟
+      const openedAt = performance.now()
+      
+      modalRef.current = (type) => { 
+        // 팝업이 열리고 0.8초(800ms) 이내에는 단축키 입력 방어 -> 핀치 푸는 동작 무시
+        if (performance.now() - openedAt < 800) return 
+        
+        handleTypeSelect(type) 
+      }
+      // 🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟
+      
     } else {
       modalRef.current = null
     }
     return () => { if (modalRef) modalRef.current = null }
   }, [modalRef, modalStep])
 
-  // 제스처 스와이프 핸들러 — App.jsx 가 ref 를 통해 호출
   useEffect(() => {
     if (!swipeRef || !menuData) return
     const cats = menuData.categories ?? []
@@ -181,7 +182,49 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     }
   }, [swipeRef, page, totalPages, catId, menuData, itemsPerPage])
 
-  // 음성 화면 제어 브릿지 — App.jsx 큐가 호출. 처리 시 true 반환.
+  // 쥐고 끌기(스크롤) 계산 로직
+  const [dragOffset, setDragOffset] = useState(0)
+  const dragTimeoutRef = useRef(null) // 손가락 살짝 풀림 방지용 타이머
+
+  useEffect(() => {
+    if (!scrollRef) return
+    scrollRef.current = (dx, isPinching) => {
+      if (isPinching) {
+        // 타이머 취소 (계속 쥐고 있는 상태 확정)
+        clearTimeout(dragTimeoutRef.current)
+
+        setDragOffset(prev => {
+          // 핵심: dx는 0.01 같은 소수점이므로 화면 너비를 곱해 픽셀 단위로 변환! 
+          // (마우스 감도를 위해 1.5배 가속)
+          const screenDx = dx * window.innerWidth * 1.5
+          const nextOffset = prev + screenDx
+          
+          // 임계값: 150px 이상 끌어당기면 페이지 훅! 넘기기
+          const THRESHOLD = 150
+
+          if (nextOffset > THRESHOLD) {
+            swipeRef?.current?.('right') // 화면 오른쪽으로 당김 -> 이전 페이지
+            return 0                     // 넘긴 후 원점 복귀
+          } else if (nextOffset < -THRESHOLD) {
+            swipeRef?.current?.('left')  // 화면 왼쪽으로 당김 -> 다음 페이지
+            return 0
+          }
+          return nextOffset
+        })
+      } else {
+        // 손가락이 살짝 풀렸을 때 화면이 바로 제자리로 튕기지 않도록 0.15초 대기 (유도리 추가)
+        clearTimeout(dragTimeoutRef.current)
+        dragTimeoutRef.current = setTimeout(() => {
+          setDragOffset(0) // 완전히 풀렸을 때만 고무줄처럼 제자리 원상복구
+        }, 150)
+      }
+    }
+    return () => { 
+      scrollRef.current = null
+      clearTimeout(dragTimeoutRef.current)
+    }
+  }, [scrollRef, swipeRef])
+
   useEffect(() => {
     if (!voiceRef) return
     voiceRef.current = (a) => {
@@ -201,7 +244,6 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           const item = all.find(i => i.id === a.menu_id)
           if (!item) return false
           if (a.item_type === 'set' && item.hasSet) {
-            // 세트 사이드/음료 질문 시 → ItemDetailModal 바로 표시
             setVoiceOpts(null)
             setModalItem(item)
             setModalType('set')
@@ -212,12 +254,11 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             setModalType('single')
             setModalStep('detail')
           } else {
-            handleItemTap(item)  // item_type 미지정: 기본 SingleSetModal
+            handleItemTap(item)
           }
           return true
         }
         case 'update_modal': {
-          // 팝업이 열려 있을 때 AI가 선택 내용을 수정
           if (!modalDetailRef.current) {
             console.warn('[voice] update_modal 실패: ItemDetailModal이 열려있지 않음')
             return false
@@ -231,12 +272,10 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           const item = allItems.find(i => i.id === a.menu_id)
           if (!item) return false
 
-          // 해당 메뉴의 카테고리로 이동
           const catEntry = Object.entries(menuData.menuItems ?? {})
             .find(([, list]) => list.some(i => i.id === a.menu_id))
           if (catEntry) { setCatId(catEntry[0]); setPage(0) }
 
-          // AI 선택 옵션 저장 (ItemDetailModal 초기값 + 자동 확인)
           const opts = {
             qty:        a.quantity   ?? 1,
             exclusion:  a.exclusion  ?? null,
@@ -245,16 +284,13 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           }
           setVoiceOpts(opts)
 
-          // 모달 열기
           handleItemTap(item)
 
           if (item.hasSet) {
-            // SingleSetModal 0.7초 표시 후 단품/세트 자동 선택
             setTimeout(() => {
               handleTypeSelect(a.item_type === 'set' ? 'set' : 'single')
             }, 700)
           }
-          // ItemDetailModal은 autoConfirmMs=1500으로 자동 확인됨 (handleAdd 호출)
           return true
         }
         default:
@@ -343,8 +379,6 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
       }}>
         {categories.map(cat => {
           const active = cat.id === catId
-          // 알려진 4개 탭(추천메뉴/버거/사이드/음료)은 기존 큐레이션된 아이콘+번역을 그대로 쓰고,
-          // 관리자가 새로 추가한 카테고리는 DB의 image_url/name을 그대로 표시한다(폴백).
           const i18nKey = CAT_I18N_KEY[cat.id]
           const label = i18nKey ? t(i18nKey) : (cat.name ?? cat.id)
           const iconSrc = CAT_IMAGE[cat.id] ?? cat.image
@@ -408,6 +442,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           gap: 'clamp(10px, 2.6vw, 14px)',
           alignItems: 'stretch',
+          // 손을 놓았을 때 돌아가는 텐션감 부여
+          transform: `translateX(${dragOffset}px)`,
+          transition: dragOffset === 0 ? 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none',
         }}>
           {pageItems.map(item => (
             <div key={item.id + '-' + catId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -586,7 +623,6 @@ function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
         <span style={{ fontSize: compact ? 30 : 39, flexShrink: 0 }}>🍔</span>
       )}
 
-      {/* 이름 + 옵션 */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontSize: compact ? 19 : 24, fontWeight: 700, color: '#1a1a1a',
@@ -604,7 +640,6 @@ function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
         )}
       </div>
 
-      {/* 수량 조절 — 고정 너비로 금액에 의한 밀림 방지 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 6 : 9, flexShrink: 0 }}>
         {item.qty === 1 ? (
           <button
