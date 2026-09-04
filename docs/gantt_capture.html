@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440">
+  <title>방학 개발 타임라인 — 캡처용</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #888;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 48px;
+      padding: 48px;
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+
+    /* ────────────────────────────────────────
+       CHART SECTION  (캡처 단위)
+    ──────────────────────────────────────── */
+    .cs {
+      width: 1340px;
+      background: #FFFFFF;  /* 단색 — 배경 제거 편의 */
+    }
+
+    /* 상단 라벨 바 */
+    .cs-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+      background: #1A1A1A;
+    }
+    .cs-top-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .cs-badge {
+      background: #F5A623;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 3px;
+      letter-spacing: 1px;
+    }
+    .cs-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.3px;
+    }
+    .cs-range {
+      font-size: 12px;
+      font-weight: 700;
+      color: #F5A623;
+      letter-spacing: 0.5px;
+    }
+
+    /* 간트 레이아웃 */
+    .gantt {
+      display: flex;
+      padding: 0 24px 0 24px;
+    }
+
+    /* 라벨 컬럼 */
+    .lc {
+      width: 244px;
+      flex-shrink: 0;
+      border-right: 1.5px solid #E8E8E8;
+    }
+    .lc-hdr {
+      height: 52px;
+      display: flex;
+      align-items: flex-end;
+      padding-bottom: 7px;
+      padding-right: 12px;
+    }
+    .lc-hdr span {
+      font-size: 9px;
+      font-weight: 800;
+      color: #CCCCCC;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+    }
+    .l-row {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-right: 14px;
+      border-top: 1px solid #F2F2F2;
+    }
+    .l-stripe { width: 4px; border-radius: 2px; flex-shrink: 0; }
+    .l-name { font-size: 15px; font-weight: 800; color: #1A1A1A; line-height: 1.35; }
+    .l-who  { font-size: 12px; font-weight: 400; color: #AAAAAA; margin-top: 3px; }
+
+    /* 타임라인 컬럼 */
+    .tc {
+      flex: 1;
+      min-width: 0;
+    }
+    .tc-hdr {
+      height: 52px;
+      position: relative;
+      border-bottom: 1px solid #EBEBEB;
+    }
+    .tc-body { position: relative; }
+
+    /* 월 라벨 */
+    .mo-lbl {
+      position: absolute;
+      top: 0; height: 24px;
+      display: flex; align-items: center;
+      padding-left: 7px;
+      font-size: 11px; font-weight: 800;
+      color: #2A2A2A;
+      border-right: 1.5px solid #D5D5D5;
+    }
+    /* 주 라벨 */
+    .wk-lbl {
+      position: absolute;
+      top: 26px; height: 26px;
+      display: flex; align-items: center;
+      padding-left: 4px;
+      font-size: 9.5px; font-weight: 700;
+      color: #C8C8C8;
+    }
+
+    /* 그리드 라인 */
+    .gl { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+    .gl-wk { width: 1px; background: #F0F0F0; }
+    .gl-mo { width: 1.5px; background: #DCDCDC; }
+
+    /* 태스크 행 */
+    .t-row {
+      height: 72px;
+      position: relative;
+      border-top: 1px solid #F2F2F2;
+    }
+
+    /* 바 */
+    .bar {
+      position: absolute;
+      top: 50%; transform: translateY(-50%);
+      height: 28px;
+      border-radius: 4px;
+      display: flex; align-items: center;
+      padding: 0 9px;
+      font-size: 12px; font-weight: 800;
+      color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .bar-done { background: #1C1C1C; }
+    .bar-prog {
+      background: repeating-linear-gradient(
+        -45deg,
+        #909090 0, #909090 3px,
+        #B8B8B8 3px, #B8B8B8 6px
+      );
+    }
+    .bar-mile {
+      width: 28px !important;
+      height: 28px !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
+      justify-content: center !important;
+      background: #F5A623 !important;
+      font-size: 14px !important;
+    }
+  </style>
+</head>
+<body>
+
+<div class="cs" id="c1"></div>
+<div class="cs" id="c2"></div>
+<div class="cs" id="c3"></div>
+
+<script>
+/* ── CONFIG ──────────────────────────── */
+const START = new Date("2026-06-22T00:00:00");
+const TOTAL  = 64;   // Jun 22(d=0) ~ Aug 24(d=63)
+const PX     = 16;   // px/day  → 64×16 = 1024px
+
+function doff(s) { return Math.round((new Date(s + "T00:00:00") - START) / 864e5); }
+
+/* ── CALENDAR ────────────────────────── */
+const MONTHS = [
+  { day:  0, end:  8, label: "June"   },
+  { day:  9, end: 39, label: "July"   },
+  { day: 40, end: 63, label: "August" },
+];
+const MO_BOUNDS = new Set([9, 40]);
+
+const WEEKS = [];
+for (let d = 0; d < TOTAL; d += 7) {
+  const dt = new Date(START);
+  dt.setDate(dt.getDate() + d);
+  WEEKS.push({ day: d, label: `${dt.getMonth()+1}/${dt.getDate()}` });
+}
+
+/* ── DATA ────────────────────────────── */
+const SECTIONS = [
+  {
+    badge: "1 / 3",
+    title: "방학 개발 타임라인",
+    range: "2026.06.22 – 2026.07.13",
+    tasks: [
+      { n:"DB API 서버 제작",         s:"2026-06-29", e:"2026-07-10", w:"서유민",            done:true  },
+      { n:"AI(LLM) Tool 제작",        s:"2026-06-29", e:"2026-07-13", w:"김성원 · 임지연",  done:true  },
+      { n:"DB API PR 검토·병합",      s:"2026-07-06", e:"2026-07-10", w:"진수민 · 서유민",  done:true  },
+      { n:"AI Tools 기능 구현",       s:"2026-07-06", e:"2026-07-13", w:"김성원",            done:true  },
+      { n:"AI 프롬프트 엔지니어링",   s:"2026-07-13", e:"2026-07-26", w:"임지연",            done:true  },
+    ]
+  },
+  {
+    badge: "2 / 3",
+    title: "방학 개발 타임라인",
+    range: "2026.07.13 – 2026.08.01",
+    tasks: [
+      { n:"키오스크 백엔드 코드 작성", s:"2026-07-13", e:"2026-07-26", w:"진수민 · 김성원 · 임지연", done:true },
+      { n:"STT 업그레이드",            s:"2026-07-13", e:"2026-08-01", w:"김성원 · 임지연", done:true },
+      { n:"LLM 시나리오 테스트 구축",  s:"2026-07-13", e:"2026-08-01", w:"김성원 · 임지연", done:true },
+      { n:"관리자 페이지 디자인",       s:"2026-07-22", e:"2026-07-24", w:"김명서 · 진수민", done:true },
+      { n:"관리자 백엔드 구현",         s:"2026-07-24", e:"2026-08-01", w:"김성원 · 임지연", done:true },
+    ]
+  },
+  {
+    badge: "3 / 3",
+    title: "방학 개발 타임라인",
+    range: "2026.07.24 – 2026.08.24",
+    tasks: [
+      { n:"키오스크 프론트엔드 통합 보완", s:"2026-07-24", e:"2026-08-15", w:"조예성",                       done:true },
+      { n:"관리자 프론트엔드 구현",         s:"2026-07-27", e:"2026-08-03", w:"조예성",                       done:true },
+      { n:"Cloudflare Tunnel 배포",          s:"2026-07-28", e:"2026-07-28", w:"조예성",                       done:true, mile:true },
+      { n:"할인·주문 관리 개선",             s:"2026-08-05", e:"2026-08-15", w:"조예성 · 김성원 · 임지연",    done:true },
+      { n:"흰 지팡이 감지 기능 개발",        s:"2026-08-15", e:"2026-08-24", w:"김성원 · 임지연 · 조예성",    done:true },
+      { n:"HW 제작 시작",                    s:"2026-08-19", e:"2026-08-24", w:"조예성",                       done:false },
+    ]
+  }
+];
+
+/* ── RENDER ──────────────────────────── */
+function build(el, sec) {
+  /* 간트 래퍼 */
+  const gantt = document.createElement("div");
+  gantt.className = "gantt";
+
+  /* ── 라벨 컬럼 ── */
+  const lc = document.createElement("div");
+  lc.className = "lc";
+  lc.innerHTML = `<div class="lc-hdr"><span>작업 항목</span></div>`;
+  sec.tasks.forEach(t => {
+    const r = document.createElement("div");
+    r.className = "l-row";
+    r.innerHTML = `
+      <div class="l-stripe" style="height:28px;background:${t.done?"#1C1C1C":"#AAAAAA"}"></div>
+      <div>
+        <div class="l-name">${t.n}</div>
+        <div class="l-who">${t.w}</div>
+      </div>
+    `;
+    lc.appendChild(r);
+  });
+  gantt.appendChild(lc);
+
+  /* ── 타임라인 컬럼 ── */
+  const tc = document.createElement("div");
+  tc.className = "tc";
+
+  /* 헤더 */
+  const hdr = document.createElement("div");
+  hdr.className = "tc-hdr";
+  MONTHS.forEach(m => {
+    const lbl = document.createElement("div");
+    lbl.className = "mo-lbl";
+    lbl.style.left  = (m.day * PX) + "px";
+    lbl.style.width = ((m.end - m.day + 1) * PX) + "px";
+    lbl.textContent = m.label;
+    hdr.appendChild(lbl);
+  });
+  WEEKS.forEach(w => {
+    const lbl = document.createElement("div");
+    lbl.className = "wk-lbl";
+    lbl.style.left = (w.day * PX) + "px";
+    lbl.textContent = w.label;
+    hdr.appendChild(lbl);
+  });
+  tc.appendChild(hdr);
+
+  /* 바디 */
+  const body = document.createElement("div");
+  body.className = "tc-body";
+
+  WEEKS.forEach(w => {
+    const gl = document.createElement("div");
+    gl.className = "gl " + (MO_BOUNDS.has(w.day) ? "gl-mo" : "gl-wk");
+    gl.style.left = (w.day * PX) + "px";
+    body.appendChild(gl);
+  });
+  MO_BOUNDS.forEach(mb => {
+    if (!WEEKS.some(w => w.day === mb)) {
+      const gl = document.createElement("div");
+      gl.className = "gl gl-mo";
+      gl.style.left = (mb * PX) + "px";
+      body.appendChild(gl);
+    }
+  });
+
+  sec.tasks.forEach(t => {
+    const so = doff(t.s);
+    const eo = doff(t.e);
+    const barW = t.mile ? 28 : Math.max((eo - so + 1) * PX - 2, 4);
+    const barX = t.mile
+      ? so * PX + Math.round(PX / 2) - 14
+      : so * PX + 1;
+
+    const row = document.createElement("div");
+    row.className = "t-row";
+
+    const bar = document.createElement("div");
+    bar.className = "bar " + (t.mile ? "bar-mile" : t.done ? "bar-done" : "bar-prog");
+    bar.style.left  = barX + "px";
+    bar.style.width = (t.mile ? 28 : barW) + "px";
+    bar.textContent = t.mile ? "★" : (barW > 72 ? t.n : "");
+
+    row.appendChild(bar);
+    body.appendChild(row);
+  });
+
+  tc.appendChild(body);
+  gantt.appendChild(tc);
+  el.appendChild(gantt);
+}
+
+SECTIONS.forEach((s, i) => build(document.getElementById("c" + (i + 1)), s));
+</script>
+</body>
+</html>

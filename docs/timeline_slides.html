@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440">
+  <title>방학 개발 타임라인 — Team F5</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #BBBBBB;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 44px;
+      padding: 44px 0 80px;
+      font-family: 'Pretendard Variable', 'Noto Sans KR', sans-serif;
+    }
+
+    /* ─────────────────────────────────────────────────
+       SLIDE  1440 × 810
+    ───────────────────────────────────────────────── */
+    .slide {
+      width: 1440px;
+      height: 810px;
+      background: #F2F3F5;   /* solid — 배경 제거 편의 */
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* ── HEADER ───────────────────────────────────── */
+    .hd {
+      height: 54px;
+      display: flex;
+      align-items: center;
+      padding: 0 52px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      flex-shrink: 0;
+    }
+    .hd-logo { display: flex; align-items: center; gap: 9px; }
+    .hd-logo-sq {
+      width: 30px; height: 30px;
+      background: #F5A623;
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .hd-logo-sq svg { width: 16px; height: 16px; }
+    .hd-logo-txt { font-size: 16px; font-weight: 700; color: #1A1A1A; letter-spacing: 1px; }
+    .hd-date { flex: 1; text-align: center; font-size: 13px; font-weight: 400; color: #888; letter-spacing: 3px; }
+    .hd-gh {
+      background: #1A1A1A; color: #fff;
+      font-size: 11px; font-weight: 500;
+      padding: 5px 15px; border-radius: 20px;
+    }
+
+    /* ── TITLE AREA ───────────────────────────────── */
+    .s-title {
+      height: 92px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 52px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      flex-shrink: 0;
+    }
+    .st-label { font-size: 12px; font-weight: 600; color: #ADADAD; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    .st-main  { font-size: 40px; font-weight: 800; color: #1A1A1A; letter-spacing: -1.5px; line-height: 1; }
+    .st-right { text-align: right; }
+    .st-range { font-size: 14px; font-weight: 700; color: #333; }
+    .st-sub   { font-size: 12px; color: #AAAAAA; margin-top: 5px; }
+    .st-num   { font-size: 11px; font-weight: 700; color: #F5A623; margin-top: 8px; letter-spacing: 1px; }
+
+    /* ── GANTT AREA ───────────────────────────────── */
+    .g-wrap {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      padding: 0 52px;
+    }
+
+    /* Label column */
+    .g-lc {
+      width: 248px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid rgba(0,0,0,0.08);
+    }
+    .g-lc-hdr {
+      height: 52px;
+      flex-shrink: 0;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      display: flex;
+      align-items: flex-end;
+      padding: 0 0 7px 0;
+    }
+    .g-lc-hdr span { font-size: 10px; font-weight: 700; color: #CCCCCC; letter-spacing: 2px; text-transform: uppercase; }
+    .g-lc-rows { flex: 1; display: flex; flex-direction: column; }
+    .g-lr {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-right: 14px;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+    .g-lr:last-child { border-bottom: none; }
+    .g-lr-dot { width: 6px; border-radius: 3px; flex-shrink: 0; }
+    .g-lr-name { font-size: 13px; font-weight: 700; color: #1C1C1C; line-height: 1.3; }
+    .g-lr-who  { font-size: 11px; font-weight: 400; color: #AAAAAA; margin-top: 1px; }
+
+    /* Timeline column */
+    .g-tc { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    .g-tc-hdr {
+      height: 52px;
+      position: relative;
+      flex-shrink: 0;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .g-tc-body { flex: 1; position: relative; overflow: hidden; }
+
+    /* Month header row */
+    .mo-lbl {
+      position: absolute;
+      top: 0; height: 24px;
+      display: flex; align-items: center;
+      padding-left: 8px;
+      font-size: 11px; font-weight: 800; color: #444;
+      border-right: 1.5px solid rgba(0,0,0,0.12);
+      letter-spacing: 0.5px;
+    }
+    /* Week header row */
+    .wk-lbl {
+      position: absolute;
+      top: 26px; height: 26px;
+      display: flex; align-items: center;
+      padding-left: 4px;
+      font-size: 10px; font-weight: 500; color: #C0C0C0;
+    }
+
+    /* Grid lines */
+    .gl { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+    .gl-wk { width: 1px; background: rgba(0,0,0,0.06); }
+    .gl-mo { width: 1.5px; background: rgba(0,0,0,0.14); }
+
+    /* Task row */
+    .t-row { position: absolute; left: 0; right: 0; border-bottom: 1px solid rgba(0,0,0,0.05); }
+
+    /* Bars */
+    .bar {
+      position: absolute;
+      border-radius: 5px;
+      display: flex; align-items: center;
+      padding: 0 9px;
+      font-size: 11px; font-weight: 700; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .bar-done { background: #1C1C1C; }
+    .bar-prog {
+      background: repeating-linear-gradient(-45deg, #888 0, #888 3px, #AAAAAA 3px, #AAAAAA 6px);
+    }
+    .bar-mile {
+      background: #F5A623 !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
+      justify-content: center !important;
+      font-size: 14px !important;
+    }
+
+    /* ── FOOTER ───────────────────────────────────── */
+    .s-ft {
+      height: 34px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 52px;
+      border-top: 1px solid rgba(0,0,0,0.08);
+      flex-shrink: 0;
+    }
+    .s-ft-l { font-size: 10.5px; color: #C8C8C8; }
+    .s-ft-r { font-size: 10.5px; color: #AAAAAA; display: flex; align-items: center; gap: 6px; }
+    .s-ft-dot { width: 5px; height: 5px; border-radius: 50%; background: #F5A623; }
+  </style>
+</head>
+<body>
+
+<div class="slide" id="s1"></div>
+<div class="slide" id="s2"></div>
+<div class="slide" id="s3"></div>
+
+<script>
+/* ── CONFIG ────────────────────────────────── */
+const START = new Date("2026-06-22T00:00:00");
+const TOTAL  = 64;  // Jun 22 (d=0) → Aug 24 (d=63) inclusive
+const PX     = 17;  // px per day → total = 1088px
+
+function doff(s) { return Math.round((new Date(s + "T00:00:00") - START) / 864e5); }
+
+/* ── CALENDAR ──────────────────────────────── */
+const MONTHS = [
+  { day:  0, end:  8, label: "June"   },
+  { day:  9, end: 39, label: "July"   },
+  { day: 40, end: 63, label: "August" },
+];
+const MO_BOUNDS = new Set([9, 40]);
+
+const WEEKS = [];
+for (let d = 0; d < TOTAL; d += 7) {
+  const dt = new Date(START); dt.setDate(dt.getDate() + d);
+  WEEKS.push({ day: d, label: `${dt.getMonth()+1}/${dt.getDate()}` });
+}
+
+/* ── SLIDE DATA ────────────────────────────── */
+const SLIDES = [
+  {
+    num: 1, total: 3,
+    range: "06.22 – 07.13",
+    sub: "DB · AI 기반 구현",
+    tasks: [
+      { n:"DB API 서버 제작",         s:"2026-06-29", e:"2026-07-10", w:"서유민",            done:true  },
+      { n:"AI(LLM) Tool 제작",        s:"2026-06-29", e:"2026-07-13", w:"김성원 · 임지연",  done:true  },
+      { n:"HW 제작",                  s:"2026-06-30", e:"2026-08-24", w:"—",                 done:false },
+      { n:"DB API PR 검토·병합",      s:"2026-07-06", e:"2026-07-10", w:"진수민 · 서유민",  done:true  },
+      { n:"AI Tools 기능 구현",       s:"2026-07-06", e:"2026-07-13", w:"김성원",            done:true  },
+      { n:"AI 프롬프트 엔지니어링",   s:"2026-07-13", e:"2026-07-26", w:"임지연",            done:true  },
+    ]
+  },
+  {
+    num: 2, total: 3,
+    range: "07.13 – 08.01",
+    sub: "시스템 구현 · STT 고도화",
+    tasks: [
+      { n:"키오스크 백엔드 코드 작성", s:"2026-07-13", e:"2026-07-26", w:"—",                done:true },
+      { n:"STT 업그레이드",            s:"2026-07-13", e:"2026-08-01", w:"김성원 · 임지연",  done:true },
+      { n:"LLM 시나리오 테스트 구축",  s:"2026-07-13", e:"2026-08-01", w:"김성원 · 임지연",  done:true },
+      { n:"관리자 페이지 디자인",       s:"2026-07-22", e:"2026-07-24", w:"김명서 · 진수민",  done:true },
+      { n:"관리자 백엔드 구현",         s:"2026-07-24", e:"2026-08-01", w:"김성원 · 임지연",  done:true },
+    ]
+  },
+  {
+    num: 3, total: 3,
+    range: "07.24 – 08.24",
+    sub: "통합 · 배포 · 완성",
+    tasks: [
+      { n:"키오스크 프론트엔드 통합 보완", s:"2026-07-24", e:"2026-08-15", w:"조예성",                          done:true },
+      { n:"관리자 프론트엔드 구현",         s:"2026-07-27", e:"2026-08-03", w:"조예성",                          done:true },
+      { n:"Cloudflare Tunnel 배포",          s:"2026-07-28", e:"2026-07-28", w:"조예성",                          done:true, mile:true },
+      { n:"할인·주문 관리 개선",             s:"2026-08-05", e:"2026-08-15", w:"조예성 · 김성원 · 임지연",        done:true },
+      { n:"흰 지팡이 감지 기능 개발",        s:"2026-08-15", e:"2026-08-24", w:"김성원 · 임지연 · 조예성",        done:true },
+    ]
+  }
+];
+
+/* ── RENDER ────────────────────────────────── */
+const LOGO_SVG = `<svg viewBox="0 0 16 16" fill="none">
+  <path d="M3 8h10M8 3v10" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+</svg>`;
+
+function build(el, sd) {
+  const N = sd.tasks.length;
+
+  /* Header */
+  const hd = document.createElement("div");
+  hd.className = "hd";
+  hd.innerHTML = `
+    <div class="hd-logo">
+      <div class="hd-logo-sq">${LOGO_SVG}</div>
+      <span class="hd-logo-txt">F5</span>
+    </div>
+    <div class="hd-date">2 0 2 6 / 0 9 / 0 4</div>
+    <div class="hd-gh">github.com/Capstone-F5</div>
+  `;
+  el.appendChild(hd);
+
+  /* Title */
+  const tt = document.createElement("div");
+  tt.className = "s-title";
+  tt.innerHTML = `
+    <div>
+      <div class="st-label">Timeline &nbsp;·&nbsp; ${sd.num} / ${sd.total}</div>
+      <div class="st-main">방학 개발 타임라인</div>
+    </div>
+    <div class="st-right">
+      <div class="st-range">${sd.range}</div>
+      <div class="st-sub">${sd.sub}</div>
+      <div class="st-num">● 전체 완료</div>
+    </div>
+  `;
+  el.appendChild(tt);
+
+  /* Gantt wrapper */
+  const gw = document.createElement("div");
+  gw.className = "g-wrap";
+
+  /* ── Label column ── */
+  const lc = document.createElement("div");
+  lc.className = "g-lc";
+  lc.innerHTML = `<div class="g-lc-hdr"><span>작업 항목</span></div>`;
+  const lcr = document.createElement("div");
+  lcr.className = "g-lc-rows";
+  sd.tasks.forEach(t => {
+    const r = document.createElement("div");
+    r.className = "g-lr";
+    r.innerHTML = `
+      <div class="g-lr-dot" style="height:28px;background:${t.done ? "#1C1C1C" : "#AAAAAA"}"></div>
+      <div>
+        <div class="g-lr-name">${t.n}</div>
+        <div class="g-lr-who">${t.w}</div>
+      </div>
+    `;
+    lcr.appendChild(r);
+  });
+  lc.appendChild(lcr);
+  gw.appendChild(lc);
+
+  /* ── Timeline column ── */
+  const tc = document.createElement("div");
+  tc.className = "g-tc";
+
+  /* TL header */
+  const tch = document.createElement("div");
+  tch.className = "g-tc-hdr";
+  // Month labels
+  MONTHS.forEach(m => {
+    const lbl = document.createElement("div");
+    lbl.className = "mo-lbl";
+    lbl.style.left  = (m.day * PX) + "px";
+    lbl.style.width = ((m.end - m.day + 1) * PX) + "px";
+    lbl.textContent = m.label;
+    tch.appendChild(lbl);
+  });
+  // Week labels
+  WEEKS.forEach(w => {
+    const lbl = document.createElement("div");
+    lbl.className = "wk-lbl";
+    lbl.style.left = (w.day * PX) + "px";
+    lbl.textContent = w.label;
+    tch.appendChild(lbl);
+  });
+  tc.appendChild(tch);
+
+  /* TL body */
+  const tcb = document.createElement("div");
+  tcb.className = "g-tc-body";
+
+  // Grid lines (from header, span body)
+  WEEKS.forEach(w => {
+    const gl = document.createElement("div");
+    gl.className = "gl " + (MO_BOUNDS.has(w.day) ? "gl-mo" : "gl-wk");
+    gl.style.left = (w.day * PX) + "px";
+    tcb.appendChild(gl);
+  });
+  // Month boundary lines not on week starts
+  MO_BOUNDS.forEach(mb => {
+    if (!WEEKS.some(w => w.day === mb)) {
+      const gl = document.createElement("div");
+      gl.className = "gl gl-mo";
+      gl.style.left = (mb * PX) + "px";
+      tcb.appendChild(gl);
+    }
+  });
+
+  // Task rows
+  const rowPct = 100 / N;
+  const BAR_H  = 30;
+
+  sd.tasks.forEach((t, i) => {
+    const so = doff(t.s);
+    const eo = doff(t.e);
+    const barW = t.mile ? 30 : Math.max((eo - so + 1) * PX - 2, 4);
+    const barX = t.mile ? (so * PX + Math.round(PX/2) - 15) : so * PX + 1;
+
+    const row = document.createElement("div");
+    row.className = "t-row";
+    row.style.top    = `${i * rowPct}%`;
+    row.style.height = `${rowPct}%`;
+
+    const bar = document.createElement("div");
+    bar.className = "bar " + (t.mile ? "bar-mile" : t.done ? "bar-done" : "bar-prog");
+    bar.style.left   = barX + "px";
+    bar.style.width  = (t.mile ? 30 : barW) + "px";
+    bar.style.height = BAR_H + "px";
+    bar.style.top    = `calc(50% - ${BAR_H/2}px)`;
+
+    if (t.mile) {
+      bar.textContent = "★";
+    } else {
+      // show name only if bar wide enough
+      bar.textContent = barW > 70 ? t.n : "";
+    }
+
+    row.appendChild(bar);
+    tcb.appendChild(row);
+  });
+
+  tc.appendChild(tcb);
+  gw.appendChild(tc);
+  el.appendChild(gw);
+
+  /* Footer */
+  const ft = document.createElement("div");
+  ft.className = "s-ft";
+  ft.innerHTML = `
+    <span class="s-ft-l">Team F5 · 동양미래대학교 인공지능소프트웨어학과 · 방학 개발 현황 (2026.06.22 ~ 2026.08.24)</span>
+    <span class="s-ft-r"><span class="s-ft-dot"></span>${sd.num} / ${sd.total}</span>
+  `;
+  el.appendChild(ft);
+}
+
+SLIDES.forEach((s, i) => build(document.getElementById("s" + (i+1)), s));
+</script>
+</body>
+</html>

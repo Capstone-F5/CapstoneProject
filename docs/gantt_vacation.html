@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>방학 개발 간트차트 — Team F5</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Nanum+Gothic:wght@400;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0D1724;
+      --navy:      #1B2A4A;
+      --navy-mid:  #243450;
+      --navy-bd:   #2E4468;
+      --orange:    #F57C00;
+      --dim:       #6A8FB8;
+      --text:      #C8D8F0;
+      --row-alt:   rgba(255,255,255,0.013);
+
+      --c-front:   #E8405A;
+      --c-ai:      #2E82D4;
+      --c-db:      #3AAA74;
+      --c-design:  #F5A623;
+      --c-multi:   #9B59B6;
+      --c-hw:      #5C7A9A;
+
+      --px: 14;   /* px per day */
+      --th: 46;   /* task row height (px) */
+      --hh: 66;   /* header height (px) */
+      --lw: 228;  /* label column width (px) */
+    }
+
+    body {
+      font-family: 'Nanum Gothic', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 36px 40px 60px;
+      min-width: 900px;
+    }
+
+    /* ── PAGE HEADER ────────────────────────── */
+    .pg-title {
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 28px;
+      color: var(--orange);
+      letter-spacing: -0.3px;
+      margin-bottom: 5px;
+    }
+    .pg-sub {
+      font-size: 13px;
+      color: var(--dim);
+      margin-bottom: 22px;
+    }
+
+    /* ── LEGEND ─────────────────────────────── */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 22px;
+      margin-bottom: 20px;
+    }
+    .leg-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: #9BB4D0;
+    }
+    .leg-dot {
+      width: 13px; height: 13px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    /* ── GANTT OUTER ────────────────────────── */
+    .gantt-outer {
+      display: flex;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1.5px solid var(--navy-bd);
+      box-shadow: 0 14px 48px rgba(0,0,0,0.55);
+    }
+
+    /* ── LABEL COLUMN ───────────────────────── */
+    #gantt-labels {
+      flex-shrink: 0;
+      width: calc(var(--lw) * 1px);
+      background: var(--navy);
+      border-right: 2px solid var(--navy-bd);
+      z-index: 2;
+    }
+    .lbl-hdr {
+      height: calc(var(--hh) * 1px);
+      background: #111D32;
+      border-bottom: 2px solid var(--navy-bd);
+      display: flex;
+      align-items: flex-end;
+      padding: 0 14px 10px;
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 12px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+    .task-lbl {
+      height: calc(var(--th) * 1px);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      border-bottom: 1px solid #1A2E48;
+      gap: 8px;
+      cursor: default;
+      transition: background 0.1s;
+    }
+    .task-lbl:hover { background: #1E3256; }
+    .lbl-stripe {
+      width: 5px; height: 24px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .lbl-name {
+      font-size: 12px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── TIMELINE SCROLL AREA ───────────────── */
+    #gantt-scroll {
+      flex: 1;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    #gantt-inner {
+      position: relative;
+    }
+
+    /* ── TIMELINE HEADER ────────────────────── */
+    .tl-hdr {
+      position: sticky;
+      top: 0;
+      height: calc(var(--hh) * 1px);
+      background: #111D32;
+      border-bottom: 2px solid var(--navy-bd);
+      z-index: 3;
+      overflow: hidden;
+    }
+    .month-row {
+      height: 28px;
+      position: relative;
+      border-bottom: 1px solid var(--navy-bd);
+    }
+    .month-lbl {
+      position: absolute;
+      top: 0; height: 28px;
+      display: flex; align-items: center;
+      padding-left: 10px;
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 14px;
+      color: var(--orange);
+      border-right: 2px solid var(--navy-bd);
+    }
+    .week-row {
+      height: 38px;
+      position: relative;
+    }
+    .week-lbl {
+      position: absolute;
+      top: 0; height: 38px;
+      display: flex; align-items: center;
+      padding-left: 5px;
+      font-size: 11px;
+      color: var(--dim);
+      border-right: 1px solid #1E3356;
+    }
+    .week-lbl.month-edge {
+      border-right: 2px solid var(--navy-bd);
+    }
+
+    /* ── TASK ROWS ──────────────────────────── */
+    .tl-body { position: relative; }
+    .tl-row {
+      height: calc(var(--th) * 1px);
+      border-bottom: 1px solid #192840;
+      position: relative;
+    }
+    .tl-row:nth-child(even) { background: var(--row-alt); }
+
+    /* week grid lines inside each row */
+    .vline {
+      position: absolute; top: 0; bottom: 0;
+      width: 1px; pointer-events: none;
+    }
+    .vline-week  { background: #1E3356; }
+    .vline-month { background: var(--navy-bd); width: 2px; }
+
+    /* ── TASK BARS ──────────────────────────── */
+    .bar {
+      position: absolute;
+      height: 28px; top: 9px;
+      border-radius: 7px;
+      display: flex; align-items: center;
+      padding: 0 8px;
+      font-size: 11px; font-weight: 800;
+      color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: default;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.45);
+      transition: filter 0.12s, transform 0.1s;
+      z-index: 1;
+    }
+    .bar:hover {
+      filter: brightness(1.22);
+      transform: scaleY(1.1);
+      z-index: 5;
+    }
+    .bar.milestone {
+      border-radius: 50%;
+      width: 28px !important;
+      height: 28px !important;
+      padding: 0;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    /* ── END MARKER ─────────────────────────── */
+    .end-marker {
+      position: absolute; top: 0; bottom: 0;
+      width: 2px; background: var(--orange);
+      opacity: 0.5; pointer-events: none; z-index: 4;
+    }
+    .end-label {
+      position: absolute; top: 4px;
+      background: var(--orange);
+      color: #fff;
+      font-family: 'Black Han Sans', sans-serif;
+      font-size: 10px; padding: 1px 5px;
+      border-radius: 3px; pointer-events: none; z-index: 4;
+    }
+
+    /* ── TOOLTIP ─────────────────────────────── */
+    #tip {
+      position: fixed;
+      background: #080F1C;
+      border: 1px solid #2E4468;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 12.5px;
+      pointer-events: none;
+      z-index: 9999;
+      display: none;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.7);
+      min-width: 200px;
+    }
+    .tip-name { font-weight: 800; font-size: 14px; margin-bottom: 7px; }
+    .tip-row  { color: var(--dim); margin-top: 4px; font-size: 12px; }
+    .tip-row span { color: var(--text); }
+    .tip-done { color: #43AA6A !important; }
+    .tip-ing  { color: #F5A623 !important; }
+
+    /* ── FOOTER ─────────────────────────────── */
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: #3A5070;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+<div class="pg-title">📅 방학 개발 간트차트</div>
+<div class="pg-sub">Team F5 · 디지털 약자를 위한 배리어프리 키오스크 · 2026.06.22 – 2026.08.24</div>
+
+<div class="legend" id="legend"></div>
+
+<div class="gantt-outer">
+  <div id="gantt-labels">
+    <div class="lbl-hdr">작업 항목</div>
+  </div>
+  <div id="gantt-scroll">
+    <div id="gantt-inner"></div>
+  </div>
+</div>
+
+<div class="footer">* 호버 시 상세 정보 표시 · 방학 기간: 2026.06.22 ~ 2026.08.24</div>
+<div id="tip"></div>
+
+<script>
+/* ── CONFIG ──────────────────────────────── */
+const START_STR = "2026-06-22";
+const END_STR   = "2026-08-24";
+const PX  = 14;   // px per day
+const TH  = 46;   // task height
+const HH  = 66;   // header height
+
+const START = new Date(START_STR + "T00:00:00");
+const END   = new Date(END_STR   + "T00:00:00");
+
+function dayOff(str) {
+  const d = new Date(str + "T00:00:00");
+  return Math.round((d - START) / 86400000);
+}
+const TOTAL_DAYS = dayOff(END_STR) + 1; // inclusive
+
+/* ── PALETTE ─────────────────────────────── */
+const CATS = {
+  front:  { label: "프론트엔드 (조예성)",        color: "#E8405A" },
+  ai:     { label: "AI / 백엔드 (김성원 · 임지연)", color: "#2E82D4" },
+  db:     { label: "DB / 기획 (서유민 · 진수민)", color: "#3AAA74" },
+  design: { label: "디자인 (김명서 · 진수민)",   color: "#F5A623" },
+  multi:  { label: "공동 개발 (다수 참여)",       color: "#9B59B6" },
+  hw:     { label: "HW · 기타",                 color: "#5C7A9A" },
+};
+
+/* ── TASKS ───────────────────────────────── */
+const TASKS = [
+  { name: "DB API 서버 제작",             start: "2026-06-29", end: "2026-07-10", cat: "db",     persons: ["서유민"],                 done: true  },
+  { name: "AI(LLM) Tool 제작",            start: "2026-06-29", end: "2026-07-13", cat: "ai",     persons: ["김성원", "임지연"],        done: true  },
+  { name: "HW 제작",                      start: "2026-06-30", end: "2026-08-24", cat: "hw",     persons: [],                         done: false },
+  { name: "DB API PR 검토·병합",          start: "2026-07-06", end: "2026-07-10", cat: "db",     persons: ["진수민", "서유민"],        done: true  },
+  { name: "AI Tools 기능 구현",           start: "2026-07-06", end: "2026-07-13", cat: "ai",     persons: ["김성원"],                  done: true  },
+  { name: "AI 프롬프트 엔지니어링",       start: "2026-07-13", end: "2026-07-26", cat: "ai",     persons: ["임지연"],                  done: true  },
+  { name: "키오스크 백엔드 코드 작성",    start: "2026-07-13", end: "2026-07-26", cat: "hw",     persons: [],                         done: true  },
+  { name: "STT 업그레이드",               start: "2026-07-13", end: "2026-08-01", cat: "ai",     persons: ["김성원", "임지연"],        done: true  },
+  { name: "LLM 시나리오 테스트 구축",     start: "2026-07-13", end: "2026-08-01", cat: "ai",     persons: ["김성원", "임지연"],        done: true  },
+  { name: "관리자 페이지 디자인",         start: "2026-07-22", end: "2026-07-24", cat: "design", persons: ["김명서", "진수민"],        done: true  },
+  { name: "관리자 백엔드 구현",           start: "2026-07-24", end: "2026-08-01", cat: "ai",     persons: ["김성원", "임지연"],        done: true  },
+  { name: "키오스크 프론트엔드 통합 보완",start: "2026-07-24", end: "2026-08-15", cat: "front",  persons: ["조예성"],                  done: true  },
+  { name: "관리자 프론트엔드 구현",       start: "2026-07-27", end: "2026-08-03", cat: "front",  persons: ["조예성"],                  done: true  },
+  { name: "Cloudflare Tunnel 배포",       start: "2026-07-28", end: "2026-07-28", cat: "front",  persons: ["조예성"],                  done: true, milestone: true },
+  { name: "할인·주문 관리 개선",          start: "2026-08-05", end: "2026-08-15", cat: "multi",  persons: ["조예성", "김성원", "임지연"], done: true },
+  { name: "흰 지팡이 감지 기능 개발",     start: "2026-08-15", end: "2026-08-24", cat: "multi",  persons: ["김성원", "임지연", "조예성"], done: true },
+];
+
+/* ── HELPER: week-start days ─────────────── */
+function getWeekStarts() {
+  const starts = [];
+  let d = new Date(START);
+  while (d <= END) {
+    starts.push(new Date(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return starts;
+}
+
+/* ── HELPER: month boundaries ────────────── */
+function getMonthBoundaries() {
+  const bounds = [];
+  let d = new Date(START);
+  let curMonth = d.getMonth();
+  while (d <= END) {
+    if (d.getMonth() !== curMonth) {
+      bounds.push({ dayOffset: dayOff(d.toISOString().slice(0,10)), month: d.getMonth() });
+      curMonth = d.getMonth();
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return bounds;
+}
+
+/* ── RENDER LEGEND ───────────────────────── */
+const legendEl = document.getElementById("legend");
+Object.entries(CATS).forEach(([, v]) => {
+  const item = document.createElement("div");
+  item.className = "leg-item";
+  item.innerHTML = `<div class="leg-dot" style="background:${v.color}"></div><span>${v.label}</span>`;
+  legendEl.appendChild(item);
+});
+
+/* ── RENDER LABEL COLUMN ─────────────────── */
+const labelsEl = document.getElementById("gantt-labels");
+TASKS.forEach(t => {
+  const div = document.createElement("div");
+  div.className = "task-lbl";
+  div.innerHTML = `
+    <div class="lbl-stripe" style="background:${CATS[t.cat].color}${t.done ? "" : "88"}"></div>
+    <div class="lbl-name">${t.name}</div>
+  `;
+  labelsEl.appendChild(div);
+});
+
+/* ── RENDER INNER ────────────────────────── */
+const inner = document.getElementById("gantt-inner");
+const totalW = TOTAL_DAYS * PX;
+inner.style.width = totalW + "px";
+
+const weekStarts = getWeekStarts();
+const monthBounds = getMonthBoundaries();
+const monthBoundOffsets = new Set(monthBounds.map(m => m.dayOffset));
+
+/* Header */
+const hdr = document.createElement("div");
+hdr.className = "tl-hdr";
+hdr.style.height = HH + "px";
+
+// Month row
+const mRow = document.createElement("div");
+mRow.className = "month-row";
+const MONTH_NAMES = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+
+// Find month segments
+const segments = [];
+let cur = new Date(START);
+let segStart = dayOff(START_STR);
+let segMonth = cur.getMonth();
+cur.setDate(cur.getDate());
+for (let i = 0; i <= TOTAL_DAYS; i++) {
+  const d2 = new Date(START);
+  d2.setDate(d2.getDate() + i);
+  if (d2.getMonth() !== segMonth || i === TOTAL_DAYS) {
+    segments.push({ off: segStart, month: segMonth, len: i - segStart });
+    segStart = i;
+    segMonth = d2.getMonth();
+  }
+}
+segments.forEach(s => {
+  const lbl = document.createElement("div");
+  lbl.className = "month-lbl";
+  lbl.style.left  = (s.off * PX) + "px";
+  lbl.style.width = (s.len * PX) + "px";
+  lbl.textContent = MONTH_NAMES[s.month];
+  mRow.appendChild(lbl);
+});
+hdr.appendChild(mRow);
+
+// Week row
+const wRow = document.createElement("div");
+wRow.className = "week-row";
+weekStarts.forEach((ws, i) => {
+  const off = dayOff(ws.toISOString().slice(0,10));
+  const nextWs = weekStarts[i+1];
+  const nextOff = nextWs ? Math.min(dayOff(nextWs.toISOString().slice(0,10)), TOTAL_DAYS) : TOTAL_DAYS;
+  const lbl = document.createElement("div");
+  lbl.className = "week-lbl" + (monthBoundOffsets.has(off) ? " month-edge" : "");
+  lbl.style.left  = (off * PX) + "px";
+  lbl.style.width = ((nextOff - off) * PX) + "px";
+  lbl.textContent = `${ws.getMonth()+1}/${ws.getDate()}`;
+  wRow.appendChild(lbl);
+});
+hdr.appendChild(wRow);
+inner.appendChild(hdr);
+
+/* Body */
+const body = document.createElement("div");
+body.className = "tl-body";
+
+const tip = document.getElementById("tip");
+
+TASKS.forEach(t => {
+  const row = document.createElement("div");
+  row.className = "tl-row";
+
+  // Grid lines
+  weekStarts.forEach(ws => {
+    const off = dayOff(ws.toISOString().slice(0,10));
+    const vl = document.createElement("div");
+    vl.className = "vline " + (monthBoundOffsets.has(off) ? "vline-month" : "vline-week");
+    vl.style.left = (off * PX) + "px";
+    row.appendChild(vl);
+  });
+
+  // Bar
+  const sOff = dayOff(t.start);
+  const eOff = dayOff(t.end);
+  const barW = t.milestone
+    ? 28
+    : Math.max((eOff - sOff + 1) * PX - 2, PX);
+  const barX = sOff * PX + 1;
+
+  const bar = document.createElement("div");
+  bar.className = "bar" + (t.milestone ? " milestone" : "");
+
+  const col = CATS[t.cat].color;
+  if (t.milestone) {
+    bar.style.background = col;
+    bar.style.left = (sOff * PX - 1) + "px";
+    bar.textContent = "🚀";
+  } else {
+    bar.style.left  = barX + "px";
+    bar.style.width = barW + "px";
+    // gradient: darker right edge for done bars
+    bar.style.background = t.done
+      ? `linear-gradient(90deg, ${col}, ${col}BB)`
+      : `repeating-linear-gradient(45deg, ${col}88 0px, ${col}88 6px, ${col}55 6px, ${col}55 12px)`;
+    bar.textContent = t.name;
+  }
+  bar.style.boxShadow = `0 3px 10px ${col}55`;
+
+  // Tooltip
+  bar.addEventListener("mouseenter", () => {
+    const doneStr = t.done ? '<span class="tip-done">✅ 완료</span>' : '<span class="tip-ing">🔄 진행 중</span>';
+    tip.innerHTML = `
+      <div class="tip-name" style="color:${col}">${t.name}</div>
+      <div class="tip-row">📅 <span>${t.start} ~ ${t.end}</span></div>
+      <div class="tip-row">👥 <span>${t.persons.length ? t.persons.join(" · ") : "미지정"}</span></div>
+      <div class="tip-row">상태: ${doneStr}</div>
+    `;
+    tip.style.display = "block";
+  });
+  bar.addEventListener("mousemove", ev => {
+    tip.style.left = (ev.clientX + 18) + "px";
+    tip.style.top  = (ev.clientY - 14) + "px";
+  });
+  bar.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+
+  row.appendChild(bar);
+  body.appendChild(row);
+});
+
+/* End marker (8/24) */
+const endOff = dayOff(END_STR);
+const endLine = document.createElement("div");
+endLine.className = "end-marker";
+endLine.style.left = (endOff * PX) + "px";
+const endLbl = document.createElement("div");
+endLbl.className = "end-label";
+endLbl.style.left = ((endOff + 0.5) * PX) + "px";
+endLbl.textContent = "방학 종료";
+body.appendChild(endLine);
+body.appendChild(endLbl);
+
+inner.appendChild(body);
+</script>
+</body>
+</html>

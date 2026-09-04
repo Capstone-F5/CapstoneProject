@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440">
+  <title>전체 기능 구현 현황</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #888;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0;
+      padding: 48px;
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+
+    /* ── 캡처 단위 래퍼 ── */
+    .wrap {
+      width: 1340px;
+      background: #FFFFFF;
+      padding: 36px 36px 32px;
+    }
+
+    /* ── 상단 요약 바 ── */
+    .summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .summary-title {
+      font-size: 22px;
+      font-weight: 900;
+      color: #1A1A1A;
+      letter-spacing: -0.3px;
+    }
+    .summary-right {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .summary-count {
+      font-size: 13px;
+      font-weight: 700;
+      color: #888;
+    }
+    .summary-count span {
+      color: #1A1A1A;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .progress-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .progress-bar {
+      width: 260px;
+      height: 8px;
+      background: #EBEBEB;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #1A1A1A;
+      border-radius: 4px;
+    }
+    .progress-pct {
+      font-size: 14px;
+      font-weight: 900;
+      color: #F5A623;
+      min-width: 40px;
+    }
+
+    /* ── 카테고리 그리드 ── */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    /* ── 카테고리 카드 ── */
+    .cat {
+      border: 1.5px solid #EBEBEB;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .cat-hdr {
+      background: #1A1A1A;
+      padding: 11px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .cat-hdr-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .cat-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #F5A623;
+      flex-shrink: 0;
+    }
+    .cat-name {
+      font-size: 13px;
+      font-weight: 900;
+      color: #FFFFFF;
+      letter-spacing: 0.2px;
+    }
+    .cat-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: #F5A623;
+      background: rgba(245,166,35,0.15);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* ── 기능 리스트 ── */
+    .feat-list {
+      padding: 4px 0;
+    }
+    .feat {
+      display: flex;
+      align-items: center;
+      padding: 9px 16px;
+      border-bottom: 1px solid #F5F5F5;
+      gap: 11px;
+    }
+    .feat:last-child { border-bottom: none; }
+
+    /* 상태 아이콘 */
+    .icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon-done {
+      background: #1A1A1A;
+    }
+    .icon-done::after {
+      content: '';
+      width: 7px;
+      height: 4px;
+      border-left: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+      transform: translateY(-1px) rotate(-45deg);
+      display: block;
+    }
+    .icon-prog {
+      background: repeating-linear-gradient(
+        -45deg, #AAAAAA 0, #AAAAAA 2px, #CCCCCC 2px, #CCCCCC 5px
+      );
+    }
+    .icon-todo {
+      border: 2px solid #DDDDDD;
+      background: transparent;
+    }
+
+    .feat-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1A1A1A;
+      flex: 1;
+    }
+    .feat-name.prog { color: #888; }
+    .feat-name.todo { color: #BBBBBB; }
+
+    .feat-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 3px;
+    }
+    .tag-done { background: #F0F0F0; color: #666; }
+    .tag-prog { background: #FFF5E0; color: #F5A623; }
+    .tag-todo { background: #F8F8F8; color: #CCC; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="main"></div>
+
+<script>
+const CATS = [
+  {
+    name: "키오스크 UI / UX",
+    feats: [
+      { n:"음성 AI 대화 주문",           done:true,  tag:"완료" },
+      { n:"비접촉 제스처 인식",           done:true,  tag:"완료" },
+      { n:"메뉴 탐색 · 장바구니",         done:true,  tag:"완료" },
+      { n:"결제 처리 (카드 · 현금 · 포인트)", done:true, tag:"완료" },
+      { n:"다국어 지원 (한/영/중/일)",     done:true,  tag:"완료" },
+      { n:"QR/바코드 스캔",               done:true,  tag:"완료" },
+      { n:"흰 지팡이 접근 자동 감지",     done:true,  tag:"완료" },
+      { n:"손가락 번호 수량 선택 UI",      done:false, prog:true, tag:"진행 중" },
+    ]
+  },
+  {
+    name: "AI / ML 인식 엔진",
+    feats: [
+      { n:"STT — Whisper 음성 인식",      done:true,  tag:"완료" },
+      { n:"LLM — GPT-4o-mini 에이전트",  done:true,  tag:"완료" },
+      { n:"TTS — 음성 안내 출력",         done:true,  tag:"완료" },
+      { n:"RAG — FAISS 메뉴 검색",        done:true,  tag:"완료" },
+      { n:"정적 제스처 MLP 분류",         done:true,  tag:"완료" },
+      { n:"동적 제스처 MLP 분류",         done:true,  tag:"완료" },
+      { n:"YOLOv8 INT8 사용자 감지",      done:true,  tag:"완료" },
+    ]
+  },
+  {
+    name: "관리자 시스템",
+    feats: [
+      { n:"메뉴 · 카테고리 관리",         done:true,  tag:"완료" },
+      { n:"주문 관리 (실시간 상태 추적)", done:true,  tag:"완료" },
+      { n:"쿠폰 · 할인 관리",             done:true,  tag:"완료" },
+      { n:"회원 · 포인트 관리",           done:true,  tag:"완료" },
+      { n:"통계 · 대시보드",              done:true,  tag:"완료" },
+      { n:"결제 · 환불 관리",             done:true,  tag:"완료" },
+      { n:"알레르기 정보 관리 UI",        done:false, prog:true, tag:"진행 중" },
+    ]
+  },
+  {
+    name: "인프라 / 시스템",
+    feats: [
+      { n:"FastAPI DB REST API 서버",      done:true,  tag:"완료" },
+      { n:"Cloudflare Tunnel 외부 배포",   done:true,  tag:"완료" },
+      { n:"JWT 관리자 인증",              done:true,  tag:"완료" },
+      { n:"WebSocket 실시간 통신",        done:true,  tag:"완료" },
+      { n:"LLM 시나리오 자동 테스트",     done:true,  tag:"완료" },
+    ]
+  }
+];
+
+const TOTAL = CATS.reduce((s,c) => s + c.feats.length, 0);
+const DONE  = CATS.reduce((s,c) => s + c.feats.filter(f => f.done).length, 0);
+const PCT   = Math.round(DONE / TOTAL * 100);
+
+const wrap = document.getElementById("main");
+
+// 요약 바
+const summary = document.createElement("div");
+summary.className = "summary";
+summary.innerHTML = `
+  <div class="summary-title">전체 기능 구현 현황</div>
+  <div class="summary-right">
+    <div class="summary-count"><span>${DONE}</span> / ${TOTAL} 완료</div>
+    <div class="progress-wrap">
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${PCT}%"></div>
+      </div>
+      <div class="progress-pct">${PCT}%</div>
+    </div>
+  </div>
+`;
+wrap.appendChild(summary);
+
+// 그리드
+const grid = document.createElement("div");
+grid.className = "grid";
+
+CATS.forEach(cat => {
+  const doneCnt = cat.feats.filter(f => f.done).length;
+  const card = document.createElement("div");
+  card.className = "cat";
+  card.innerHTML = `
+    <div class="cat-hdr">
+      <div class="cat-hdr-left">
+        <div class="cat-dot"></div>
+        <div class="cat-name">${cat.name}</div>
+      </div>
+      <div class="cat-badge">${doneCnt} / ${cat.feats.length}</div>
+    </div>
+    <div class="feat-list">
+      ${cat.feats.map(f => `
+        <div class="feat">
+          <div class="icon ${f.done ? 'icon-done' : f.prog ? 'icon-prog' : 'icon-todo'}"></div>
+          <div class="feat-name ${f.done ? '' : f.prog ? 'prog' : 'todo'}">${f.n}</div>
+          <div class="feat-tag ${f.done ? 'tag-done' : f.prog ? 'tag-prog' : 'tag-todo'}">${f.tag}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  grid.appendChild(card);
+});
+
+wrap.appendChild(grid);
+</script>
+</body>
+</html>
