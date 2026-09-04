@@ -44,7 +44,6 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           gap: 'clamp(10px, 2.8vw, 14px)',
           width: '70%',
         }}>
-          {/* public/images/hand/hand1.webp 에 맞춰 경로 전달 */}
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
@@ -86,20 +85,22 @@ function TypeCard({ label, onClick, handImage, children }) {
         alignItems: 'center', padding: 0,
         aspectRatio: ORDER_TYPE_CARD_RATIO,
         position: 'relative',
+        overflow: 'visible', // ★ 손가락 이미지가 밖으로 나와도 자르지 않도록 설정
       }}
     >
-      {/* 손가락 이미지를 카드 왼쪽 상단에 표출 */}
+      {/* 손가락 아이콘 오버레이 */}
       {handImage && (
         <img
           src={handImage}
           alt="손 표시"
           style={{
             position: 'absolute',
-            top: '10px',
-            left: '10px',
-            width: '45px',
-            height: 'auto',
-            zIndex: 10,
+            top: '-15px',       // 카드 상단 바깥쪽으로 살짝 노출
+            left: '-15px',      // 카드 왼쪽 바깥쪽으로 살짝 노출
+            width: '60px',      // 눈에 잘 띄도록 크기 확충
+            height: '60px',
+            objectFit: 'contain',
+            zIndex: 999,        // 카드 및 내부 요소 최상단에 배치
             pointerEvents: 'none',
           }}
         />
