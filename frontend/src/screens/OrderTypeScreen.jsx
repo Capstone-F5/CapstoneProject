@@ -2,6 +2,8 @@ import Logo from '../components/Logo'
 import useT from '../i18n/useT'
 
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
+// 캐시 방지용 무작위 버전 값
+const CACHE_BUST = `?v=${Date.now()}`
 
 export default function OrderTypeScreen({ nav, setOrderType }) {
   const t = useT()
@@ -47,7 +49,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
-            handImage="/images/hand/hand1.webp"
+            handImage={`/images/hand/hand1.webp${CACHE_BUST}`}
           >
             <img
               src="/images/sets/F버거 세트.webp"
@@ -59,7 +61,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           <TypeCard
             label={t('takeout')}
             onClick={() => select('takeout')}
-            handImage="/images/hand/hand2.webp"
+            handImage={`/images/hand/hand2.webp${CACHE_BUST}`}
           >
             <img
               src="/images/etc/Takeout.webp"
@@ -85,22 +87,21 @@ function TypeCard({ label, onClick, handImage, children }) {
         alignItems: 'center', padding: 0,
         aspectRatio: ORDER_TYPE_CARD_RATIO,
         position: 'relative',
-        overflow: 'visible', // ★ 손가락 이미지가 밖으로 나와도 자르지 않도록 설정
+        overflow: 'visible',
       }}
     >
-      {/* 손가락 아이콘 오버레이 */}
       {handImage && (
         <img
           src={handImage}
           alt="손 표시"
           style={{
             position: 'absolute',
-            top: '-15px',       // 카드 상단 바깥쪽으로 살짝 노출
-            left: '-15px',      // 카드 왼쪽 바깥쪽으로 살짝 노출
-            width: '60px',      // 눈에 잘 띄도록 크기 확충
+            top: '-15px',
+            left: '-15px',
+            width: '60px',
             height: '60px',
             objectFit: 'contain',
-            zIndex: 999,        // 카드 및 내부 요소 최상단에 배치
+            zIndex: 999,
             pointerEvents: 'none',
           }}
         />
