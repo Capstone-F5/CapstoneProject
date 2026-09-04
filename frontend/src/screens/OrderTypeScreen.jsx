@@ -48,7 +48,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
-            handImage="/images/hand1.webp"
+            handImage="/images/hand/hand1.webp"
           >
             <img
               src="/images/sets/F버거 세트.webp"
@@ -61,7 +61,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           <TypeCard
             label={t('takeout')}
             onClick={() => select('takeout')}
-            handImage="/images/hand2.webp"
+            handImage="/images/hand/hand2.webp"
           >
             <img
               src="/images/etc/Takeout.webp"
