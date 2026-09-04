@@ -1,6 +1,10 @@
 import Logo from '../components/Logo'
 import useT from '../i18n/useT'
 
+// ★ 1. 상단에 손 이미지 파일들을 직접 import 합니다.
+import hand1 from '../../public/images/hand/hand1.webp'
+import hand2 from '../../public/images/hand/hand2.webp'
+
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
 
 export default function OrderTypeScreen({ nav, setOrderType }) {
@@ -44,11 +48,11 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           gap: 'clamp(10px, 2.8vw, 14px)',
           width: '70%',
         }}>
-          {/* 첫 번째 컴포넌트에 hand1.webp 적용 */}
+          {/* ★ 2. 경로 문자열 대신 import한 변수(hand1, hand2)를 넘겨줍니다. */}
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
-            handImage="/images/hand/hand1.webp"
+            handImage={hand1}
           >
             <img
               src="/images/sets/F버거 세트.webp"
@@ -57,11 +61,10 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
             />
           </TypeCard>
 
-          {/* 두 번째 컴포넌트에 hand2.webp 적용 */}
           <TypeCard
             label={t('takeout')}
             onClick={() => select('takeout')}
-            handImage="/images/hand/hand2.webp"
+            handImage={hand2}
           >
             <img
               src="/images/etc/Takeout.webp"
@@ -86,10 +89,9 @@ function TypeCard({ label, onClick, handImage, children }) {
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', padding: 0,
         aspectRatio: ORDER_TYPE_CARD_RATIO,
-        position: 'relative', // 손 이미지 위치 기준점
+        position: 'relative',
       }}
     >
-      {/* 손가락 이미지를 왼쪽 상단에 배치 */}
       {handImage && (
         <img
           src={handImage}
@@ -98,9 +100,9 @@ function TypeCard({ label, onClick, handImage, children }) {
             position: 'absolute',
             top: '12px',
             left: '12px',
-            width: '45px',    // 적절한 크기로 조정
+            width: '45px',
             height: 'auto',
-            zIndex: 10,       // 카드 내용 위로 올림
+            zIndex: 10,
           }}
         />
       )}
@@ -122,43 +124,5 @@ function TypeCard({ label, onClick, handImage, children }) {
         {label}
       </div>
     </button>
-  )
-}
-
-function TakeoutBag() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-      <div style={{ display: 'flex', gap: 13, marginBottom: -3, zIndex: 1 }}>
-        <div style={{
-          width: 9, height: 15,
-          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
-          borderBottom: 'none', background: 'transparent',
-        }} />
-        <div style={{
-          width: 9, height: 15,
-          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
-          borderBottom: 'none', background: 'transparent',
-        }} />
-      </div>
-      <div style={{
-        width: 59, height: 67,
-        background: '#fff',
-        border: '2px solid #ddd',
-        borderRadius: '4px 4px 10px 10px',
-        boxShadow: '0 3px 10px rgba(0,0,0,0.1)',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        gap: 2,
-      }}>
-        <span style={{
-          fontSize: 13, fontWeight: 900,
-          color: '#F5B800', lineHeight: 1,
-        }}>F</span>
-        <span style={{
-          fontSize: 6, fontWeight: 800,
-          color: '#744032', letterSpacing: 1,
-        }}>BURGER</span>
-      </div>
-    </div>
   )
 }
