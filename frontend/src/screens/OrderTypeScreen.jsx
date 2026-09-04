@@ -81,7 +81,7 @@ function TypeCard({ label, onClick, handImage, children }) {
       onClick={onClick}
       style={{
         flex: 1, background: '#fff', border: 'none',
-        borderRadius: 16, overflow: 'hidden', cursor: 'pointer',
+        borderRadius: 16, cursor: 'pointer',
         boxShadow: '0 2px 14px rgba(0,0,0,0.1)',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', padding: 0,
@@ -89,7 +89,7 @@ function TypeCard({ label, onClick, handImage, children }) {
         position: 'relative', // 손 이미지 위치 기준점
       }}
     >
-      {/* 전달받은 손 이미지를 왼쪽 상단에 출력 */}
+      {/* 손가락 이미지를 왼쪽 상단에 배치 */}
       {handImage && (
         <img
           src={handImage}
@@ -98,9 +98,9 @@ function TypeCard({ label, onClick, handImage, children }) {
             position: 'absolute',
             top: '12px',
             left: '12px',
-            width: '36px',
+            width: '45px',    // 적절한 크기로 조정
             height: 'auto',
-            zIndex: 10,
+            zIndex: 10,       // 카드 내용 위로 올림
           }}
         />
       )}
@@ -122,5 +122,43 @@ function TypeCard({ label, onClick, handImage, children }) {
         {label}
       </div>
     </button>
+  )
+}
+
+function TakeoutBag() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+      <div style={{ display: 'flex', gap: 13, marginBottom: -3, zIndex: 1 }}>
+        <div style={{
+          width: 9, height: 15,
+          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
+          borderBottom: 'none', background: 'transparent',
+        }} />
+        <div style={{
+          width: 9, height: 15,
+          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
+          borderBottom: 'none', background: 'transparent',
+        }} />
+      </div>
+      <div style={{
+        width: 59, height: 67,
+        background: '#fff',
+        border: '2px solid #ddd',
+        borderRadius: '4px 4px 10px 10px',
+        boxShadow: '0 3px 10px rgba(0,0,0,0.1)',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        gap: 2,
+      }}>
+        <span style={{
+          fontSize: 13, fontWeight: 900,
+          color: '#F5B800', lineHeight: 1,
+        }}>F</span>
+        <span style={{
+          fontSize: 6, fontWeight: 800,
+          color: '#744032', letterSpacing: 1,
+        }}>BURGER</span>
+      </div>
+    </div>
   )
 }
