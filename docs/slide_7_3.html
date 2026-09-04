@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440">
+  <title>7.3 현재 프로젝트의 완성 가능성</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #888;
+      padding: 48px;
+      font-family: 'Gothic A1', sans-serif;
+    }
+
+    .wrap {
+      width: 1340px;
+      background: #fff;
+      padding: 32px 36px 30px;
+      border-radius: 8px;
+    }
+
+    /* 헤더 */
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .top-title { font-size: 19px; font-weight: 900; color: #1A1A1A; }
+    .top-sub   { font-size: 12px; font-weight: 700; color: #BBBBBB; }
+
+    /* 3열 그리드 */
+    .body {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+    }
+
+    /* 공통 카드 */
+    .card {
+      border: 1.5px solid #EBEBEB;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card-hdr {
+      background: #1A1A1A;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-dot { width: 7px; height: 7px; border-radius: 50%; background: #F5A623; flex-shrink: 0; }
+    .card-title { font-size: 13px; font-weight: 900; color: #fff; }
+    .card-body { padding: 14px 16px; }
+
+    /* ── 남은 핵심 항목 ── */
+    .todo-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #F2F2F2;
+    }
+    .todo-row:last-child { border-bottom: none; }
+    .prio {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0; margin-top: 5px;
+    }
+    .prio-high { background: #E74C3C; }
+    .prio-mid  { background: #F5A623; }
+    .prio-low  { background: #27AE60; }
+    .todo-name { font-size: 12px; font-weight: 700; color: #1A1A1A; line-height: 1.4; flex: 1; }
+    .todo-note { font-size: 10px; font-weight: 400; color: #AAAAAA; margin-top: 2px; }
+    .todo-tag {
+      font-size: 10px; font-weight: 700;
+      padding: 2px 7px; border-radius: 3px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .tag-danger { background: #FDECEC; color: #E74C3C; }
+    .tag-warn   { background: #FFF5E0; color: #F5A623; }
+    .tag-ok     { background: #EAFAF1; color: #27AE60; }
+
+    /* ── 위험 요소 ── */
+    .risk-chain {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .risk-node {
+      background: #F7F7F7;
+      border-radius: 6px;
+      padding: 9px 13px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #1A1A1A;
+      position: relative;
+    }
+    .risk-node::after {
+      content: '↓';
+      position: absolute;
+      bottom: -14px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 13px;
+      color: #CCCCCC;
+    }
+    .risk-node:last-child::after { display: none; }
+    .risk-note {
+      background: #FFF5E0;
+      border-left: 3px solid #F5A623;
+      border-radius: 0 6px 6px 0;
+      padding: 9px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #C07800;
+      line-height: 1.6;
+      margin-top: 4px;
+    }
+
+    /* ── 완성 가능성 평가 ── */
+    .eval-row {
+      padding: 9px 0;
+      border-bottom: 1px solid #F2F2F2;
+    }
+    .eval-row:last-child { border-bottom: none; }
+    .eval-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .eval-name { font-size: 12px; font-weight: 700; color: #1A1A1A; }
+    .eval-nums { font-size: 11px; font-weight: 700; color: #AAAAAA; }
+    .eval-nums span { color: #F5A623; font-size: 13px; }
+    .bar-bg {
+      height: 6px;
+      background: #F0F0F0;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .bar-now {
+      height: 100%;
+      background: #DDDDDD;
+      border-radius: 3px;
+      display: inline-block;
+    }
+    .bar-future {
+      height: 100%;
+      background: #1A1A1A;
+      border-radius: 3px;
+    }
+    .bar-wrap { position: relative; height: 6px; border-radius: 3px; background: #F0F0F0; overflow: hidden; }
+
+    /* 총합 강조 */
+    .eval-total {
+      margin-top: 12px;
+      background: #1A1A1A;
+      border-radius: 6px;
+      padding: 11px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .eval-total-label { font-size: 12px; font-weight: 900; color: #fff; }
+    .eval-total-val   { font-size: 18px; font-weight: 900; color: #F5A623; }
+    .eval-total-sub   { font-size: 10px; font-weight: 700; color: #888; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="main">
+
+  <div class="top">
+    <div class="top-title">7.3 &nbsp;현재 프로젝트의 완성 가능성</div>
+    <div class="top-sub">기준일 2026. 09. 04</div>
+  </div>
+
+  <div class="body">
+
+    <!-- 남은 핵심 항목 -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-dot"></div>
+        <div class="card-title">남은 핵심 개발 항목</div>
+      </div>
+      <div class="card-body">
+        <div class="todo-row">
+          <div class="prio prio-high"></div>
+          <div style="flex:1">
+            <div class="todo-name">하드웨어 출력 · 조립 완성</div>
+            <div class="todo-note">현재 60% — 1~2주 소요 예상</div>
+          </div>
+          <div class="todo-tag tag-danger">필수</div>
+        </div>
+        <div class="todo-row">
+          <div class="prio prio-high"></div>
+          <div style="flex:1">
+            <div class="todo-name">HW-SW 통합 연결 및 동작 테스트</div>
+            <div class="todo-note">HW 완성 직후 착수 / 3~5일</div>
+          </div>
+          <div class="todo-tag tag-danger">필수</div>
+        </div>
+        <div class="todo-row">
+          <div class="prio prio-mid"></div>
+          <div style="flex:1">
+            <div class="todo-name">손가락 수 수량 선택 UI 연동</div>
+            <div class="todo-note">HW 카메라 위치 확정 후 착수 가능</div>
+          </div>
+          <div class="todo-tag tag-warn">진행 중</div>
+        </div>
+        <div class="todo-row">
+          <div class="prio prio-mid"></div>
+          <div style="flex:1">
+            <div class="todo-name">알레르기 관리자 UI 구현</div>
+            <div class="todo-note">Issue #63 / 1~2일</div>
+          </div>
+          <div class="todo-tag tag-warn">진행 중</div>
+        </div>
+        <div class="todo-row">
+          <div class="prio prio-low"></div>
+          <div style="flex:1">
+            <div class="todo-name">잔여 기능 이슈 (멤버십 · 할인 중복 등)</div>
+            <div class="todo-note">우선순위 낮음 — 발표 후 처리 가능</div>
+          </div>
+          <div class="todo-tag tag-ok">선택</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 일정 위험 요소 -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-dot"></div>
+        <div class="card-title">일정상 위험 요소</div>
+      </div>
+      <div class="card-body">
+        <div class="risk-chain">
+          <div class="risk-node">3D 프린팅 출력 지연</div>
+          <div class="risk-node">HW 조립 완료 지연</div>
+          <div class="risk-node">손동작 UI 착수 불가</div>
+          <div class="risk-node">통합 테스트 지연</div>
+        </div>
+        <div class="risk-note">
+          HW 완성 시점이 남은 일정 전체의 병목.<br>
+          SW는 준비 완료 — HW 조립을 최우선으로 집중해야 한다.
+        </div>
+      </div>
+    </div>
+
+    <!-- 완성 가능성 평가 -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-dot"></div>
+        <div class="card-title">최종 완성 가능성 자체 평가</div>
+      </div>
+      <div class="card-body">
+
+        <!-- SW -->
+        <div class="eval-row">
+          <div class="eval-top">
+            <div class="eval-name">SW 기능 · AI 모델</div>
+            <div class="eval-nums">96% → <span>98%</span></div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar-future" style="width:98%"></div>
+          </div>
+        </div>
+
+        <!-- HW -->
+        <div class="eval-row">
+          <div class="eval-top">
+            <div class="eval-name">하드웨어 제작</div>
+            <div class="eval-nums">70% → <span>90%</span></div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar-future" style="width:90%"></div>
+          </div>
+        </div>
+
+        <!-- 통합 -->
+        <div class="eval-row">
+          <div class="eval-top">
+            <div class="eval-name">HW-SW 통합 테스트</div>
+            <div class="eval-nums">10% → <span>80%</span></div>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar-future" style="width:80%"></div>
+          </div>
+        </div>
+
+        <!-- 총합 -->
+        <div class="eval-total">
+          <div>
+            <div class="eval-total-label">발표 시점 전체 완성도</div>
+            <div class="eval-total-sub">9월 2주차 HW 완성 기준</div>
+          </div>
+          <div class="eval-total-val">~92%</div>
+        </div>
+
+        <div style="margin-top:12px; font-size:11px; font-weight:700; color:#888; line-height:1.7;">
+          핵심 AI 기능은 완성 수준.<br>
+          발표 기준 목표 기능 <b style="color:#1A1A1A">90% 이상 시연</b> 가능하다고 판단.
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
