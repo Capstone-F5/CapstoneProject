@@ -1,10 +1,6 @@
 import Logo from '../components/Logo'
 import useT from '../i18n/useT'
 
-// ★ 1. 상단에 손 이미지 파일들을 직접 import 합니다.
-import hand1 from '../../public/images/hand/hand1.webp'
-import hand2 from '../../public/images/hand/hand2.webp'
-
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
 
 export default function OrderTypeScreen({ nav, setOrderType }) {
@@ -48,11 +44,11 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           gap: 'clamp(10px, 2.8vw, 14px)',
           width: '70%',
         }}>
-          {/* ★ 2. 경로 문자열 대신 import한 변수(hand1, hand2)를 넘겨줍니다. */}
+          {/* public/images/hand/hand1.webp 에 맞춰 경로 전달 */}
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
-            handImage={hand1}
+            handImage="/images/hand/hand1.webp"
           >
             <img
               src="/images/sets/F버거 세트.webp"
@@ -64,7 +60,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           <TypeCard
             label={t('takeout')}
             onClick={() => select('takeout')}
-            handImage={hand2}
+            handImage="/images/hand/hand2.webp"
           >
             <img
               src="/images/etc/Takeout.webp"
@@ -92,17 +88,19 @@ function TypeCard({ label, onClick, handImage, children }) {
         position: 'relative',
       }}
     >
+      {/* 손가락 이미지를 카드 왼쪽 상단에 표출 */}
       {handImage && (
         <img
           src={handImage}
           alt="손 표시"
           style={{
             position: 'absolute',
-            top: '12px',
-            left: '12px',
+            top: '10px',
+            left: '10px',
             width: '45px',
             height: 'auto',
             zIndex: 10,
+            pointerEvents: 'none',
           }}
         />
       )}
