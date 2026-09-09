@@ -16,6 +16,28 @@ const OPTION_GROUPS = [
 ]
 const GROUP_LABEL = Object.fromEntries(OPTION_GROUPS.map(g => [g.value, g.label]))
 
+const ALLERGENS = [
+  { code: 'EGG',       name: '난류' },
+  { code: 'MILK',      name: '우유' },
+  { code: 'BUCKWHEAT', name: '메밀' },
+  { code: 'PEANUT',    name: '땅콩' },
+  { code: 'SOY',       name: '대두' },
+  { code: 'WHEAT',     name: '밀' },
+  { code: 'MACKEREL',  name: '고등어' },
+  { code: 'CRAB',      name: '게' },
+  { code: 'SHRIMP',    name: '새우' },
+  { code: 'PORK',      name: '돼지고기' },
+  { code: 'PEACH',     name: '복숭아' },
+  { code: 'TOMATO',    name: '토마토' },
+  { code: 'SULFITE',   name: '아황산류' },
+  { code: 'WALNUT',    name: '호두' },
+  { code: 'CHICKEN',   name: '닭고기' },
+  { code: 'BEEF',      name: '쇠고기' },
+  { code: 'SQUID',     name: '오징어' },
+  { code: 'SHELLFISH', name: '조개류' },
+  { code: 'PINE_NUT',  name: '잣' },
+]
+
 // ─── Toggle ─── (div 기반, label→input 이중클릭 없음) ──────────────────────
 function Toggle({ checked, onChange }) {
   return (
@@ -160,6 +182,7 @@ function EditItemModal({ item, categoryId, categories, onClose, onSave }) {
     is_available:  item?.is_available  ?? true,
     is_popular:    item?.is_popular    ?? false,
     is_new:        item?.is_new        ?? false,
+    allergen_codes: item?.allergens?.map(allergen => allergen.code) ?? [],
     category_id:   item?.category_id ?? categoryId ?? categories?.[0]?.id ?? '',
   })
   const [loading, setLoading] = useState(false)
@@ -221,6 +244,29 @@ function EditItemModal({ item, categoryId, categories, onClose, onSave }) {
           <input className="form-input" placeholder="/images/sets/..." value={form.set_image_url ?? ''}
             onChange={e => set('set_image_url', e.target.value || null)} />
         </div>
+
+        <fieldset style={{ border: '1px solid #e3d8d3', borderRadius: 10, padding: '14px 16px', margin: '0 0 18px' }}>
+          <legend style={{ padding: '0 6px', fontSize: 14, fontWeight: 600, color: '#4a2a20' }}>
+            알레르기 유발물질
+          </legend>
+          <div style={{ color: '#777', fontSize: 12, marginBottom: 12 }}>
+            이 메뉴에 포함될 수 있는 알레르기 유발물질을 모두 선택해 주세요.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px 12px' }}>
+            {ALLERGENS.map(allergen => (
+              <label key={allergen.code} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={form.allergen_codes.includes(allergen.code)}
+                  onChange={e => set('allergen_codes', e.target.checked
+                    ? [...form.allergen_codes, allergen.code]
+                    : form.allergen_codes.filter(code => code !== allergen.code))}
+                />
+                {allergen.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 20 }}>
           {[['is_available','판매중'], ['is_popular','인기'], ['is_new','신메뉴']].map(([key, label]) => (

@@ -219,11 +219,10 @@ async def seed_allergens(session: AsyncSession) -> dict[str, str]:
     """알레르기 유발물질 마스터 데이터를 시드하고 code → id 매핑을 반환한다."""
     result = await session.execute(select(Allergen))
     existing = {a.code: a.id for a in result.scalars().all()}
-    if existing:
-        return existing
-
-    code_map: dict[str, str] = {}
+    code_map: dict[str, str] = dict(existing)
     for i, (code, name_ko, name_en) in enumerate(_ALLERGENS):
+        if code in code_map:
+            continue
         allergen = Allergen(code=code, name_ko=name_ko, name_en=name_en, display_order=i)
         session.add(allergen)
         await session.flush()
@@ -231,20 +230,42 @@ async def seed_allergens(session: AsyncSession) -> dict[str, str]:
     return code_map
 
 
+async def backfill_menu_allergens(
+    session: AsyncSession, allergen_code_map: dict[str, str]
+) -> None:
+    """기존 DB에 알레르기 매핑이 전혀 없을 때 현재 메뉴의 초기값을 한 번 채운다."""
+    existing_link = (await session.execute(select(MenuItemAllergen.id).limit(1))).first()
+    if existing_link:
+        return
+
+    slug_by_name_en = {menu[3]: menu[0] for menu in _MENU}
+    items = (await session.execute(select(MenuItem))).scalars().all()
+    for item in items:
+        slug = slug_by_name_en.get(item.name_en)
+        if slug is None:
+            continue
+        for code in _MENU_ALLERGENS.get(slug, []):
+            session.add(MenuItemAllergen(
+                menu_item_id=item.id,
+                allergen_id=allergen_code_map[code],
+            ))
+    await session.flush()
+
+
 async def seed_menu(session: AsyncSession) -> None:
     """이미 시드되어 있으면 skip."""
+    allergen_code_map = await seed_allergens(session)
     existing = (await session.execute(select(MenuItem))).first()
     if existing:
+        await backfill_menu_allergens(session, allergen_code_map)
         # 기존 개발 DB에도 새 메뉴 이미지를 반영한다.
         double_cheese = await session.scalar(
             select(MenuItem).where(MenuItem.name_en == "Double Cheese Burger")
         )
         if double_cheese and double_cheese.image_url != "/images/burgers/더블치즈버거.png":
             double_cheese.image_url = "/images/burgers/더블치즈버거.png"
-            await session.commit()
+        await session.commit()
         return
-
-    allergen_code_map = await seed_allergens(session)
 
     # 카테고리
     cat_map: dict[str, str] = {}
