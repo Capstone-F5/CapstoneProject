@@ -1,9 +1,8 @@
 import Logo from '../components/Logo'
+import HandBadge from '../components/HandBadge'
 import useT from '../i18n/useT'
 
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
-// 캐시 방지용 무작위 버전 값
-const CACHE_BUST = `?v=${Date.now()}`
 
 export default function OrderTypeScreen({ nav, setOrderType }) {
   const t = useT()
@@ -46,10 +45,11 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
           gap: 'clamp(10px, 2.8vw, 14px)',
           width: '70%',
         }}>
+          {/* 첫 번째 카드 — 손가락 1개 배지 */}
           <TypeCard
             label={t('dineIn')}
             onClick={() => select('dine-in')}
-            handImage={`/images/hand/hand1.webp${CACHE_BUST}`}
+            handNumber={1}
           >
             <img
               src="/images/sets/F버거 세트.webp"
@@ -58,10 +58,11 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
             />
           </TypeCard>
 
+          {/* 두 번째 카드 — 손가락 2개 배지 */}
           <TypeCard
             label={t('takeout')}
             onClick={() => select('takeout')}
-            handImage={`/images/hand/hand2.webp${CACHE_BUST}`}
+            handNumber={2}
           >
             <img
               src="/images/etc/Takeout.webp"
@@ -75,7 +76,7 @@ export default function OrderTypeScreen({ nav, setOrderType }) {
   )
 }
 
-function TypeCard({ label, onClick, handImage, children }) {
+function TypeCard({ label, onClick, handNumber, children }) {
   return (
     <button
       onClick={onClick}
@@ -86,26 +87,11 @@ function TypeCard({ label, onClick, handImage, children }) {
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', padding: 0,
         aspectRatio: ORDER_TYPE_CARD_RATIO,
-        position: 'relative',
-        overflow: 'visible',
+        position: 'relative', // 손 배지 위치 기준점
       }}
     >
-      {handImage && (
-        <img
-          src={handImage}
-          alt="손 표시"
-          style={{
-            position: 'absolute',
-            top: '-15px',
-            left: '-15px',
-            width: '60px',
-            height: '60px',
-            objectFit: 'contain',
-            zIndex: 999,
-            pointerEvents: 'none',
-          }}
-        />
-      )}
+      {/* 손가락 배지 — HandBadge가 카드 왼쪽 상단 모서리에 배치 */}
+      <HandBadge number={handNumber} size={44} />
 
       <div style={{
         flex: 1,
@@ -124,5 +110,43 @@ function TypeCard({ label, onClick, handImage, children }) {
         {label}
       </div>
     </button>
+  )
+}
+
+function TakeoutBag() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+      <div style={{ display: 'flex', gap: 13, marginBottom: -3, zIndex: 1 }}>
+        <div style={{
+          width: 9, height: 15,
+          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
+          borderBottom: 'none', background: 'transparent',
+        }} />
+        <div style={{
+          width: 9, height: 15,
+          border: '2px solid #c8b898', borderRadius: '8px 8px 0 0',
+          borderBottom: 'none', background: 'transparent',
+        }} />
+      </div>
+      <div style={{
+        width: 59, height: 67,
+        background: '#fff',
+        border: '2px solid #ddd',
+        borderRadius: '4px 4px 10px 10px',
+        boxShadow: '0 3px 10px rgba(0,0,0,0.1)',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        gap: 2,
+      }}>
+        <span style={{
+          fontSize: 13, fontWeight: 900,
+          color: '#F5B800', lineHeight: 1,
+        }}>F</span>
+        <span style={{
+          fontSize: 6, fontWeight: 800,
+          color: '#744032', letterSpacing: 1,
+        }}>BURGER</span>
+      </div>
+    </div>
   )
 }

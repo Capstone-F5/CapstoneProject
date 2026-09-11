@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
+import HandBadge from '../components/HandBadge'
 
 export default function ItemDetailScreen({ item, type, addToCart, nav }) {
   const [qty, setQty]           = useState(1)
@@ -136,9 +137,10 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
         {item.exclusions && item.exclusions.length > 0 && (
           <OptionSection label="제외하기">
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {item.exclusions.map(ex => (
+              {item.exclusions.map((ex, idx) => (
                 <Chip
                   key={ex}
+                  number={idx + 1}
                   label={ex}
                   selected={exclusion === ex}
                   onClick={() => setExclusion(ex)}
@@ -152,9 +154,10 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
         {isSet && (
           <OptionSection label="사이드">
             <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
-              {SET_SIDES.map(s => (
+              {SET_SIDES.map((s, idx) => (
                 <Chip
                   key={s.name}
+                  number={idx + 1}
                   label={s.name}
                   extra={s.extra}
                   selected={side.name === s.name}
@@ -169,9 +172,10 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
         {isSet && (
           <OptionSection label="음료">
             <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
-              {SET_DRINKS.map(d => (
+              {SET_DRINKS.map((d, idx) => (
                 <Chip
                   key={d.name}
+                  number={idx + 1}
                   label={d.name}
                   extra={d.extra}
                   selected={drink.name === d.name}
@@ -235,11 +239,12 @@ function OptionSection({ label, children }) {
   )
 }
 
-function Chip({ label, extra, selected, onClick }) {
+function Chip({ number, label, extra, selected, onClick }) {
   return (
     <button
       onClick={onClick}
       style={{
+        position: 'relative', // HandBadge 위치 기준점
         flexShrink: 0,
         padding: 'clamp(10px, 3vw, 14px) clamp(10px, 3vw, 14px)',
         background: selected ? '#744032' : '#fff',
@@ -254,6 +259,7 @@ function Chip({ label, extra, selected, onClick }) {
         textAlign: 'center',
       }}
     >
+      <HandBadge number={number} variant="option" />
       <span>{label}</span>
       {extra > 0 && (
         <span style={{
