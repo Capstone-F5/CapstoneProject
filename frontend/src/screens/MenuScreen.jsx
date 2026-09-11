@@ -4,6 +4,8 @@ import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
 import ItemDetailModal from '../components/ItemDetailModal'
 import IdleOverlay from '../components/IdleOverlay'
+import HandBadge from '../components/HandBadge'
+import { useMenuData } from '../hooks/useMenuData'
 import useT from '../i18n/useT'
 
 const COLS = 3
@@ -37,8 +39,9 @@ const CAT_I18N_KEY = {
   drink:       'cat_drink',
 }
 
-export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef, menuData, activeDiscounts = [], isLoading, error, retry }) {
+export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef }) {
   const t = useT()
+  const { menuData, isLoading, error, retry } = useMenuData()
 
   const [catId,     setCatId]     = useState('recommended')
   const [page,      setPage]      = useState(0)
@@ -285,7 +288,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     )
   }
 
-  const { categories, menuItems, setSides, setDrinks, setSurcharge } = menuData
+  const { categories, menuItems, setSides, setDrinks, setSurcharge, activeDiscounts = [] } = menuData
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -375,18 +378,16 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
       {/* ── Menu Grid ── */}
       <div
+        style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}
         onTouchStart={e => { swipeStartX.current = e.touches[0].clientX }}
         onTouchEnd={e => {
           if (swipeStartX.current === null) return
           const dx = e.changedTouches[0].clientX - swipeStartX.current
           swipeStartX.current = null
-          if (Math.abs(dx) < 25) return
-          // 화면 터치는 제스처 인식과 같은 이동 규칙을 따른다.
-          // 페이지 끝에서는 다음/이전 카테고리로 자연스럽게 이어진다.
-          swipeRef?.current?.(dx < 0 ? 'left' : 'right')
+          if (Math.abs(dx) < 50) return
+          if (dx < 0) setPage(p => Math.min(totalPages - 1, p + 1))
+          else        setPage(p => Math.max(0, p - 1))
         }}
-        onTouchCancel={() => { swipeStartX.current = null }}
-        style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px', touchAction: 'pan-y' }}
       >
         <div style={{
           display: 'grid',
@@ -394,8 +395,12 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           gap: 'clamp(10px, 2.6vw, 14px)',
           alignItems: 'stretch',
         }}>
-          {pageItems.map(item => (
-            <div key={item.id + '-' + catId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {pageItems.map((item, idx) => (
+            <div
+              key={item.id + '-' + catId}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
+            >
+              <HandBadge number={idx + 1} size={36} />
               <FoodCard
                 item={item}
                 onClick={() => handleItemTap(item)}
@@ -528,7 +533,6 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           setSides={setSides}
           setDrinks={setDrinks}
           setSurcharge={setSurcharge}
-          activeDiscounts={activeDiscounts}
           initialQty={voiceOpts?.qty ?? null}
           initialExclusion={voiceOpts?.exclusion ?? null}
           initialSideName={voiceOpts?.sideName ?? null}
@@ -669,21 +673,21 @@ function FoodCard({ item, onClick, chatOpen, discount }) {
       display: 'flex', flexDirection: 'column',
       textAlign: 'center',
       width: '91%',
-      aspectRatio: '4 / 5',
     }}>
-      <div style={{
-        width: '100%', flex: 1, minHeight: 0,
+            <div style={{
+        width: '100%', aspectRatio: compact ? '1 / 0.55' : '1 / 0.62',
         background: '#ffffff',
-        padding: compact ? 4 : 6,
+        padding: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',
         position: 'relative',
+        overflow: 'hidden',
       }}>
         {item.image ? (
           <img
             src={item.image}
             alt={item.name}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 10 }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         ) : (
           <span style={{ fontSize: compact ? 'clamp(17px, 4.5vw, 25px)' : 'clamp(21px, 5.6vw, 31px)' }}>
@@ -692,10 +696,10 @@ function FoodCard({ item, onClick, chatOpen, discount }) {
         )}
         {discount && (
           <span style={{
-            position: 'absolute', top: 0, right: 0,
+            position: 'absolute', top: 4, right: 4,
             background: '#e44', color: '#fff',
             fontSize: smallFontSize, fontWeight: 800,
-            borderRadius: '0 16px 0 8px', padding: '4px 7px',
+            borderRadius: 5, padding: '2px 5px',
             lineHeight: 1.2,
           }}>
             {discount.label}

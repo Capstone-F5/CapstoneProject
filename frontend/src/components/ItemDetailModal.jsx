@@ -1,11 +1,11 @@
 import { useState, useEffect, useImperativeHandle, forwardRef } from 'react'
 import useT from '../i18n/useT'
 import { useLocale } from '../i18n/LocaleContext'
+import HandBadge from './HandBadge'
 
 const ItemDetailModal = forwardRef(function ItemDetailModal({
   item, type, onClose, onAdd,
   setSides = [], setDrinks = [], setSurcharge = 0,
-  activeDiscounts = [],
   // 음성 주문 시 AI가 선택한 초기값
   initialQty        = null,
   initialExclusion  = null,
@@ -77,19 +77,6 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
   const unitPrice  = item.price
     + (isSet ? setSurcharge : 0)
     + (isSet && side && drink ? side.extra + drink.extra : 0)
-  const today = new Date().toISOString().split('T')[0]
-  let discountedUnitPrice = unitPrice
-  for (const discount of activeDiscounts) {
-    const matches = discount.target_type === 'ALL'
-      || (discount.target_type === 'MENU' && discount.menu_item_id === item.id)
-      || (discount.target_type === 'CATEGORY' && discount.category_id === item.categoryId)
-    if (!matches || discount.applicable_tier !== 'ALL'
-        || (discount.valid_from && today < discount.valid_from)
-        || (discount.valid_until && today > discount.valid_until)) continue
-    discountedUnitPrice = discount.discount_type === 'PERCENT'
-      ? Math.round(discountedUnitPrice * (1 - Number(discount.discount_value) / 100))
-      : Math.max(0, discountedUnitPrice - Number(discount.discount_value))
-  }
 
   const displayImage = isSet ? (item.setImage ?? item.image) : item.image
   const displayName  = isSet ? `${item.name} ${t('set')}` : item.name
@@ -172,16 +159,9 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
               {displayName}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-              {discountedUnitPrice < unitPrice ? (
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{unitPrice.toLocaleString()} {t('won')}</span>
-                  <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900, color: '#e44' }}>{discountedUnitPrice.toLocaleString()} {t('won')}</span>
-                </span>
-              ) : (
-                <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900 }}>
-                  {unitPrice.toLocaleString()} {t('won')}
-                </span>
-              )}
+              <span style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 900 }}>
+                {unitPrice.toLocaleString()} {t('won')}
+              </span>
               {displayKcal && (
                 <span style={{ fontSize: 11, color: '#bbb' }}>{displayKcal} kcal</span>
               )}
@@ -208,9 +188,9 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
         {item.exclusions && item.exclusions.length > 0 && (
           <OptionSection label={t('exclude')}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {item.exclusions.map(ex => (
+              {item.exclusions.map((ex, idx) => (
                 <Chip
-                  key={ex} label={ex === '없음' ? t('noExclusion') : ex}
+                  key={ex} number={idx + 1} label={ex === '없음' ? t('noExclusion') : ex}
                   active={exclusion === ex}
                   onClick={() => setExclusion(ex)}
                   won={t('won')}
@@ -225,9 +205,10 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
           <>
             <OptionSection label={t('sideSection')}>
               <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-                {setSides.map(s => (
+                {setSides.map((s, idx) => (
                   <Chip
                     key={s.name}
+                    number={idx + 1}
                     label={locale === 'ko' ? s.name : locale === 'ja' ? (s.nameJa ?? s.nameEn ?? s.name) : locale === 'zh' ? (s.nameZh ?? s.nameEn ?? s.name) : (s.nameEn ?? s.name)}
                     extra={s.extra}
                     active={side?.name === s.name}
@@ -239,10 +220,11 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
             </OptionSection>
 
             <OptionSection label={t('drinkSection')}>
-              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-                {setDrinks.map(d => (
+             <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+                {setDrinks.map((d, idx) => (
                   <Chip
                     key={d.name}
+                    number={idx + 1}
                     label={locale === 'ko' ? d.name : locale === 'ja' ? (d.nameJa ?? d.nameEn ?? d.name) : locale === 'zh' ? (d.nameZh ?? d.nameEn ?? d.name) : (d.nameEn ?? d.name)}
                     extra={d.extra}
                     active={drink?.name === d.name}
@@ -293,7 +275,7 @@ function OptionSection({ label, children }) {
   )
 }
 
-function Chip({ label, extra, active, onClick, won }) {
+function Chip({ number, label, extra, active, onClick, won }) {
   const size = 'clamp(64px, 17vw, 80px)'
   return (
     <button
@@ -315,6 +297,7 @@ function Chip({ label, extra, active, onClick, won }) {
         padding: '4px 6px',
       }}
     >
+      <HandBadge number={number} variant="option" />
       <span style={{
         position: 'absolute',
         left: '50%', top: '50%',
