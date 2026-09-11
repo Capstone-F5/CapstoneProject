@@ -82,6 +82,7 @@ class MenuItemIn(BaseModel):
     is_popular: bool = False
     is_new: bool = False
     display_order: int = 0
+    allergen_codes: list[str] = []
 
 
 class MenuItemPatchIn(BaseModel):
@@ -96,6 +97,7 @@ class MenuItemPatchIn(BaseModel):
     is_popular: bool | None = None
     is_new: bool | None = None
     display_order: int | None = None
+    allergen_codes: list[str] | None = None
 
 
 class MenuOptionIn(BaseModel):

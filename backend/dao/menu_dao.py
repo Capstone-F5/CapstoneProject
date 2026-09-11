@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
-from core.models import Category, MenuItem, MenuOption, MenuItemAllergen, Order, OrderItem
+from core.models import Allergen, Category, MenuItem, MenuOption, MenuItemAllergen, Order, OrderItem
 
 # 메뉴 조회 시 항상 함께 로드해야 하는 관계 — 지연 로딩 시 async 컨텍스트에서 오류가 나므로
 # (allergens 프로퍼티가 allergen_links를 동기적으로 읽음) 매번 selectinload로 미리 채운다.
@@ -123,6 +123,30 @@ async def update_menu_item(db: AsyncSession, item: MenuItem, data: dict) -> Menu
         setattr(item, key, value)
     await db.flush()
     return item
+
+
+async def replace_menu_item_allergens(
+    db: AsyncSession, menu_item_id: str, allergen_codes: list[str]
+) -> None:
+    """메뉴에 연결된 알레르기 유발물질을 전달받은 코드 목록으로 교체한다."""
+    normalized_codes = list(dict.fromkeys(code.upper() for code in allergen_codes))
+    allergens = []
+    if normalized_codes:
+        result = await db.execute(select(Allergen).where(Allergen.code.in_(normalized_codes)))
+        allergens = result.scalars().all()
+        found_codes = {allergen.code for allergen in allergens}
+        unknown_codes = [code for code in normalized_codes if code not in found_codes]
+        if unknown_codes:
+            raise ValueError(f"존재하지 않는 알레르기 코드: {', '.join(unknown_codes)}")
+
+    await db.execute(
+        delete(MenuItemAllergen).where(MenuItemAllergen.menu_item_id == menu_item_id)
+    )
+    db.add_all([
+        MenuItemAllergen(menu_item_id=menu_item_id, allergen_id=allergen.id)
+        for allergen in allergens
+    ])
+    await db.flush()
 
 
 async def is_menu_item_in_active_order(db: AsyncSession, item_id: str) -> bool:

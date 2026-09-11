@@ -118,10 +118,19 @@ async def delete_category(category_id: str, db: AsyncSession = Depends(get_sessi
 # --- 메뉴 ------------------------------------------------------------------
 @router.post("/menu/items", response_model=MenuItemOut)
 async def create_menu_item(payload: MenuItemIn, db: AsyncSession = Depends(get_session)):
-    item = await menu_dao.create_menu_item(db, payload.model_dump())
+    data = payload.model_dump()
+    allergen_codes = data.pop("allergen_codes", [])
+    item = await menu_dao.create_menu_item(db, data)
+    try:
+        await menu_dao.replace_menu_item_allergens(db, item.id, allergen_codes)
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    item_id = item.id
     await db.commit()
     invalidate_cache()
-    return item
+    db.expire_all()
+    return await menu_dao.get_menu_item_by_id(db, item_id)
 
 
 @router.patch("/menu/items/{item_id}", response_model=MenuItemOut)
@@ -131,10 +140,20 @@ async def update_menu_item(
     item = await menu_dao.get_menu_item_by_id(db, item_id)
     if item is None:
         raise HTTPException(404, "메뉴를 찾을 수 없습니다")
-    item = await menu_dao.update_menu_item(db, item, payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    allergen_codes = data.pop("allergen_codes", None)
+    item = await menu_dao.update_menu_item(db, item, data)
+    if allergen_codes is not None:
+        try:
+            await menu_dao.replace_menu_item_allergens(db, item.id, allergen_codes)
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(400, str(exc)) from exc
+    updated_item_id = item.id
     await db.commit()
     invalidate_cache()
-    return item
+    db.expire_all()
+    return await menu_dao.get_menu_item_by_id(db, updated_item_id)
 
 
 @router.delete("/menu/items/{item_id}")
