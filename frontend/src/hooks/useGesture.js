@@ -482,14 +482,14 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
               const pState = pointerStates[activeLabel]
               
-              const CAM_LEFT_X  = 0.30; 
-              const CAM_RIGHT_X = 0.70; 
+              const CAM_LEFT_X  = 0.25; // 가로 시작점 (숫자를 키울수록 오른쪽으로 밀림)
+              const CAM_RIGHT_X = 0.80;  // 가로 끝점 (이 숫자를 0.60으로 줄이면 좌우 감도 높아짐)
 
               let normX = (px - CAM_LEFT_X) / (CAM_RIGHT_X - CAM_LEFT_X);
               normX = Math.max(0, Math.min(1, normX));
-
-              const MARGIN_Y_BODY  = 0.40; 
-              const MARGIN_Y_REACH = 0.25; 
+              
+              const MARGIN_Y_BODY  = 0.25; // 몸 쪽 위아래 마진 (숫자가 클수록 감도 높아짐)
+              const MARGIN_Y_REACH = 0.30; // 뻗었을 때 위아래 마진
 
               const currentMarginY = MARGIN_Y_BODY + normX * (MARGIN_Y_REACH - MARGIN_Y_BODY);
               const activeY = 1.0 - (currentMarginY * 2);
