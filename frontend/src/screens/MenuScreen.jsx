@@ -415,8 +415,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
               key={item.id + '-' + catId}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
             >
-              <HandBadge number={idx + 1} size={36} />
               <FoodCard
+                badgeNumber={idx + 1}
                 item={item}
                 onClick={() => handleItemTap(item)}
                 chatOpen={chatOpen}
@@ -676,7 +676,7 @@ function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
   )
 }
 
-function FoodCard({ item, onClick, chatOpen, discount }) {
+function FoodCard({ badgeNumber, item, onClick, chatOpen, discount }) {
   const compact = !!chatOpen
   const priceFontSize = compact ? 'clamp(11px, 3.0vw, 14px)' : 'clamp(14px, 3.8vw, 17px)'
   const smallFontSize = compact ? 'clamp(9px, 2.4vw, 11px)' : 'clamp(11px, 3.0vw, 13px)'
@@ -690,7 +690,9 @@ function FoodCard({ item, onClick, chatOpen, discount }) {
       display: 'flex', flexDirection: 'column',
       textAlign: 'center',
       width: '91%',
+      position: 'relative',
     }}>
+      <HandBadge number={badgeNumber} />
             <div style={{
         width: '100%', aspectRatio: compact ? '1 / 0.55' : '1 / 0.62',
         background: '#ffffff',

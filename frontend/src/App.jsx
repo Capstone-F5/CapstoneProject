@@ -14,6 +14,7 @@ import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
+import { GestureUIProvider } from './contexts/GestureUIContext'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -710,7 +711,7 @@ function AppContent() {
   }
 
   return (
-    <>
+    <GestureUIProvider enabled={gestureEnabled}>
         {/* ── AI 동작 토스트 알림 ── */}
         {voiceToast && (
           <div key={voiceToast.key} style={{
@@ -897,7 +898,7 @@ function AppContent() {
             en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
         </div>
-      </>
+      </GestureUIProvider>
   )
 }
 
