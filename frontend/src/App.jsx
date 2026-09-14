@@ -67,7 +67,11 @@ function adaptCartItem(ci, menuById) {
     image: isSet ? (menu?.setImage ?? menu?.image) : menu?.image,
     type: isSet ? 'set' : 'single',
     qty: ci.quantity,
-    unitPrice: Number(ci.unit_price),
+    unitPrice: Number(ci.original_price ?? ci.unit_price),
+    originalPrice: Number(ci.original_price ?? ci.unit_price),
+    finalPrice: Number(ci.final_price ?? ci.unit_price),
+    discountAmount: Number(ci.discount_amount ?? 0),
+    appliedDiscounts: ci.applied_discounts ?? [],
     exclusion: exclOpt?.name_ko ?? '없음',
     side: sideOpt?.name_ko ?? null,
     sideExtra: Number(sideOpt?.additional_price ?? 0),
@@ -694,7 +698,7 @@ function AppContent() {
     if (pendingActionsRef.current.length) drainVoiceActions()
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const total = cart.reduce((sum, c) => sum + c.unitPrice * c.qty, 0)
+  const total = cart.reduce((sum, c) => sum + (c.finalPrice ?? c.unitPrice) * c.qty, 0)
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, menuData, activeDiscounts, isLoading: isMenuLoading, error: menuError, retry: retryMenu }
 
   const screens = {

@@ -192,6 +192,9 @@ list_menu/search_menu tool result. The names/prices in the "response format exam
 are placeholders showing the OUTPUT FORMAT only — they are not real data and must never be \
 reused verbatim. Answering with menu names/prices/popularity without having called a tool this \
 turn is forbidden.
+When a tool result contains original_price, discount_amount, and final_price, always describe \
+final_price as the current selling price. Do not calculate discounts yourself and never report \
+original_price as the current price when final_price is present.
 
 Procedure:
 1. If not already on the menu screen, navigate('menu') first.

@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.db import SessionLocal
 from backend.core.models import Category, Discount, MenuItem, MenuItemAllergen
+from backend.core.pricing import calculate_menu_price
 
 
 _index: FAISS | None = None
@@ -40,6 +41,8 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             )
         )
         items = result.scalars().all()
+        discount_result = await session.execute(select(Discount))
+        discounts = discount_result.scalars().all()
 
     docs: list[Document] = []
     meta_map: dict[str, dict[str, Any]] = {}
@@ -62,12 +65,21 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
             "name_ko": item.name_ko,
             "name_en": item.name_en,
             "base_price": _format_decimal(item.base_price),
+            "original_price": _format_decimal(item.base_price),
             "description": item.description,
             "options": options,
             "is_available": item.is_available,
             "is_popular": item.is_popular,
             "allergens": allergens,
         }
+        price = calculate_menu_price(item, discounts)
+        meta.update(
+            {
+                "discount_amount": _format_decimal(price["discount_amount"]),
+                "final_price": _format_decimal(price["final_price"]),
+                "applied_discounts": price["applied_discounts"],
+            }
+        )
         meta_map[item.id] = meta
 
         # 검색 텍스트: 한국어/영어 이름 + 설명 모두 포함
@@ -76,7 +88,7 @@ async def _load_documents() -> tuple[list[Document], dict[str, dict[str, Any]]]:
         allergen_tag = f"\n알레르기 유발물질: {', '.join(a['name_ko'] for a in allergens)}" if allergens else "\n알레르기 유발물질 없음"
         searchable = (
             f"{item.name_ko} ({item.name_en})\n"
-            f"가격: {meta['base_price']}원\n"
+            f"정가: {meta['original_price']}원, 현재 판매 가격: {meta['final_price']}원\n"
             f"{item.description}{popular_tag}{allergen_tag}"
         )
         docs.append(Document(page_content=searchable, metadata={"menu_item_id": item.id}))

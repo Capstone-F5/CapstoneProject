@@ -7,6 +7,8 @@ from dao.cart_dao import (
     add_cart_item, update_cart_item, delete_cart_item, clear_cart
 )
 from dao.menu_dao import get_menu_item_by_id
+from dao import discount_dao
+from core.pricing import calculate_cart_item_price
 from schemas.cart_schemas import CartItemIn, CartItemOut, CartItemUpdateIn, CartOut
 
 router = APIRouter(prefix="/api/cart", tags=["cart"])
@@ -20,17 +22,24 @@ async def get_cart(session_id: str, db: AsyncSession = Depends(get_session)):
 
     items_out = []
     total = Decimal("0")
+    discounts = await discount_dao.get_active_discounts(db)
     for ci in cart.items:
+        price = calculate_cart_item_price(ci.menu_item, ci.selected_options or [], discounts)
         items_out.append(CartItemOut(
             cart_item_id=ci.id,
             menu_item_id=ci.menu_item_id,
             name_ko=ci.menu_item.name_ko,
             quantity=ci.quantity,
-            unit_price=ci.unit_price,
+            unit_price=price["final_price"],
+            original_price=price["original_price"],
+            discount_amount=price["discount_amount"],
+            final_price=price["final_price"],
+            applied_discounts=price["applied_discounts"],
+            category_id=ci.menu_item.category_id,
             selected_options=ci.selected_options or [],
             special_note=ci.special_note,
         ))
-        total += ci.unit_price * ci.quantity
+        total += price["final_price"] * ci.quantity
     return CartOut(cart_id=cart.id, session_id=session_id, items=items_out, total=total)
 
 @router.post("/{session_id}/items")
@@ -50,12 +59,14 @@ async def add_item_to_cart(
         if opt:
             option_extra += opt.additional_price
 
-    unit_price = menu_item.base_price + option_extra
+    discounts = await discount_dao.get_active_discounts(db)
+    selected_options = [o.model_dump() for o in body.selected_options]
+    unit_price = calculate_cart_item_price(menu_item, selected_options, discounts)["final_price"]
 
     cart = await get_or_create_cart(db, session_id)
     cart_item = await add_cart_item(
         db, cart.id, body.menu_item_id, body.quantity,
-        unit_price, [o.model_dump() for o in body.selected_options], body.special_note
+        unit_price, selected_options, body.special_note
     )
     await db.commit()
     return {"cart_item_id": cart_item.id, "cart_id": cart.id}
@@ -76,8 +87,12 @@ async def update_item(
             opt = next((o for o in item_row.menu_item.options if o.id == sel.option_id), None)
             if opt:
                 option_extra += opt.additional_price
-        kwargs["selected_options"] = [o.model_dump() for o in body.selected_options]
-        kwargs["unit_price"] = item_row.menu_item.base_price + option_extra
+        selected_options = [o.model_dump() for o in body.selected_options]
+        discounts = await discount_dao.get_active_discounts(db)
+        kwargs["selected_options"] = selected_options
+        kwargs["unit_price"] = calculate_cart_item_price(
+            item_row.menu_item, selected_options, discounts
+        )["final_price"]
 
     item = await update_cart_item(db, cart_item_id, **kwargs)
     if item is None:

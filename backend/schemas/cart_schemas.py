@@ -17,6 +17,11 @@ class CartItemOut(BaseModel):
     name_ko: str
     quantity: int
     unit_price: Decimal
+    original_price: Decimal | None = None
+    discount_amount: Decimal = Decimal("0")
+    final_price: Decimal | None = None
+    applied_discounts: list[dict] = []
+    category_id: str | None = None
     selected_options: list[SelectedOption]
     special_note: str | None
 
