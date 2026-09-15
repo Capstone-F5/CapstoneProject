@@ -13,25 +13,11 @@ import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
 
-function computeItemDiscount(itemId, categoryId, unitPrice, activeDiscounts) {
-  if (!activeDiscounts?.length) return null
-  const today = new Date().toISOString().split('T')[0]
-  let price = unitPrice
-  for (const d of activeDiscounts) {
-    if (!d.is_active) continue
-    if (d.applicable_tier !== 'ALL') continue
-    if (d.valid_from && today < d.valid_from) continue
-    if (d.valid_until && today > d.valid_until) continue
-    const matches =
-      d.target_type === 'ALL' ||
-      (d.target_type === 'MENU' && d.menu_item_id === itemId) ||
-      (d.target_type === 'CATEGORY' && d.category_id === categoryId)
-    if (!matches) continue
-    if (d.discount_type === 'PERCENT') price = Math.round(price * (1 - Number(d.discount_value) / 100))
-    else price = Math.max(0, price - Number(d.discount_value))
-  }
-  if (price === unitPrice) return null
-  return { discountedPrice: price, savings: unitPrice - price }
+function getServerDiscount(item) {
+  const originalPrice = Number(item.originalPrice ?? item.unitPrice)
+  const finalPrice = Number(item.finalPrice ?? item.unitPrice)
+  if (finalPrice >= originalPrice) return null
+  return { discountedPrice: finalPrice, savings: originalPrice - finalPrice }
 }
 
 // 결제 수단 이미지 경로 — null 이면 기존 이모티콘/텍스트 폴백 표시
@@ -327,7 +313,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           </div>
         ) : (
           cart.map(item => {
-            const disc = computeItemDiscount(item.id, item.categoryId ?? null, item.unitPrice, activeDiscounts)
+            const disc = getServerDiscount(item)
             return (
               <CartItem
                 key={item.cartId}

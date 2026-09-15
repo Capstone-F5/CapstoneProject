@@ -9,6 +9,7 @@ from core.models import Order, OrderItem
 from schemas.order_schemas import OrderIn, OrderOut, OrderItemOut
 from schemas.coupon_schemas import DiscountOut
 from dao import user_dao, order_dao, cart_dao, discount_dao
+from core.pricing import calculate_cart_item_price
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -82,49 +83,25 @@ async def preview_discount(session_id: str, db: AsyncSession = Depends(get_sessi
     if not cart or not cart.items:
         return {"discount_amount": 0.0, "final_amount": 0.0, "applicable": []}
 
-    subtotal = sum(item.unit_price * item.quantity for item in cart.items)
-    discount_amount = Decimal("0")
-    applicable = []
-
     active_discounts = await discount_dao.get_active_discounts(db)
-    today = _date.today()
-    for disc in active_discounts:
-        if disc.applicable_tier != "ALL":
-            continue
-        if disc.valid_from and today < disc.valid_from:
-            continue
-        if disc.valid_until and today > disc.valid_until:
-            continue
-
-        if disc.target_type == "ALL":
-            base = subtotal
-        elif disc.target_type == "CATEGORY":
-            base = sum(
-                item.unit_price * item.quantity
-                for item in cart.items
-                if item.menu_item and item.menu_item.category_id == disc.category_id
-            )
-        elif disc.target_type == "MENU":
-            base = sum(
-                item.unit_price * item.quantity
-                for item in cart.items
-                if item.menu_item_id == disc.menu_item_id
-            )
-        else:
-            continue
-
-        if base <= 0:
-            continue
-
-        if disc.discount_type == "PERCENT":
-            d = base * disc.discount_value / Decimal("100")
-        else:
-            d = min(Decimal(str(disc.discount_value)), base)
-
-        discount_amount += d
-        applicable.append({"name": disc.name_ko, "amount": float(d)})
-
-    discount_amount = min(discount_amount, subtotal)
+    prices = [
+        calculate_cart_item_price(item.menu_item, item.selected_options or [], active_discounts)
+        for item in cart.items
+    ]
+    subtotal = sum(
+        (price["original_price"] * item.quantity for item, price in zip(cart.items, prices)),
+        Decimal("0"),
+    )
+    final_amount = sum(
+        (price["final_price"] * item.quantity for item, price in zip(cart.items, prices)),
+        Decimal("0"),
+    )
+    discount_amount = subtotal - final_amount
+    applicable = [
+        {"name": applied["name"], "amount": float(price["discount_amount"])}
+        for price in prices
+        for applied in price["applied_discounts"]
+    ]
     return {
         "discount_amount": float(discount_amount),
         "final_amount": float(subtotal - discount_amount),
@@ -139,9 +116,22 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
     if not cart or not cart.items:
         raise HTTPException(status_code=400, detail="장바구니가 비어있거나 존재하지 않습니다.")
 
-    # 2. Subtotal 계산
-    subtotal = sum(item.unit_price * item.quantity for item in cart.items)
-    discount_amount = Decimal("0")
+    # 2. 메뉴별 최종 가격을 다시 계산해 주문 금액을 확정한다.
+    active_discounts = await discount_dao.get_active_discounts(db)
+    item_prices = [
+        calculate_cart_item_price(item.menu_item, item.selected_options or [], active_discounts)
+        for item in cart.items
+    ]
+    subtotal = sum(
+        (price["original_price"] * item.quantity for item, price in zip(cart.items, item_prices)),
+        Decimal("0"),
+    )
+    discounted_subtotal = sum(
+        (price["final_price"] * item.quantity for item, price in zip(cart.items, item_prices)),
+        Decimal("0"),
+    )
+    discount_amount = subtotal - discounted_subtotal
+    coupon_base = discounted_subtotal
     user_coupon_id = None
     user = None
 
@@ -172,49 +162,15 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
             raise HTTPException(status_code=400, detail="아직 사용할 수 없는 쿠폰입니다.")
         if coupon.valid_until and today > coupon.valid_until:
             raise HTTPException(status_code=400, detail="유효기간이 만료된 쿠폰입니다.")
-        if subtotal < coupon.min_order_amount:
+        if coupon_base < coupon.min_order_amount:
             raise HTTPException(status_code=400, detail=f"최소 주문 금액({coupon.min_order_amount}원)을 충족하지 못했습니다.")
         if coupon.discount_type == "PERCENT":
-            discount_amount = subtotal * (coupon.discount_value / Decimal("100"))
+            coupon_discount = coupon_base * (coupon.discount_value / Decimal("100"))
         else:
-            discount_amount = coupon.discount_value
+            coupon_discount = coupon.discount_value
+        coupon_discount = min(coupon_discount, coupon_base)
+        discount_amount += coupon_discount
         user_coupon_id = user_coupon.id
-
-    # 4.5. Discount 테이블 할인 적용 (ALL / CATEGORY / MENU, applicable_tier=ALL만)
-    active_discounts = await discount_dao.get_active_discounts(db)
-    today = _date.today()
-    for disc in active_discounts:
-        if disc.applicable_tier != "ALL":
-            continue
-        if disc.valid_from and today < disc.valid_from:
-            continue
-        if disc.valid_until and today > disc.valid_until:
-            continue
-
-        if disc.target_type == "ALL":
-            base = subtotal
-        elif disc.target_type == "CATEGORY":
-            base = sum(
-                item.unit_price * item.quantity
-                for item in cart.items
-                if item.menu_item and item.menu_item.category_id == disc.category_id
-            )
-        elif disc.target_type == "MENU":
-            base = sum(
-                item.unit_price * item.quantity
-                for item in cart.items
-                if item.menu_item_id == disc.menu_item_id
-            )
-        else:
-            continue
-
-        if base <= 0:
-            continue
-
-        if disc.discount_type == "PERCENT":
-            discount_amount += base * disc.discount_value / Decimal("100")
-        else:
-            discount_amount += min(Decimal(str(disc.discount_value)), base)
 
     discount_amount = min(discount_amount, subtotal)
 
@@ -256,8 +212,8 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
             order_id=order.id,
             menu_item_id=cart_item.menu_item_id,
             quantity=cart_item.quantity,
-            unit_price=cart_item.unit_price,
-            total_price=cart_item.unit_price * cart_item.quantity,
+            unit_price=item_prices[len(order_items)]["final_price"],
+            total_price=item_prices[len(order_items)]["final_price"] * cart_item.quantity,
             selected_options=cart_item.selected_options,
             special_note=cart_item.special_note,
         )

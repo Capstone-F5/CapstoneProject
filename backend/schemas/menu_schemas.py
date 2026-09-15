@@ -25,6 +25,10 @@ class MenuItemOut(BaseModel):
     name_ko: str
     name_en: str
     base_price: Decimal
+    original_price: Decimal | None = None
+    discount_amount: Decimal = Decimal("0")
+    final_price: Decimal | None = None
+    applied_discounts: list[dict] = []
     description: str
     image_url: str | None
     set_image_url: str | None

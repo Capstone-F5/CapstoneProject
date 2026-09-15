@@ -26,6 +26,8 @@ from backend.core.models import (
     OrderItem,
     Payment,
 )
+from backend.core.pricing import calculate_cart_item_price
+from backend.dao.discount_dao import get_active_discounts
 
 from .rag import search_menu as rag_search
 from .session_context import get_session_id
@@ -48,6 +50,10 @@ async def _search_menu(query: str, k: int = 5) -> dict[str, Any]:
                 "name_ko": h["name_ko"],
                 "name_en": h["name_en"],
                 "base_price": h["base_price"],
+                "original_price": h["original_price"],
+                "discount_amount": h["discount_amount"],
+                "final_price": h["final_price"],
+                "applied_discounts": h["applied_discounts"],
                 "description": h["description"],
                 "is_available": h["is_available"],
                 "options": h["options"],
@@ -150,6 +156,9 @@ async def _add_to_cart(
                 }
             )
 
+        discounts = await get_active_discounts(session)
+        price = calculate_cart_item_price(menu_item, opt_payload, discounts)
+        unit_price = price["final_price"]
         cart = await _get_or_create_cart(session, session_id)
 
         # 중복 라인 가드: 같은 ACTIVE 카트에 (메뉴+옵션+special_note) 동일 라인 존재 시 거절.
@@ -199,6 +208,10 @@ async def _add_to_cart(
             "name_ko": menu_item.name_ko,
             "quantity": quantity,
             "unit_price": float(unit_price),
+            "original_price": float(price["original_price"]),
+            "discount_amount": float(price["discount_amount"]),
+            "final_price": float(price["final_price"]),
+            "applied_discounts": price["applied_discounts"],
             "line_total": float(unit_price * quantity),
             "selected_options": opt_payload,
             "special_note": special_note,
@@ -237,10 +250,12 @@ async def _get_cart() -> dict[str, Any]:
         if cart is None or not cart.items:
             return {"is_empty": True, "items": [], "subtotal": 0.0}
 
+        discounts = await get_active_discounts(session)
         items: list[dict[str, Any]] = []
         subtotal = Decimal("0")
         for ci in cart.items:
-            line_total = Decimal(ci.unit_price) * ci.quantity
+            price = calculate_cart_item_price(ci.menu_item, ci.selected_options or [], discounts)
+            line_total = price["final_price"] * ci.quantity
             subtotal += line_total
             items.append(
                 {
@@ -249,6 +264,9 @@ async def _get_cart() -> dict[str, Any]:
                     "name_ko": ci.menu_item.name_ko,
                     "quantity": ci.quantity,
                     "unit_price": float(ci.unit_price),
+                    "original_price": float(price["original_price"]),
+                    "discount_amount": float(price["discount_amount"]),
+                    "final_price": float(price["final_price"]),
                     "line_total": float(line_total),
                     "selected_options": ci.selected_options or [],
                     "special_note": ci.special_note,

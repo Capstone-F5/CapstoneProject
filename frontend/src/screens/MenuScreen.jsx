@@ -11,31 +11,16 @@ const GRID_GAP = 9
 
 // 아이템에 적용되는 모든 할인을 합산해 할인된 단가 정보를 반환한다.
 // 할인이 없으면 null 반환.
-function computeItemDiscount(itemId, categoryId, unitPrice, activeDiscounts) {
-  if (!activeDiscounts?.length) return null
-  const today = new Date().toISOString().split('T')[0]
-  let price = unitPrice
-  const labels = []
-  for (const d of activeDiscounts) {
-    if (!d.is_active) continue
-    if (d.applicable_tier !== 'ALL') continue
-    if (d.valid_from && today < d.valid_from) continue
-    if (d.valid_until && today > d.valid_until) continue
-    const matches =
-      d.target_type === 'ALL' ||
-      (d.target_type === 'MENU' && d.menu_item_id === itemId) ||
-      (d.target_type === 'CATEGORY' && d.category_id === categoryId)
-    if (!matches) continue
-    if (d.discount_type === 'PERCENT') {
-      price = Math.round(price * (1 - Number(d.discount_value) / 100))
-      labels.push(`-${d.discount_value}%`)
-    } else {
-      price = Math.max(0, price - Number(d.discount_value))
-      labels.push(`-${Number(d.discount_value).toLocaleString()}원`)
-    }
+function getServerDiscount(item) {
+  const originalPrice = Number(item.originalPrice ?? item.price ?? item.unitPrice)
+  const finalPrice = Number(item.finalPrice ?? item.price ?? item.unitPrice)
+  if (finalPrice >= originalPrice) return null
+  const label = item.appliedDiscounts?.[0]
+  return {
+    discountedPrice: finalPrice,
+    savings: originalPrice - finalPrice,
+    label: label?.discount_type === 'PERCENT' ? `-${label.discount_value}%` : '',
   }
-  if (price === unitPrice) return null
-  return { discountedPrice: price, savings: unitPrice - price, label: labels[0] ?? '' }
 }
 
 const CAT_IMAGE = {
@@ -415,7 +400,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 item={item}
                 onClick={() => handleItemTap(item)}
                 chatOpen={chatOpen}
-                discount={computeItemDiscount(item.id, item.categoryId, item.price, activeDiscounts)}
+                discount={getServerDiscount(item)}
               />
             </div>
           ))}
@@ -465,7 +450,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             }}>
               {cart.map(item => {
                 const menuItem = menuItemById[item.id]
-                const disc = computeItemDiscount(item.id, menuItem?.categoryId ?? null, item.unitPrice, activeDiscounts)
+                const disc = getServerDiscount(item)
                 return (
                   <MiniCartItem
                     key={item.cartId}
@@ -486,12 +471,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             }}>
               {(() => {
                 const totalQty = cart.reduce((s, c) => s + c.qty, 0)
-                const grossTotal = cart.reduce((s, c) => s + c.unitPrice * c.qty, 0)
-                const discountedTotal = cart.reduce((s, c) => {
-                  const mi = menuItemById[c.id]
-                  const d = computeItemDiscount(c.id, mi?.categoryId ?? null, c.unitPrice, activeDiscounts)
-                  return s + (d ? d.discountedPrice : c.unitPrice) * c.qty
-                }, 0)
+                const grossTotal = cart.reduce((s, c) => s + (c.originalPrice ?? c.unitPrice) * c.qty, 0)
+                const discountedTotal = cart.reduce((s, c) => s + (c.finalPrice ?? c.unitPrice) * c.qty, 0)
                 const hasDis = discountedTotal < grossTotal
                 return (
                   <span style={{ fontSize: 24, color: '#888' }}>
@@ -532,8 +513,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           onSelect={handleTypeSelect}
           onClose={closeModal}
           setSurcharge={setSurcharge}
-          singleDiscount={computeItemDiscount(modalItem.id, modalItem.categoryId, modalItem.price, activeDiscounts)}
-          setDiscount={computeItemDiscount(modalItem.id, modalItem.categoryId, modalItem.price + setSurcharge, activeDiscounts)}
+          singleDiscount={getServerDiscount(modalItem)}
+          setDiscount={null}
         />
       )}
 
