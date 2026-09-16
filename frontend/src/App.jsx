@@ -14,6 +14,7 @@ import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
+import { useApproachDetector } from './hooks/useApproachDetector'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -106,6 +107,16 @@ function AppContent() {
   })
   useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
   useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])
+
+  // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
+  // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
+  // — 서버는 안내 음성만 재생하고 프론트 모드 전환은 아직 없음.
+  useApproachDetector({
+    enabled: true,
+    onModeAction: (action) => {
+      if (action === 'gesture') setGestureEnabled(true)
+    },
+  })
 
   // PiP 캔버스 — useGesture가 매 프레임 카메라 영상 + 관절을 직접 그림
   const pipCanvasRef = useRef(null)
