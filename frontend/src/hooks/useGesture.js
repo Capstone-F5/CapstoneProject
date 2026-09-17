@@ -100,7 +100,6 @@ function _isPointingHold(lm) {
   return indexOK && otherFolded
 }
 
-// 오케이 인식 깐깐하게 조절
 const PINCH_RATIO_ENTER = 0.18   
 const PINCH_RATIO_EXIT  = 0.30   
 
@@ -126,7 +125,7 @@ function _isOpenForSwipe(lm) {
   let n = _isThumbExtended(lm) ? 1 : 0
   for (const [tip, pip] of [[8,6],[12,10],[16,14],[20,18]])
     if (_isFingerExtended(lm, tip, pip, EXTENSION_MARGIN_LOOSE)) n++
-  return n >= 3
+  return n >= 2
 }
 
 function _classifyStaticNoPinch(lm) {
@@ -178,24 +177,23 @@ function _confirmStatic(state, gesture) {
   return null
 }
 
+// 스와이프 수정
 const SWIPE_COOLDOWN_MS      = 600
-const SWIPE_COOLDOWN_REVERSE = 1500
+const SWIPE_COOLDOWN_REVERSE = 1000
 const SWIPE_WINDOW_MS        = 700
-const SWIPE_MIN_FRAMES       = 4
-const SWIPE_STEP_THRESHOLD   = 0.004
+const SWIPE_MIN_FRAMES       = 2
+const SWIPE_STEP_THRESHOLD   = 0.002
 
-// 스와이프 방향을 칼같이 구분하기 위한 엄격한 기준값 적용
-const SWIPE_LR_MIN_X     = 0.15  // 기존 0.10 -> 0.15 (가로로 더 길게 그어야 인정)
-const SWIPE_LR_MAX_Y     = 0.05  // 기존 0.08 -> 0.05 (가로로 그을 때 위아래 흔들림 얄짤없이 차단)
+const SWIPE_LR_MIN_X     = 0.08
+const SWIPE_LR_MAX_Y     = 0.12
 
-// 세로(위아래) 스와이프 기준을 사람 관절에 맞게 완화
-const SWIPE_UD_MIN_Y     = 0.10  // 0.15 -> 0.10 (너무 길게 안 내려도 인식됨)
-const SWIPE_UD_MAX_X     = 0.10  // 0.05 -> 0.10 (손 내릴 때 좌우로 살짝 휘청거리는 궤적 허용)
+const SWIPE_UD_MIN_Y     = 0.08
+const SWIPE_UD_MAX_X     = 0.15
 
-const SWIPE_STRAIGHTNESS = 0.65  // 0.80 -> 0.65 완벽한 일직선이 아니어도 허용
 
-const SWIPE_CONSISTENCY  = 0.65
-const SWIPE_MIN_SPEED    = 0.25
+const SWIPE_STRAIGHTNESS = 0.40
+const SWIPE_CONSISTENCY  = 0.50
+const SWIPE_MIN_SPEED    = 0.15
 
 const _SWIPE_REVERSE = {
   swipe_left: 'swipe_right', swipe_right: 'swipe_left',
@@ -449,7 +447,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         if (lbl === 'Right' && activeIdx < 0) { activeIdx = i; activeLabel = 'Right' }
       }
 
-      // ── 포인터 (인체공학적 사다리꼴 좌표계 적용) ──────────────────────────────────────
+      // ── 포인터 ──────────────────────────────────────
       try {
         if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
             _palmSize(lms[activeIdx]) >= MIN_PALM_SIZE) {
@@ -482,12 +480,14 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
               const pState = pointerStates[activeLabel]
               
+              // 좌우(가로) 감도를 높이기: CAM_LEFT_X와 CAM_RIGHT_X 사이의 간격을 좁히기 (예: 0.35 ~ 0.65)
               const CAM_LEFT_X  = 0.25; // 가로 시작점 (숫자를 키울수록 오른쪽으로 밀림)
               const CAM_RIGHT_X = 0.80;  // 가로 끝점 (이 숫자를 0.60으로 줄이면 좌우 감도 높아짐)
 
               let normX = (px - CAM_LEFT_X) / (CAM_RIGHT_X - CAM_LEFT_X);
               normX = Math.max(0, Math.min(1, normX));
               
+              // 위아래(세로) 감도를 더 높이고 싶다면: MARGIN_Y_BODY와 MARGIN_Y_REACH 숫자를 더 키우기 (예: 0.45 / 0.30)
               const MARGIN_Y_BODY  = 0.25; // 몸 쪽 위아래 마진 (숫자가 클수록 감도 높아짐)
               const MARGIN_Y_REACH = 0.30; // 뻗었을 때 위아래 마진
 
