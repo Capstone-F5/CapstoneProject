@@ -111,11 +111,14 @@ function AppContent() {
   // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
   // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
   // — 서버는 안내 음성만 재생하고 프론트 모드 전환은 아직 없음.
+  // 콜백은 반드시 안정적인 참조여야 함 — 훅의 useEffect 의존성이라, 매 렌더 새 함수를 넘기면
+  // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
+  const handleApproachModeAction = useCallback((action) => {
+    if (action === 'gesture') setGestureEnabled(true)
+  }, [])
   useApproachDetector({
     enabled: true,
-    onModeAction: (action) => {
-      if (action === 'gesture') setGestureEnabled(true)
-    },
+    onModeAction: handleApproachModeAction,
   })
 
   // PiP 캔버스 — useGesture가 매 프레임 카메라 영상 + 관절을 직접 그림

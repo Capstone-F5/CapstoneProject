@@ -1,6 +1,6 @@
-# 발견된 버그 (이번 작업 범위 밖 — 별도 확인 필요)
+# 발견된 버그 (Issue #66 PR에서 해소됨)
 
-`ai_modules/cv/approach_detector.py`의 `WHITE_CANE_CLASS_ID = 1`이 실제 모델 클래스 순서와 반대인 것으로 보입니다.
+재학습 전 `ai_modules/cv/approach_detector.py`의 `WHITE_CANE_CLASS_ID = 1`이 당시 모델(`best_int8.tflite`, 2클래스)의 실제 클래스 순서와 반대였습니다.
 
 ## 근거
 
@@ -10,12 +10,12 @@
 - white_cane 정답 위치 → 모델 **class0** 평균 confidence 0.350, class1은 0.000
 - person 정답 위치 → 모델 **class1** 평균 confidence 0.420, class0은 0.000
 
-즉 **class0 = white_cane, class1 = person**이 맞고, 현재 `WHITE_CANE_CLASS_ID = 1`은 반대로 설정되어 있습니다.
-이대로면 프로덕션 흰 지팡이 접근 감지 기능이 실제로는 "사람이 감지되면 흰 지팡이로 판정"하는 식으로 오작동할 가능성이 있습니다.
+즉 구모델은 **class0 = white_cane, class1 = person**이었고, 당시 `WHITE_CANE_CLASS_ID = 1`은 반대로 설정되어 있었습니다.
+그대로였다면 흰 지팡이 접근 감지가 "사람이 감지되면 흰 지팡이로 판정"하는 식으로 오작동했을 것입니다.
 
 재현/검증 스크립트: `ai_modules/cv/wheelchair_training/scripts/debug_class_order.py`
 
 ## 상태
 
-- 2026-09-14 확인, 사용자 요청으로 이번 작업(휠체어 클래스 추가 학습/양자화)에서는 수정하지 않고 별도 이슈로 남겨둠.
-- 재학습 시 `person=0, white_cane=1, wheelchair=2`로 클래스 순서를 명시적으로 재설계하므로, 새 모델이 배포되면 이 버그는 자연히 해소될 수 있음 (단, 배포 전까지는 기존 `best_int8.tflite`를 쓰는 프로덕션에 버그가 남아있음).
+- 2026-09-14 확인. **해소됨**: 이 PR에서 모델을 `person=0, white_cane=1, wheelchair=2` 순서의 3클래스 모델로 교체하고, `approach_detector.py`의 클래스 ID도 그에 맞게 재작성함.
+- 아래 근거는 교체 전 구모델 기준이며 기록용으로 남겨둠. 구모델은 git 히스토리(`ai_modules/cv/models/best_int8.tflite`, 이 PR 이전 커밋)에서 복원할 수 있음.
