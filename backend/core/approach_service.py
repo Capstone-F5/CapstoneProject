@@ -21,6 +21,8 @@ MODE_ACTIONS = {
 }
 ANNOUNCEMENT_INTERVAL = 10.0
 MAX_ANNOUNCEMENTS = 3
+# 안내 종료 후 대상이 이 프레임 수만큼 연속으로 안 보여야 다시 감지를 받음 (프레임 0.5초 간격 → 약 3초)
+REARM_ABSENT_FRAMES = 6
 
 # 모듈 레벨 TTS 오디오 캐시 (트리거 타입별 bytes: MP3 바이너리)
 _tts_cache: dict[str, bytes] = {}
@@ -53,6 +55,9 @@ class ApproachSession:
     announcement_count: int = 0
     last_announcement_time: float = field(default=0.0)
     user_input_received: bool = False
+    # 안내가 끝난 뒤 대상이 화면에서 사라질 때까지 재시작을 막는 잠금
+    latched: bool = False
+    absent_frames: int = 0
 
     def activate(self, trigger_type: str) -> None:
         self.mode_on = True
@@ -67,6 +72,12 @@ class ApproachSession:
         self.announcement_count = 0
         self.last_announcement_time = 0.0
         self.user_input_received = False
+
+    def finish(self) -> None:
+        """안내 사이클 종료(3회 완료 또는 사용자 입력) — 대상이 사라질 때까지 재시작 잠금."""
+        self.reset()
+        self.latched = True
+        self.absent_frames = 0
 
 
 def _pick_trigger(white_cane_detected: bool, wheelchair_detected: bool) -> str | None:
@@ -106,11 +117,20 @@ def process_frame_result(
     mode_ended = False
     current_time = time.time()
 
-    # IDLE → ACTIVE
-    if not session.mode_on:
-        trigger = _pick_trigger(white_cane_detected, wheelchair_detected)
-        if trigger:
-            session.activate(trigger)
+    trigger = _pick_trigger(white_cane_detected, wheelchair_detected)
+
+    if session.latched:
+        # 종료 후 잠금: 대상이 연속으로 안 보이면 해제, 다시 보이면 카운트 리셋
+        if trigger is None:
+            session.absent_frames += 1
+            if session.absent_frames >= REARM_ABSENT_FRAMES:
+                session.latched = False
+                session.absent_frames = 0
+        else:
+            session.absent_frames = 0
+    elif not session.mode_on and trigger:
+        # IDLE → ACTIVE
+        session.activate(trigger)
 
     # ACTIVE 상태 내 타이머 처리
     if session.mode_on:
@@ -121,7 +141,7 @@ def process_frame_result(
                 session.last_announcement_time = current_time
                 session.announcement_count += 1
             else:
-                session.reset()
+                session.finish()
                 mode_ended = True
 
     active_trigger = session.trigger_type
@@ -140,11 +160,16 @@ def process_frame_result(
 
 
 def handle_user_input(session: ApproachSession) -> dict:
-    """사용자 입력(터치 등) 수신 시 안내 모드 즉시 종료."""
-    session.user_input_received = True
-    session.reset()
+    """사용자 입력(터치 등) 수신 시 진행 중인 안내를 즉시 종료.
+
+    안내 중일 때만 잠금을 건다 — 평소 화면을 만지는 것만으로 다음 대상 감지를 막지 않도록.
+    """
+    was_active = session.mode_on
+    if was_active:
+        session.user_input_received = True
+        session.finish()
     return {
         "type": "ack",
         "mode_on": False,
-        "mode_ended": True,
+        "mode_ended": was_active,
     }

@@ -116,10 +116,19 @@ function AppContent() {
   const handleApproachModeAction = useCallback((action) => {
     if (action === 'gesture') setGestureEnabled(true)
   }, [])
-  useApproachDetector({
+  const { notifyUserInput } = useApproachDetector({
     enabled: true,
     onModeAction: handleApproachModeAction,
   })
+  // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
+  useEffect(() => {
+    window.addEventListener('pointerdown', notifyUserInput, true)
+    window.addEventListener('click', notifyUserInput, true)
+    return () => {
+      window.removeEventListener('pointerdown', notifyUserInput, true)
+      window.removeEventListener('click', notifyUserInput, true)
+    }
+  }, [notifyUserInput])
 
   // PiP 캔버스 — useGesture가 매 프레임 카메라 영상 + 관절을 직접 그림
   const pipCanvasRef = useRef(null)
