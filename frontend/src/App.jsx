@@ -1,3 +1,4 @@
+import './utils/ortInit'
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useGesture } from './hooks/useGesture'
 import { LocaleProvider, useLocale } from './i18n/LocaleContext'
@@ -118,7 +119,7 @@ function AppContent() {
     if (action === 'gesture') setGestureEnabled(true)
   }, [])
   const { notifyUserInput } = useApproachDetector({
-    enabled: true,
+    enabled: !chatOpen,
     onModeAction: handleApproachModeAction,
   })
   // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
