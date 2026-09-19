@@ -1,8 +1,8 @@
-"""
-흰 지팡이 접근 감지 - TFLite 추론 래퍼.
+"""흰 지팡이 / 휠체어 접근 감지 - TFLite 추론 래퍼.
 
 - temp/main.py의 전처리/추론/파싱 로직을 서버 비동기 환경에 맞게 이식.
 - 인터프리터는 싱글턴으로 유지하고 asyncio.Lock으로 직렬화.
+- 모델은 3클래스(person=0, white_cane=1, wheelchair=2)로 재학습됨 (Issue #66).
 """
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ except ImportError:
     import tensorflow as tf  # type: ignore
     _tflite = tf.lite  # type: ignore
 
+PERSON_CLASS_ID = 0
 WHITE_CANE_CLASS_ID = 1
+WHEELCHAIR_CLASS_ID = 2
 CONFIDENCE_THRESHOLD = 0.5
 MODEL_PATH = Path(__file__).parent / "models" / "best_int8.tflite"
 
@@ -55,7 +57,7 @@ class ApproachDetector:
             return np.expand_dims(q, axis=0)
         return np.expand_dims(img.astype(np.float32) / 255.0, axis=0)
 
-    def _parse_output(self, raw: np.ndarray) -> tuple[bool, float]:
+    def _parse_output(self, raw: np.ndarray) -> dict:
         out_scale, out_zero = self._out["quantization"]
         if self._out["dtype"] == np.int8:
             raw = (raw.astype(np.float32) - out_zero) * out_scale
@@ -66,24 +68,37 @@ class ApproachDetector:
 
         scores = out[:, 4:]
         if scores.size == 0:
-            return False, 0.0
+            return {
+                "white_cane_detected": False, "white_cane_confidence": 0.0,
+                "wheelchair_detected": False, "wheelchair_confidence": 0.0,
+            }
 
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
 
-        for cls, conf in zip(class_ids, confidences):
-            if cls == WHITE_CANE_CLASS_ID and conf > CONFIDENCE_THRESHOLD:
-                return True, float(conf)
-        return False, float(np.max(confidences)) if confidences.size else 0.0
+        def best_for(class_id: int) -> float:
+            mask = class_ids == class_id
+            return float(confidences[mask].max()) if np.any(mask) else 0.0
 
-    def detect_sync(self, jpeg_bytes: bytes) -> tuple[bool, float]:
+        white_cane_conf = best_for(WHITE_CANE_CLASS_ID)
+        wheelchair_conf = best_for(WHEELCHAIR_CLASS_ID)
+
+        return {
+            "white_cane_detected": white_cane_conf > CONFIDENCE_THRESHOLD,
+            "white_cane_confidence": white_cane_conf,
+            "wheelchair_detected": wheelchair_conf > CONFIDENCE_THRESHOLD,
+            "wheelchair_confidence": wheelchair_conf,
+        }
+
+    def detect_sync(self, jpeg_bytes: bytes) -> dict:
         data = self._preprocess(jpeg_bytes)
         self.interpreter.set_tensor(self._in["index"], data)
         self.interpreter.invoke()
         raw = self.interpreter.get_tensor(self._out["index"])
         return self._parse_output(raw)
 
-    async def detect(self, jpeg_bytes: bytes) -> tuple[bool, float]:
+    async def detect(self, jpeg_bytes: bytes) -> dict:
+        """반환: {white_cane_detected, white_cane_confidence, wheelchair_detected, wheelchair_confidence}"""
         async with self._lock:
             return await asyncio.to_thread(self.detect_sync, jpeg_bytes)
 

@@ -43,6 +43,21 @@ docs/논문/참고논문들/
 # ML 모델 바이너리 (용량이 크므로 직접 배포)
 *.pkl
 
+# YOLO 휠체어 인식 작업 (Issue #66) - 학습 데이터/중간 체크포인트/로그는 커밋 대상 아님
+# (최종 확정 모델은 검증 후 git add -f 로 예외적으로 커밋)
+.venv_yolo/
+ai_modules/cv/wheelchair_training/data/
+ai_modules/cv/wheelchair_training/runs/
+ai_modules/cv/wheelchair_training/base_model/
+# ultralytics 검증 스크립트가 기본 설정으로 프로젝트 루트에 남기는 산출물
+/runs/
+/weights/
+
+# 학습 로그 및 다운로드된 사전학습/캘리브레이션 바이너리 - 커밋 대상 아님
+ai_modules/cv/wheelchair_training/*.txt
+ai_modules/cv/wheelchair_training/scripts/*.pt
+ai_modules/cv/wheelchair_training/scripts/*.npy
+
 # Python
 __pycache__/
 *.pyc

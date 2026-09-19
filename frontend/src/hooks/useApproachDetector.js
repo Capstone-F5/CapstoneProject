@@ -7,20 +7,21 @@ const CAM_W = 320               // 낮은 해상도로 전송 크기 절감
 const CAM_H = 240
 
 /**
- * 흰 지팡이 접근 감지 훅.
+ * 흰 지팡이 / 휠체어 접근 감지 훅.
  *
- * 카메라 프레임을 0.5초마다 서버로 전송하고, 흰 지팡이가 감지되면
- * TTS 오디오를 재생하고 onDetected 콜백을 호출한다.
+ * 카메라 프레임을 0.5초마다 서버로 전송하고, 흰 지팡이나 휠체어가 감지되면
+ * TTS 오디오를 재생하고 콜백을 호출한다. 감지 대상에 따라 프론트가 켜야 할
+ * 입력 모드가 다르다 (docs/AI 질의.md 설계: 흰 지팡이 → 음성, 휠체어 → 제스처).
  *
  * @param {object} options
  * @param {boolean} options.enabled          - 감지 활성화 여부
- * @param {function} options.onDetected      - 감지 시작 시 호출 (mode ON)
+ * @param {function} options.onModeAction    - 새 감지로 모드 활성화 시 호출 ('voice' | 'gesture')
  * @param {function} options.onModeEnd       - 3회 안내 완료 또는 사용자 입력 후 호출
- * @param {function} options.onStateChange   - 매 프레임 결과 수신 시 호출 ({ voice_mode_on, announcement_count })
+ * @param {function} options.onStateChange   - 매 프레임 결과 수신 시 호출 ({ mode_on, active_trigger, announcement_count, ... })
  */
 export function useApproachDetector({
   enabled = true,
-  onDetected,
+  onModeAction,
   onModeEnd,
   onStateChange,
 } = {}) {
@@ -138,9 +139,9 @@ export function useApproachDetector({
         return
       }
 
-      // 감지 시작 알림
-      if (data.voice_mode_on && !prevModeRef.current) {
-        onDetected?.()
+      // 새 감지로 모드 활성화 알림 — mode_action('voice'|'gesture')과 함께 전달
+      if (data.mode_on && !prevModeRef.current) {
+        onModeAction?.(data.mode_action)
       }
 
       // 모드 종료 알림
@@ -148,12 +149,14 @@ export function useApproachDetector({
         onModeEnd?.()
       }
 
-      prevModeRef.current = data.voice_mode_on
+      prevModeRef.current = data.mode_on
       onStateChange?.({
-        voice_mode_on:      data.voice_mode_on,
-        announcement_count: data.announcement_count,
-        white_cane_detected: data.white_cane_detected,
-        confidence:         data.confidence,
+        mode_on:              data.mode_on,
+        active_trigger:       data.active_trigger,
+        mode_action:          data.mode_action,
+        announcement_count:   data.announcement_count,
+        white_cane_detected:  data.white_cane_detected,
+        wheelchair_detected:  data.wheelchair_detected,
       })
     }
 
@@ -167,7 +170,7 @@ export function useApproachDetector({
       ws.close()
       wsRef.current = null
     }
-  }, [enabled, getWsUrl, sendFrame, playAudio, onDetected, onModeEnd, onStateChange, stopCamera])
+  }, [enabled, getWsUrl, sendFrame, playAudio, onModeAction, onModeEnd, onStateChange, stopCamera])
 
   return { notifyUserInput }
 }

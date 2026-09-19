@@ -1,14 +1,16 @@
 """
-흰 지팡이 접근 감지 WebSocket 엔드포인트.
+흰 지팡이 / 휠체어 접근 감지 WebSocket 엔드포인트.
 
 클라이언트 → 서버:
   binary : JPEG 카메라 프레임 (canvas.toBlob 결과)
   text   : {"type": "user_input"}  — 사용자 터치/입력 신호
 
 서버 → 클라이언트:
-  text   : 상태 JSON  {"white_cane_detected", "confidence", "voice_mode_on",
+  text   : 상태 JSON  {"white_cane_detected", "white_cane_confidence",
+                       "wheelchair_detected", "wheelchair_confidence",
+                       "active_trigger", "mode_action", "mode_on",
                        "announcement_count", "play_tts", "mode_ended"}
-  binary : play_tts=true 일 때 JSON 직후 캐시된 MP3 오디오 바이너리 전송
+  binary : play_tts=true 일 때 JSON 직후 트리거별 캐시된 MP3 오디오 바이너리 전송
 """
 from __future__ import annotations
 
@@ -63,18 +65,24 @@ async def approach_ws(websocket: WebSocket) -> None:
                     continue
 
                 try:
-                    detected, conf = await detector.detect(jpeg_bytes)
+                    detection = await detector.detect(jpeg_bytes)
                 except Exception as e:
                     await websocket.send_json({"error": f"추론 실패: {str(e)}"})
                     continue
 
-                result = process_frame_result(session, detected, conf)
+                result = process_frame_result(
+                    session,
+                    detection["white_cane_detected"],
+                    detection["white_cane_confidence"],
+                    detection["wheelchair_detected"],
+                    detection["wheelchair_confidence"],
+                )
                 await websocket.send_json(result)
 
-                # play_tts=True이면 캐시된 TTS 오디오를 binary 프레임으로 전송
-                if result["play_tts"]:
+                # play_tts=True이면 활성 트리거의 캐시된 TTS 오디오를 binary 프레임으로 전송
+                if result["play_tts"] and result["active_trigger"]:
                     try:
-                        audio = await get_tts_audio()
+                        audio = await get_tts_audio(result["active_trigger"])
                         await websocket.send_bytes(audio)
                     except Exception as e:
                         await websocket.send_json({"error": f"TTS 전송 실패: {str(e)}"})

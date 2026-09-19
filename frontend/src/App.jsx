@@ -14,6 +14,7 @@ import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
+import { useApproachDetector } from './hooks/useApproachDetector'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -106,6 +107,28 @@ function AppContent() {
   })
   useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
   useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])
+
+  // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
+  // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
+  // — 서버는 안내 음성만 재생하고 프론트 모드 전환은 아직 없음.
+  // 콜백은 반드시 안정적인 참조여야 함 — 훅의 useEffect 의존성이라, 매 렌더 새 함수를 넘기면
+  // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
+  const handleApproachModeAction = useCallback((action) => {
+    if (action === 'gesture') setGestureEnabled(true)
+  }, [])
+  const { notifyUserInput } = useApproachDetector({
+    enabled: true,
+    onModeAction: handleApproachModeAction,
+  })
+  // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
+  useEffect(() => {
+    window.addEventListener('pointerdown', notifyUserInput, true)
+    window.addEventListener('click', notifyUserInput, true)
+    return () => {
+      window.removeEventListener('pointerdown', notifyUserInput, true)
+      window.removeEventListener('click', notifyUserInput, true)
+    }
+  }, [notifyUserInput])
 
   // PiP 캔버스 — useGesture가 매 프레임 카메라 영상 + 관절을 직접 그림
   const pipCanvasRef = useRef(null)
