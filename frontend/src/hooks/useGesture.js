@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import { Hands } from '@mediapipe/hands'
 
 // ── 카메라 설정 ──────────────────────────────────────────────────────────────
 const CAM_W   = 640
@@ -722,6 +721,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
         }
 
+        const { Hands } = await import('@mediapipe/hands')
         hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
         hands.setOptions({
           maxNumHands:            2,

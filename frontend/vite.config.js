@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, createLogger, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+import compression from 'vite-plugin-compression'
 
 // vad-react/onnxruntime 소스맵 경고 억제 (warn + warnOnce 모두 처리)
 const logger = createLogger()
@@ -26,7 +27,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     customLogger: logger,
-    plugins: [react(), ...(useHttps ? [basicSsl()] : [])],
+    plugins: [
+      react(),
+      ...(useHttps ? [basicSsl()] : []),
+      compression({ algorithm: 'brotliCompress', ext: '.br' }),
+      compression({ algorithm: 'gzip',           ext: '.gz' }),
+    ],
     envDir: projectRoot,
     base: './',
     optimizeDeps: {
@@ -44,6 +50,16 @@ export default defineConfig(({ mode }) => {
           main:   fileURLToPath(new URL('./index.html', import.meta.url)),
           signup: fileURLToPath(new URL('./signup.html', import.meta.url)),
           admin:  fileURLToPath(new URL('./admin.html', import.meta.url)),
+        },
+        output: {
+          // ML/AI 라이브러리를 별도 청크로 분리 — 라즈베리파이4 초기 로딩 개선.
+          // @mediapipe/hands는 useGesture.js에서 동적 import로 전환되어 자동 분리됨.
+          manualChunks(id) {
+            if (id.includes('node_modules/onnxruntime-web'))   return 'vendor-ort'
+            if (id.includes('node_modules/@ricky0123/vad'))     return 'vendor-vad'
+            if (id.includes('node_modules/@zxing'))             return 'vendor-zxing'
+            if (id.includes('node_modules/react-dom'))          return 'vendor-react'
+          },
         },
         onwarn(warning, warn) {
           if (warning.code === 'SOURCEMAP_ERROR') return

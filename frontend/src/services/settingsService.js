@@ -1,7 +1,7 @@
 // 대기화면 배경 슬라이드 목록 — 관리자가 DB에서 교체/추가/비활성화할 수 있다.
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
-const FALLBACK_IMAGES = ['/bg.png']
+const FALLBACK_IMAGES = ['/bg.jpg']
 
 export async function fetchStartScreenImages() {
   try {

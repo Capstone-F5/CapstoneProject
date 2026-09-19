@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMicVAD, utils } from '@ricky0123/vad-react'
 import { useLocale } from '../i18n/LocaleContext'
 import { getSessionId, newSessionId } from '../services/session'
+import { getCachedAudio } from '../utils/ttsCache'
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -181,6 +182,19 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   async function playTts(text) {
     if (!text || !activeRef.current) return
+
+    // 사전 녹음 파일이 있으면 API 호출 없이 즉시 재생
+    const cached = await getCachedAudio(text)
+    if (cached && activeRef.current) {
+      audioRef.current = cached
+      await new Promise(resolve => {
+        cached.onended = resolve
+        cached.onerror = resolve
+        cached.play().catch(resolve)
+      })
+      audioRef.current = null
+      return
+    }
 
     let res
     try {

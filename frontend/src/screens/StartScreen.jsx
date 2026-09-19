@@ -20,7 +20,7 @@ const BG_FADE_MS = 1200
 export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
-  const [bgImages, setBgImages] = useState(['/bg.png'])
+  const [bgImages, setBgImages] = useState(['/bg.jpg'])
   const [bgIndex, setBgIndex] = useState(0)
 
   useEffect(() => { setLocale('ko') }, [])
