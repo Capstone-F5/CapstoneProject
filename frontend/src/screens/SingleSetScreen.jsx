@@ -1,4 +1,5 @@
 import { SET_SURCHARGE } from '../data/menuData'
+import HandBadge from '../components/HandBadge'
 
 export default function SingleSetScreen({ item, nav, setSelectedType }) {
   if (!item) return null
@@ -38,6 +39,7 @@ export default function SingleSetScreen({ item, nav, setSelectedType }) {
 
       <div style={{ display: 'flex', gap: 'clamp(12px, 4vw, 20px)' }}>
         <ChoiceCard
+          number={1}
           image={item.image}
           alt={item.name}
           price={item.price}
@@ -46,6 +48,7 @@ export default function SingleSetScreen({ item, nav, setSelectedType }) {
           onClick={() => select('single')}
         />
         <ChoiceCard
+          number={2}
           image={item.setImage ?? item.image}
           alt={`${item.name} 세트`}
           price={setPrice}
@@ -58,7 +61,7 @@ export default function SingleSetScreen({ item, nav, setSelectedType }) {
   )
 }
 
-function ChoiceCard({ image, alt, price, kcal, label, onClick }) {
+function ChoiceCard({ number, image, alt, price, kcal, label, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -67,8 +70,10 @@ function ChoiceCard({ image, alt, price, kcal, label, onClick }) {
         overflow: 'hidden', cursor: 'pointer',
         boxShadow: '0 2px 12px rgba(0,0,0,0.09)',
         display: 'flex', flexDirection: 'column', padding: 0,
+        position: 'relative', // HandBadge 위치 기준점
       }}
     >
+      <HandBadge number={number} />
       <img
         src={image}
         alt={alt}

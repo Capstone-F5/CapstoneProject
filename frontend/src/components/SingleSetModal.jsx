@@ -1,4 +1,5 @@
 import useT from '../i18n/useT'
+import HandBadge from './HandBadge'
 
 export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, singleDiscount, setDiscount }) {
   const t = useT()
@@ -64,6 +65,7 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, 
         {/* Two choice cards */}
         <div style={{ display: 'flex', gap: 'clamp(10px, 3vw, 16px)' }}>
           <ChoiceCard
+            number={1}
             image={item.image}
             alt={item.name}
             price={item.price}
@@ -74,6 +76,7 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, 
             onClick={() => onSelect('single')}
           />
           <ChoiceCard
+            number={2}
             image={item.setImage ?? item.image}
             alt={`${item.name} ${t('set')}`}
             price={setPrice}
@@ -89,42 +92,45 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, 
   )
 }
 
-function ChoiceCard({ image, alt, price, discountedPrice, kcal, label, won, onClick }) {
+function ChoiceCard({ number, image, alt, price, discountedPrice, kcal, label, won, onClick }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1, background: '#fff', border: 'none', borderRadius: 14,
-        overflow: 'hidden', cursor: 'pointer',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
-        display: 'flex', flexDirection: 'column', padding: 0,
-      }}
-    >
-      <img
-        src={image}
-        alt={alt}
-        style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
-      />
-      <div style={{ padding: '10px 8px 14px', textAlign: 'center' }}>
-        {discountedPrice != null && discountedPrice < price ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 2 }}>
-            <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{price.toLocaleString()} {won}</span>
-            <span style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#e44' }}>{discountedPrice.toLocaleString()} {won}</span>
+    <div style={{ flex: 1, position: 'relative' }}>
+      <HandBadge number={number} />
+      <button
+        onClick={onClick}
+        style={{
+          width: '100%', background: '#fff', border: 'none', borderRadius: 14,
+          overflow: 'hidden', cursor: 'pointer',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+          display: 'flex', flexDirection: 'column', padding: 0,
+        }}
+      >
+        <img
+          src={image}
+          alt={alt}
+          style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
+        />
+        <div style={{ padding: '10px 8px 14px', textAlign: 'center' }}>
+          {discountedPrice != null && discountedPrice < price ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 2 }}>
+              <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{price.toLocaleString()} {won}</span>
+              <span style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#e44' }}>{discountedPrice.toLocaleString()} {won}</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
+              {price.toLocaleString()} {won}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
+            {kcal != null ? `${kcal} kcal` : '- kcal'}
           </div>
-        ) : (
-          <div style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
-            {price.toLocaleString()} {won}
+          <div style={{
+            fontSize: 'clamp(12px, 3.5vw, 14px)', fontWeight: 700, color: '#555',
+          }}>
+            {label}
           </div>
-        )}
-        <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
-          {kcal != null ? `${kcal} kcal` : '- kcal'}
         </div>
-        <div style={{
-          fontSize: 'clamp(12px, 3.5vw, 14px)', fontWeight: 700, color: '#555',
-        }}>
-          {label}
-        </div>
-      </div>
-    </button>
+      </button>
+    </div>
   )
 }
