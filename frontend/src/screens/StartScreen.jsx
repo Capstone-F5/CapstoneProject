@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../i18n/LocaleContext'
 import useT from '../i18n/useT'
 import IdleOverlay from '../components/IdleOverlay'
@@ -17,11 +17,25 @@ const LANGS = [
 const BG_INTERVAL_MS = 5000
 const BG_FADE_MS = 1200
 
+const FULLSCREEN_CLICKS = 10
+const FULLSCREEN_WINDOW_MS = 3000
+
 export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
   const t = useT()
   const [bgImages, setBgImages] = useState(['/bg.jpg'])
   const [bgIndex, setBgIndex] = useState(0)
+  const fsClicksRef = useRef([])
+
+  const handleFsAreaClick = () => {
+    const now = Date.now()
+    fsClicksRef.current = fsClicksRef.current.filter(t => now - t < FULLSCREEN_WINDOW_MS)
+    fsClicksRef.current.push(now)
+    if (fsClicksRef.current.length >= FULLSCREEN_CLICKS) {
+      fsClicksRef.current = []
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    }
+  }
 
   useEffect(() => { setLocale('ko') }, [])
 
@@ -71,6 +85,15 @@ export default function StartScreen({ nav }) {
           }}
         />
       ))}
+
+      {/* 좌상단 히든 영역: 3초 안에 10회 클릭하면 전체화면 해제 */}
+      <div
+        onClick={handleFsAreaClick}
+        style={{
+          position: 'absolute', top: 0, left: 0,
+          width: 80, height: 80, zIndex: 10,
+        }}
+      />
 
       {/* 회원가입 — 키오스크 주문 SPA와 완전히 분리된 별도 페이지(signup.html)로 실제 이동.
           내부 nav() 화면 전환이 아니라 브라우저 페이지 전환이므로 세션/카트 상태와 무관하다. */}

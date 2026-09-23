@@ -471,6 +471,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     let stream   = null
     let video    = null
+    let hands    = null
     let rafId    = null
     let active   = true
     let inflight = false
@@ -528,8 +529,18 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     // 핀치 히스테리시스 — 진입/유지 임계를 구분해 각도 변화에서 끊기지 않게 함
     const wasPinching   = { Left: false, Right: false }
 
+    let inflightWatchdog = null
+
     const handleResults = (results) => {
       if (!active) return
+      clearTimeout(inflightWatchdog)
+      inflight = false
+      const resultNow = performance.now()
+      const latency = perf.sendStarted ? resultNow - perf.sendStarted : 0
+      perf.results++
+      perf.latencyTotal += latency
+      perf.latencyMax = Math.max(perf.latencyMax, latency)
+      logPerformance(resultNow)
 
       const lms    = results.multiHandLandmarks || []
       const handed = results.multiHandedness     || []
@@ -710,30 +721,25 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
     }
 
-    // ── Worker 기반 MediaPipe 루프 ────────────────────────────────────────────
-    let worker   = null
-    let frameCanvas = null
-    let frameCtx    = null
-    let workerReady = false
-
     const loop = () => {
       if (!active) return
-      const now = performance.now()
-      if (!inflight && workerReady && video && video.readyState >= 2 &&
-          now - lastSent >= 1000 / MAX_FPS) {
-        const vw = video.videoWidth  || CAM_W
-        const vh = video.videoHeight || CAM_H
-        if (frameCanvas.width !== vw || frameCanvas.height !== vh) {
-          frameCanvas.width  = vw
-          frameCanvas.height = vh
-        }
-        frameCtx.drawImage(video, 0, 0)
-        const bitmap = frameCanvas.transferToImageBitmap()
-        inflight     = true
-        lastSent     = now
+      const now   = performance.now()
+      const ready = !inflight && video && video.readyState >= 2 && hands &&
+                    now - lastSent >= 1000 / MAX_FPS
+      if (ready) {
+        inflight = true
+        lastSent = now
         perf.sent++
         perf.sendStarted = now
-        worker.postMessage({ bitmap, width: vw, height: vh }, [bitmap])
+        inflightWatchdog = setTimeout(() => {
+          console.warn('[useGesture] hands.send 타임아웃 — inflight 강제 해제')
+          inflight = false
+        }, 3000)
+        hands.send({ image: video }).catch(err => {
+          clearTimeout(inflightWatchdog)
+          inflight = false
+          console.warn('[useGesture] hands.send 오류:', err)
+        })
       }
       logPerformance(now)
       rafId = requestAnimationFrame(loop)
@@ -759,34 +765,16 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
         }
 
-        frameCanvas = document.createElement('canvas')
-        frameCanvas.width  = CAM_W
-        frameCanvas.height = CAM_H
-        frameCtx = frameCanvas.getContext('2d')
-
-        worker = new Worker(
-          new URL('./gestureWorker.js', import.meta.url),
-          { type: 'module' }
-        )
-        worker.onmessage = (e) => {
-          if (e.data?.type === 'ready') {
-            workerReady = true
-            return
-          }
-          inflight = false
-          const resultNow = performance.now()
-          const latency   = perf.sendStarted ? resultNow - perf.sendStarted : 0
-          perf.results++
-          perf.latencyTotal += latency
-          perf.latencyMax    = Math.max(perf.latencyMax, latency)
-          logPerformance(resultNow)
-          handleResults(e.data)
-        }
-        worker.onerror = (err) => {
-          console.error('[useGesture] Worker 오류:', err)
-          inflight = false
-        }
-
+        const { Hands } = await import('@mediapipe/hands')
+        const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
+        hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
+        hands.setOptions({
+          maxNumHands:            1,
+          modelComplexity:        0,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence:  0.5,
+        })
+        hands.onResults(handleResults)
         loop()
 
       } catch (err) {
@@ -799,10 +787,11 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
+      clearTimeout(inflightWatchdog)
       clearTimeout(hideTimers.Left)
       clearTimeout(hideTimers.Right)
       if (rafId) cancelAnimationFrame(rafId)
-      worker?.terminate()
+      try { hands?.close?.() } catch {}
       stream?.getTracks().forEach(t => t.stop())
       if (videoRef) videoRef.current = null
     }

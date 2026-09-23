@@ -41,7 +41,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, activeDiscounts = [] }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, serialRef, activeDiscounts = [] }) {
   const t = useT()
   const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
@@ -63,6 +63,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [showCouponScan,   setShowCouponScan]   = useState(false)
   const [discountPreview,  setDiscountPreview]  = useState(null)  // { discountAmount, applicable }
+  const [receivedCash,     setReceivedCash]     = useState(0)     // 아두이노 현금 누적액
 
   const isCompletingRef = useRef(false)
 
@@ -213,6 +214,25 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     return () => { if (voiceRef) voiceRef.current = null }
   }, [voiceRef, cart, total])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 아두이노 시리얼 브릿지
+  useEffect(() => {
+    if (!serialRef) return
+    serialRef.current = (event) => {
+      if (event.type === 'card') {
+        // 결제 팝업이 열려 있을 때만 카드 결제로 진입 (다른 팝업 중에는 무시)
+        if (showPaymentPopup) goPayment('cardPayment')
+      } else if (event.type === 'cash') {
+        setReceivedCash(prev => prev + event.amount)
+      }
+    }
+    return () => { if (serialRef) serialRef.current = null }
+  }, [serialRef, showPaymentPopup])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 현금 결제 창이 닫히면 수납액 초기화
+  useEffect(() => {
+    if (!showCashPayment) setReceivedCash(0)
+  }, [showCashPayment])
+
   // 카트가 바뀔 때마다 적용 가능한 할인 미리보기
   useEffect(() => {
     if (cart.length === 0) { setDiscountPreview(null); return }
@@ -306,7 +326,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       </div>
 
       {/* ── 아이템 목록 ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: `14px ${LIST_PX}px` }}>
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+        padding: `14px ${LIST_PX}px`,
+      }}>
         {cart.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#bbb', padding: '100px 0', fontSize: 20 }}>
             {t('cartEmpty')}
@@ -613,6 +640,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
           error={paymentError}
+          receivedCash={receivedCash}
         >
           <CashIllustration />
         </PayWaitPopup>
@@ -654,12 +682,19 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 }
 
 /* ── 결제 대기 팝업 ── */
-function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error }) {
+function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error, receivedCash }) {
   const t = useT()
+  const hasCashInput = receivedCash != null
+
+  // 현금 수납액이 있으면 충족 시 자동 완료, 없으면 5초 시뮬레이션
   useEffect(() => {
-    const timer = setTimeout(() => onComplete?.(), 5000)
-    return () => clearTimeout(timer)
-  }, [])
+    if (hasCashInput) {
+      if (receivedCash >= total) onComplete?.()
+    } else {
+      const timer = setTimeout(() => onComplete?.(), 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [hasCashInput, receivedCash, total])
 
   return (
     <ModalBase onClose={onCancel} minHeight="clamp(440px,66vh,600px)">
@@ -685,6 +720,19 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children, err
             {(total || 0).toLocaleString()} {t('won')}
           </span>
         </div>
+
+        {hasCashInput && (
+          <div style={{
+            background: '#424242', borderRadius: 8,
+            padding: '14px 20px',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ color: '#ccc', fontSize: 14 }}>수납액</span>
+            <span style={{ color: receivedCash >= total ? '#66BB6A' : '#fff', fontSize: 22, fontWeight: 900 }}>
+              {receivedCash.toLocaleString()} {t('won')}
+            </span>
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {image

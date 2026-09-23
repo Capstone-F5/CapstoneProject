@@ -16,6 +16,7 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
+import { useSerial } from './hooks/useSerial'
 import { GestureUIProvider } from './contexts/GestureUIContext'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
@@ -157,6 +158,14 @@ function AppContent() {
   // MenuScreen 스와이프 / 모달 imperative 핸들러
   const menuSwipeRef = useRef(null)
   const menuModalRef = useRef(null)
+
+  // 시리얼 브릿지 — CartScreen이 등록, 시리얼 이벤트를 직접 처리
+  const serialRef = useRef(null)
+
+  useSerial({
+    onCard:  () => serialRef.current?.({ type: 'card' }),
+    onCash:  (amount) => serialRef.current?.({ type: 'cash', amount }),
+  })
 
   // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
   const screenVoiceRef    = useRef(null)
@@ -730,7 +739,7 @@ function AppContent() {
     start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
-    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
+    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} serialRef={serialRef} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
     cardPayment: <CardPaymentScreen {...props} />,
