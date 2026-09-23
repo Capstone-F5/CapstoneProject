@@ -38,7 +38,11 @@ async def get_cart_with_items(db: AsyncSession, session_id: str) -> Cart | None:
         select(Cart)
         .where(Cart.session_id == session_id)
         .where(Cart.status == "ACTIVE")
-        .options(selectinload(Cart.items).selectinload(CartItem.menu_item))
+        .options(
+            selectinload(Cart.items)
+            .selectinload(CartItem.menu_item)
+            .selectinload(MenuItem.options)
+        )
     )
     return result.scalar_one_or_none()
 

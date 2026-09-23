@@ -12,13 +12,23 @@ except ImportError:
     from gesture_classifier import predict_static, predict_dynamic
 
 # ── MediaPipe ────────────────────────────────────────────────────────────────
-hands = mp.solutions.hands.Hands(
-    static_image_mode=False,
-    max_num_hands=2,
-    model_complexity=1,
-    min_detection_confidence=0.6,
-    min_tracking_confidence=0.5,
-)
+# mediapipe 0.10.3x에서 레거시 solutions API가 제거되어 import 시점에 만들면
+# AttributeError로 모듈 전체가 죽는다. 랜드마크 기반 경로(detect_gesture_from_landmarks)는
+# mediapipe가 필요 없으므로, 이미지 기반 detect_gesture를 실제로 호출할 때만 생성한다.
+_hands = None
+
+
+def _get_hands():
+    global _hands
+    if _hands is None:
+        _hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            model_complexity=1,
+            min_detection_confidence=0.6,
+            min_tracking_confidence=0.5,
+        )
+    return _hands
 
 # ── EMA 스무딩 (전체 균등) ──────────────────────────────────────────────────
 # 0.55: 안정성과 반응성의 균형. tip만 빨리 해봤지만 포인터/스와이프 모두 흔들려서 통일.
@@ -267,7 +277,7 @@ def detect_gesture(frame):
     """서버 사이드 MediaPipe 처리 (테스트 스크립트용 — 백엔드에서는 더 이상 사용 안 함)."""
     try:
         rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = hands.process(rgb)
+        result = _get_hands().process(rgb)
 
         if not result.multi_hand_landmarks:
             _reset_state()

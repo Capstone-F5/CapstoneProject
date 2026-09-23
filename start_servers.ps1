@@ -22,9 +22,14 @@ Start-Process powershell `
 
 # 백엔드 준비 전에 Vite를 실행하면 최초 API 요청이 ECONNREFUSED가 된다.
 $backendReady = $false
-for ($attempt = 1; $attempt -le 20; $attempt++) {
+$backendHealthUrl = "http://127.0.0.1:8000/health"
+$backendStartupTimeoutSeconds = 120
+$backendStartupDeadline = (Get-Date).AddSeconds($backendStartupTimeoutSeconds)
+
+Write-Host "  Waiting for backend (up to $backendStartupTimeoutSeconds seconds)..."
+while ((Get-Date) -lt $backendStartupDeadline) {
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8000/health" -TimeoutSec 1 | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri $backendHealthUrl -TimeoutSec 2 | Out-Null
         $backendReady = $true
         break
     } catch {
@@ -34,7 +39,7 @@ for ($attempt = 1; $attempt -le 20; $attempt++) {
 
 if (-not $backendReady) {
     Write-Host ""
-    Write-Host "  Backend could not start on http://localhost:8000." -ForegroundColor Red
+    Write-Host "  Backend could not start within $backendStartupTimeoutSeconds seconds." -ForegroundColor Red
     Write-Host "  Check the backend PowerShell window for the error, then run this script again."
     exit 1
 }

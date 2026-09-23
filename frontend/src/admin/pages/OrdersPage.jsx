@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { fetchAdminOrders, updateOrderNote, updateOrderStatus } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
+import OrderNumber, { formatOrderNumber } from '../components/OrderNumber.jsx'
 
 const STATUS_FILTERS = [
   { key: 'incomplete', label: '미완료' },
@@ -120,7 +121,7 @@ function OrderNoteInput({ order, onSave }) {
         onChange={e => setNote(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') save() }}
         style={{ minWidth:0, width:'100%', padding:'5px 7px', border:'1px solid #ddd', borderRadius:'4px', fontSize:'12px' }}
-        aria-label={`주문 ${order.order_number} 비고`}
+        aria-label={`주문 ${formatOrderNumber(order.order_number)} 비고`}
       />
       <button type="button" className="chip" disabled={saving} onClick={save} style={{ padding:'4px 7px', fontSize:'11px', whiteSpace:'nowrap' }}>
         {saving ? '…' : '저장'}
@@ -201,7 +202,7 @@ function OrderDetail({ order, onClose, onStatusChange }) {
     <div className="detail-panel" style={{ marginLeft: '16px' }}>
       <button className="detail-panel-close" onClick={onClose}>×</button>
       <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'16px' }}>
-        <span className="order-number" style={{ fontSize:'16px' }}>#{order.order_number}</span>
+        <OrderNumber value={order.order_number} style={{ fontSize:'16px' }} />
         <StatusBadge value={order.status} />
       </div>
       <div style={{ fontSize:'13px', color:'#999', marginBottom:'20px' }}>
@@ -413,7 +414,7 @@ export default function OrdersPage() {
                     style={{ cursor:'pointer' }}
                     onClick={() => handleSelectOrder(order)}
                   >
-                    <td className="order-number">#{order.order_number}</td>
+                    <td><OrderNumber value={order.order_number} /></td>
                     <td>{order.order_type === 'EAT_IN' ? '매장' : '포장'}</td>
                     <td><StatusBadge value={order.status} /></td>
                     <td>

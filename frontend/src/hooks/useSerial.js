@@ -14,9 +14,10 @@ const CASH_MAP = {
 // getPorts() 순서: [지폐(9600), 동전(115200)] 고정 배치 기준
 const BAUD_RATES = [9600, 115200]
 
-async function readPortLines(port, onLine, activeRef) {
+async function readPortLines(port, onLine, activeRef, label) {
   const decoder = new TextDecoder()
   let buffer = ''
+  let rawLogged = 0
   while (activeRef.current) {
     let reader = null
     try {
@@ -24,7 +25,14 @@ async function readPortLines(port, onLine, activeRef) {
       while (activeRef.current) {
         const { value, done } = await reader.read()
         if (done) break
-        buffer += decoder.decode(value, { stream: true })
+        const chunk = decoder.decode(value, { stream: true })
+        // 보드레이트가 틀리면 깨진 바이트만 들어오고 개행이 없어 onLine이 영영 안 불린다.
+        // 원시 청크를 앞부분만 찍어 "데이터 없음"과 "데이터는 오는데 깨짐"을 구분한다.
+        if (rawLogged < 10) {
+          rawLogged++
+          console.log(`[Serial:${label}] raw`, JSON.stringify(chunk.slice(0, 80)))
+        }
+        buffer += chunk
         let nl
         while ((nl = buffer.indexOf('\n')) !== -1) {
           const line = buffer.slice(0, nl).replace(/\r$/, '').trim()
@@ -77,6 +85,8 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
 
   const activeRef    = useRef(false)
   const openPorts    = useRef(new Set())
+  const portBauds    = useRef(new Map())
+  const handlingRef  = useRef(new Set())
   const setConnected = useRef(null)
   const [connected, _setConnected] = useState(false)
   setConnected.current = _setConnected
@@ -91,17 +101,30 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
   }
 
   const connectPort = async (port, baudRate) => {
+    // StrictMode 이중 마운트나 requestPermission 재호출로 같은 포트를 동시에 열면
+    // 두 번째 open()이 InvalidStateError로 실패하고, 그 finally가 실제로 열려 있는
+    // 포트를 목록에서 지워 연결 상태가 OFF로 잘못 표시된다.
+    if (handlingRef.current.has(port)) return
+    handlingRef.current.add(port)
+    portBauds.current.set(port, baudRate)
+    // getPorts() 순서로 보드레이트를 배정하므로, 어느 장치가 어느 속도로 열렸는지
+    // USB vid/pid를 남겨야 매핑이 뒤바뀐 경우를 판별할 수 있다.
+    const info = port.getInfo?.() ?? {}
+    const label = `${info.usbVendorId?.toString(16) ?? '?'}:${info.usbProductId?.toString(16) ?? '?'}@${baudRate}`
     try {
       if (!port.readable) await port.open({ baudRate })
+      console.log(`[Serial] 포트 열림 ${label}`)
       markOpen(port)
       await readPortLines(
         port,
         (line) => dispatchLine(line, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt)),
         activeRef,
+        label,
       )
     } catch (err) {
-      console.warn(`[useSerial] 포트 열기 실패 (${baudRate}bps):`, err)
+      console.warn(`[useSerial] 포트 열기 실패 ${label} — ${err?.name}: ${err?.message}`)
     } finally {
+      handlingRef.current.delete(port)
       markClosed(port)
     }
   }
@@ -118,7 +141,8 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
     })
 
     const handleConnect = (e) => {
-      connectPort(e.target, 9600)
+      const baud = portBauds.current.get(e.target) ?? 9600
+      connectPort(e.target, baud)
     }
     navigator.serial.addEventListener('connect', handleConnect)
 

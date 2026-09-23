@@ -35,6 +35,10 @@ const GESTURE_LABELS = {
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
+// 접근 감지 서버 추론에 TFLite 런타임(ai-edge-litert 또는 tensorflow)이 필요한데
+// 현재 환경에 없어 /ws/approach가 "모델 로드 실패"로 즉시 닫힌다. 런타임을 설치하면 true로.
+const APPROACH_DETECTION = false
+
 // orderType 화면 진입 직후, 직전 화면의 OK 핀치 해제 과도기 동작을 매장/포장 선택으로
 // 오인식하지 않도록 무시하는 유예 구간(ms)
 const ORDER_TYPE_GESTURE_GRACE_MS = 900
@@ -120,8 +124,12 @@ function AppContent() {
   const handleApproachModeAction = useCallback((action) => {
     if (action === 'gesture') setGestureEnabled(true)
   }, [])
+  // 물리 카메라가 1대뿐이라 접근 감지와 제스처 인식이 동시에 getUserMedia를 열면
+  // 나중에 연 쪽이 NotReadableError로 실패한다. 대기 화면에서는 접근 감지만,
+  // 주문에 들어가면 제스처 인식만 카메라를 잡도록 단계를 나눈다.
+  const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen
   const { notifyUserInput } = useApproachDetector({
-    enabled: !chatOpen,
+    enabled: approachActive,
     onModeAction: handleApproachModeAction,
   })
   // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
@@ -458,7 +466,7 @@ function AppContent() {
   useGesture({
     onPointer:    handlePointer,
     onGesture:    handleGesture,
-    enabled:      gestureEnabled,
+    enabled:      gestureEnabled && !approachActive,
     pipCanvasRef: gestureEnabled && pipEnabled ? pipCanvasRef : null,
   })
 
