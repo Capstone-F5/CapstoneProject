@@ -106,7 +106,8 @@ function AppContent() {
     return v === null ? true : v === 'true'
   })
   const [pipEnabled, setPipEnabled] = useState(() => {
-    return localStorage.getItem('pipEnabled') === 'true'
+    const v = localStorage.getItem('pipEnabled')
+    return v === null ? true : v === 'true'
   })
   useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
   useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])

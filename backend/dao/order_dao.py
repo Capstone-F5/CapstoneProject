@@ -1,3 +1,4 @@
+from datetime import datetime, date, time as _time
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -15,8 +16,11 @@ async def create_order_from_cart(
     points_earned: int,
     user_id: str | None = None,
 ) -> Order:
-    # 주문번호: 당일 순번 (1~999)
-    count_result = await db.execute(select(func.count(Order.id)))
+    # 주문번호: 당일 순번 (1~999) — 날짜 기준 초기화
+    today_start = datetime.combine(date.today(), _time.min)
+    count_result = await db.execute(
+        select(func.count(Order.id)).where(Order.created_at >= today_start)
+    )
     order_num = (count_result.scalar() or 0) + 1
 
     order = Order(

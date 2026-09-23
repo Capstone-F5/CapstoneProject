@@ -94,12 +94,12 @@ export default function SingleSetModal({ item, onSelect, onClose, setSurcharge, 
 
 function ChoiceCard({ number, image, alt, price, discountedPrice, kcal, label, won, onClick }) {
   return (
-    <div style={{ flex: 1, position: 'relative' }}>
+    <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
       <HandBadge number={number} />
       <button
         onClick={onClick}
         style={{
-          width: '100%', background: '#fff', border: 'none', borderRadius: 14,
+          flex: 1, width: '100%', background: '#fff', border: 'none', borderRadius: 14,
           overflow: 'hidden', cursor: 'pointer',
           boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
           display: 'flex', flexDirection: 'column', padding: 0,
@@ -111,16 +111,15 @@ function ChoiceCard({ number, image, alt, price, discountedPrice, kcal, label, w
           style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
         />
         <div style={{ padding: '10px 8px 14px', textAlign: 'center' }}>
-          {discountedPrice != null && discountedPrice < price ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 2 }}>
-              <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{price.toLocaleString()} {won}</span>
-              <span style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#e44' }}>{discountedPrice.toLocaleString()} {won}</span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: '#1a1a1a', marginBottom: 2 }}>
+          {/* 항상 두 줄 공간 확보 → 단품/세트 높이 통일 */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 2, minHeight: 36 }}>
+            <span style={{ fontSize: 12, color: discountedPrice != null && discountedPrice < price ? '#aaa' : 'transparent', textDecoration: 'line-through' }}>
               {price.toLocaleString()} {won}
-            </div>
-          )}
+            </span>
+            <span style={{ fontSize: 'clamp(13px, 3.8vw, 15px)', fontWeight: 900, color: discountedPrice != null && discountedPrice < price ? '#e44' : '#1a1a1a' }}>
+              {(discountedPrice != null && discountedPrice < price ? discountedPrice : price).toLocaleString()} {won}
+            </span>
+          </div>
           <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
             {kcal != null ? `${kcal} kcal` : '- kcal'}
           </div>

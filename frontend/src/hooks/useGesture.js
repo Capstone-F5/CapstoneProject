@@ -766,7 +766,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         }
 
         const { Hands } = await import('@mediapipe/hands')
-        const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
+        // CDN 의존성 제거: public/mediapipe-hands/ 에 복사된 로컬 바이너리 사용.
+        // Pi4B 환경에서 CDN 지연/차단 시 WASM 로딩 실패 문제 해결.
+        const MP_BASE = '/mediapipe-hands/'
         hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
         hands.setOptions({
           maxNumHands:            1,

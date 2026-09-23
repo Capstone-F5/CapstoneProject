@@ -185,8 +185,13 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
     final_amount = max(Decimal("0"), subtotal - discount_amount - Decimal(points_to_use))
     points_earned = int(final_amount * Decimal("0.05"))
 
-    # 6. 주문번호 생성 (당일 순번)
-    count_result = await db.execute(sa_select(func.count(Order.id)))
+    # 6. 주문번호 생성 (당일 순번, 날짜 기준 초기화)
+    today_start = datetime(
+        *_date.today().timetuple()[:3]  # year, month, day
+    )
+    count_result = await db.execute(
+        sa_select(func.count(Order.id)).where(Order.created_at >= today_start)
+    )
     order_num = (count_result.scalar() or 0) + 1
 
     order = Order(

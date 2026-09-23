@@ -21,37 +21,48 @@ def discount_matches_item(discount, *, menu_item_id: str, category_id: str) -> b
     )
 
 
+def _discount_amount(original: Decimal, discount) -> Decimal:
+    """단일 할인의 할인 금액을 계산한다."""
+    if discount.discount_type == "PERCENT":
+        return (original * Decimal(str(discount.discount_value)) / Decimal("100")).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    return min(original, Decimal(str(discount.discount_value)))
+
+
 def calculate_final_price(
     original_price: Decimal | int | str,
     discounts: Iterable | None,
 ) -> dict:
-    """Apply each eligible discount to the current price in sequence."""
+    """중복 할인이 있을 때 가장 높은 할인 하나만 적용한다."""
     original = Decimal(str(original_price))
-    current = original
-    applied = []
+    discount_list = list(discounts or ())
 
-    for discount in discounts or ():
-        if discount.discount_type == "PERCENT":
-            current = (current * (Decimal("1") - Decimal(str(discount.discount_value)) / Decimal("100"))).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-        else:
-            current = max(Decimal("0"), current - Decimal(str(discount.discount_value)))
-        applied.append(
-            {
-                "id": discount.id,
-                "name": discount.name_ko,
-                "discount_type": discount.discount_type,
-                "discount_value": Decimal(str(discount.discount_value)),
-            }
-        )
+    if not discount_list:
+        return {
+            "original_price": original,
+            "discount_amount": Decimal("0"),
+            "final_price": original,
+            "applied_discounts": [],
+        }
 
-    final = max(Decimal("0"), current).quantize(Decimal("0.01"))
+    # 할인 금액이 가장 큰 것 하나만 적용
+    best = max(discount_list, key=lambda d: _discount_amount(original, d))
+    amount = _discount_amount(original, best)
+    final = max(Decimal("0"), original - amount).quantize(Decimal("0.01"))
+
     return {
         "original_price": original,
         "discount_amount": original - final,
         "final_price": final,
-        "applied_discounts": applied,
+        "applied_discounts": [
+            {
+                "id": best.id,
+                "name": best.name_ko,
+                "discount_type": best.discount_type,
+                "discount_value": Decimal(str(best.discount_value)),
+            }
+        ],
     }
 
 

@@ -12,8 +12,7 @@ import useT from '../i18n/useT'
 const COLS = 3
 const GRID_GAP = 9
 
-// 아이템에 적용되는 모든 할인을 합산해 할인된 단가 정보를 반환한다.
-// 할인이 없으면 null 반환.
+// 단품 할인 정보 계산 (서버 제공 finalPrice 기준)
 function getServerDiscount(item) {
   const originalPrice = Number(item.originalPrice ?? item.price ?? item.unitPrice)
   const finalPrice = Number(item.finalPrice ?? item.price ?? item.unitPrice)
@@ -23,6 +22,27 @@ function getServerDiscount(item) {
     discountedPrice: finalPrice,
     savings: originalPrice - finalPrice,
     label: label?.discount_type === 'PERCENT' ? `-${label.discount_value}%` : '',
+  }
+}
+
+// 세트 할인 정보 계산: 단품과 같은 할인율/금액을 setPrice에 적용
+function getSetDiscount(item, setSurcharge) {
+  const originalPrice = Number(item.originalPrice ?? item.price ?? item.unitPrice)
+  const finalPrice = Number(item.finalPrice ?? item.price ?? item.unitPrice)
+  if (finalPrice >= originalPrice) return null
+  const label = item.appliedDiscounts?.[0]
+  if (!label) return null
+  const setPrice = Number(item.price ?? item.unitPrice) + (setSurcharge ?? 0)
+  let setFinal
+  if (label.discount_type === 'PERCENT') {
+    setFinal = Math.round(setPrice * (1 - Number(label.discount_value) / 100))
+  } else {
+    setFinal = Math.max(0, setPrice - Number(label.discount_value))
+  }
+  return {
+    discountedPrice: setFinal,
+    savings: setPrice - setFinal,
+    label: label.discount_type === 'PERCENT' ? `-${label.discount_value}%` : '',
   }
 }
 
@@ -524,7 +544,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           onClose={closeModal}
           setSurcharge={setSurcharge}
           singleDiscount={getServerDiscount(modalItem)}
-          setDiscount={null}
+          setDiscount={getSetDiscount(modalItem, setSurcharge)}
         />
       )}
 
