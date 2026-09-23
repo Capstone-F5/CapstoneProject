@@ -163,7 +163,7 @@ function AppContent() {
   // 시리얼 브릿지 — CartScreen이 등록, 시리얼 이벤트를 직접 처리
   const serialRef = useRef(null)
 
-  const { connected: serialConnected } = useSerial({
+  const { connected: serialConnected, requestPermission: serialRequestPermission } = useSerial({
     onCard:  () => serialRef.current?.({ type: 'card' }),
     onCash:  (amount) => serialRef.current?.({ type: 'cash', amount }),
   })
@@ -935,6 +935,13 @@ function AppContent() {
             ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
+          {navigator?.serial && (
+            <ControlText
+              onClick={serialRequestPermission}
+              ko={`시리얼 ${serialConnected ? 'ON' : 'OFF'}`}
+              en={`Serial ${serialConnected ? 'ON' : 'OFF'}`}
+            />
+          )}
         </div>
       </GestureUIProvider>
   )

@@ -22,11 +22,12 @@ async def create_order_from_cart(
         select(func.count(Order.id)).where(Order.created_at >= today_start)
     )
     order_num = (count_result.scalar() or 0) + 1
+    order_number_str = f"{date.today().strftime('%Y%m%d')}{order_num:03d}"
 
     order = Order(
         user_id=user_id,
         cart_id=cart_id,
-        order_number=str(order_num),
+        order_number=order_number_str,
         order_type=order_type,
         subtotal=subtotal,
         discount_amount=discount_amount,

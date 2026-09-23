@@ -7,7 +7,8 @@ const TOTAL_SECONDS = 10
 
 export default function CompletionScreen({ orderNum, nav, narrate }) {
   const t = useT()
-  const numStr = String(orderNum ?? 0).padStart(3, '0')
+  // DB에 YYYYMMDDNNN 형식으로 저장 — 끝 3자리만 고객 표시용 주문 번호로 사용
+  const numStr = String(orderNum ?? 0).slice(-3).padStart(3, '0')
   const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS)
 
   useEffect(() => {

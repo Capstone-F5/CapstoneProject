@@ -193,11 +193,13 @@ async def create_order(body: OrderIn, db: AsyncSession = Depends(get_session)):
         sa_select(func.count(Order.id)).where(Order.created_at >= today_start)
     )
     order_num = (count_result.scalar() or 0) + 1
+    # YYYYMMDDNNN 형식으로 저장 — order_number UNIQUE 제약이 날짜별 초기화와 충돌하는 것을 방지
+    order_number_str = f"{_date.today().strftime('%Y%m%d')}{order_num:03d}"
 
     order = Order(
         user_id=user.id if user else None,
         cart_id=cart.id,
-        order_number=str(order_num),
+        order_number=order_number_str,
         order_type=body.order_type,
         status="RECEIVED",
         user_coupon_id=user_coupon_id,

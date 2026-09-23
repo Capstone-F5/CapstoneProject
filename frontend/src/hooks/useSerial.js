@@ -43,6 +43,7 @@ async function readPortLines(port, onLine, activeRef) {
 }
 
 function dispatchLine(line, onCard, onCash) {
+  console.log('[Serial] received:', JSON.stringify(line))
   if (line === 'INPUT=CARD') {
     onCard?.()
     return
@@ -50,9 +51,12 @@ function dispatchLine(line, onCard, onCash) {
   if (line.startsWith('INPUT=')) {
     const key = line.slice(6)
     const amount = CASH_MAP[key]
-    if (amount != null) onCash?.(amount)
+    if (amount != null) {
+      onCash?.(amount)
+    } else {
+      console.warn('[Serial] 알 수 없는 INPUT 키:', key, '— CASH_MAP:', Object.keys(CASH_MAP).join(', '))
+    }
   }
-  // RESET COMPLETE, TOTAL:*, --- 등은 무시
 }
 
 /**

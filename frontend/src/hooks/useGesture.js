@@ -721,11 +721,15 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
     }
 
+    let sendErrCount = 0
+    let sendCooldownUntil = 0
+
     const loop = () => {
       if (!active) return
       const now   = performance.now()
       const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / MAX_FPS
+                    now - lastSent >= 1000 / MAX_FPS &&
+                    now >= sendCooldownUntil
       if (ready) {
         inflight = true
         lastSent = now
@@ -735,10 +739,20 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           console.warn('[useGesture] hands.send 타임아웃 — inflight 강제 해제')
           inflight = false
         }, 3000)
-        hands.send({ image: video }).catch(err => {
+        hands.send({ image: video }).then(() => {
+          // 성공하면 에러 카운터 리셋
+          sendErrCount = 0
+        }).catch(err => {
           clearTimeout(inflightWatchdog)
           inflight = false
-          console.warn('[useGesture] hands.send 오류:', err)
+          sendErrCount++
+          // 지수 백오프: 500ms → 1s → 2s → 4s → 최대 15s
+          const delay = Math.min(500 * Math.pow(2, sendErrCount - 1), 15000)
+          sendCooldownUntil = performance.now() + delay
+          console.warn(
+            `[useGesture] hands.send 오류 #${sendErrCount} (${(delay/1000).toFixed(1)}s 후 재시도):`,
+            err?.message ?? String(err)
+          )
         })
       }
       logPerformance(now)

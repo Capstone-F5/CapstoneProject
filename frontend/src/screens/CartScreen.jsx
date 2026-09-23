@@ -243,7 +243,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
   const automaticDiscount = discountPreview?.discountAmount ?? 0
   const couponDiscount = couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0
-  const finalDisplayAmount = Math.max(0, total - automaticDiscount - couponDiscount)
+  // total은 이미 finalPrice(할인가) 합산 — automaticDiscount를 추가로 빼면 이중 할인됨
+  const finalDisplayAmount = Math.max(0, total - couponDiscount)
 
   const handleComplete = async () => {
     if (isCompletingRef.current) return

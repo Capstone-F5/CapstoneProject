@@ -18,7 +18,7 @@ const BG_INTERVAL_MS = 5000
 const BG_FADE_MS = 1200
 
 const FULLSCREEN_CLICKS = 10
-const FULLSCREEN_WINDOW_MS = 3000
+const FULLSCREEN_WINDOW_MS = 2000   // 2초 안에 10회 — 빠르게 타다다다닥
 
 export default function StartScreen({ nav }) {
   const { locale, setLocale } = useLocale()
@@ -27,7 +27,8 @@ export default function StartScreen({ nav }) {
   const [bgIndex, setBgIndex] = useState(0)
   const fsClicksRef = useRef([])
 
-  const handleFsAreaClick = () => {
+  const handleFsAreaClick = (e) => {
+    e.stopPropagation()   // 부모 onClick(nav 이동) 차단
     const now = Date.now()
     fsClicksRef.current = fsClicksRef.current.filter(t => now - t < FULLSCREEN_WINDOW_MS)
     fsClicksRef.current.push(now)
