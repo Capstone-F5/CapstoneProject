@@ -43,6 +43,9 @@ export default defineConfig(({ mode }) => {
       // 이 패키지는 ESM(ort.bundle.min.mjs)이므로 node_modules 직접 서빙 가능.
       exclude: ['onnxruntime-web'],
     },
+    worker: {
+      format: 'es',
+    },
     build: {
       rollupOptions: {
         // 회원가입은 키오스크 주문 SPA와 별개의 정적 페이지로 따로 빌드된다(signup.html).

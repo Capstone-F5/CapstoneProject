@@ -1,13 +1,11 @@
 import { useEffect, useRef } from 'react'
 
 // ── 카메라 설정 ──────────────────────────────────────────────────────────────
-const CAM_W   = 640
-const CAM_H   = 480
-const MAX_FPS = 20
+const CAM_W   = 480
+const CAM_H   = 360
+const MAX_FPS = 15
 // 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
 const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
-
-const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
 
 const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
@@ -438,7 +436,11 @@ async function openCamera() {
   for (let attempt = 1; attempt <= CAM_RETRY_COUNT; attempt++) {
     try {
       return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: CAM_W }, height: { ideal: CAM_H }, frameRate: { ideal: 30 } },
+        video: {
+          width:     { ideal: CAM_W, max: CAM_W },
+          height:    { ideal: CAM_H, max: CAM_H },
+          frameRate: { ideal: MAX_FPS, max: MAX_FPS },
+        },
       })
     } catch (err) {
       const retryable = err.name === 'NotReadableError' || err.name === 'AbortError'
@@ -469,11 +471,43 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     let stream   = null
     let video    = null
-    let hands    = null
     let rafId    = null
     let active   = true
     let inflight = false
     let lastSent = 0
+    let cameraSettings = null
+    const perf = {
+      windowStarted: performance.now(), sent: 0, results: 0,
+      latencyTotal: 0, latencyMax: 0, sendStarted: 0,
+    }
+
+    const logPerformance = (now = performance.now()) => {
+      const elapsed = now - perf.windowStarted
+      if (elapsed < 5000) return
+      const seconds = elapsed / 1000
+      const avgLatency = perf.results ? perf.latencyTotal / perf.results : 0
+      const metrics = {
+        targetFps: MAX_FPS,
+        camera: cameraSettings,
+        sentFps: +(perf.sent / seconds).toFixed(1),
+        resultFps: +(perf.results / seconds).toFixed(1),
+        avgInferenceMs: +avgLatency.toFixed(1),
+        maxInferenceMs: +perf.latencyMax.toFixed(1),
+        inflight,
+      }
+      console.info('[useGesture:perf]', metrics)
+      fetch('/api/diagnostics/gesture-performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metrics),
+        keepalive: true,
+      }).catch(err => console.warn('[useGesture:perf] server log failed:', err))
+      perf.windowStarted = now
+      perf.sent = 0
+      perf.results = 0
+      perf.latencyTotal = 0
+      perf.latencyMax = 0
+    }
     let camAR    = AR_REF   // 카메라 실제 비율 (열린 후 갱신)
 
     // ── 포인터 상태 ──────────────────────────────────────────────────────────
@@ -496,8 +530,6 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     const handleResults = (results) => {
       if (!active) return
-      clearTimeout(inflightWatchdog)
-      inflight = false
 
       const lms    = results.multiHandLandmarks || []
       const handed = results.multiHandedness     || []
@@ -678,27 +710,32 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
     }
 
-    // inflight 워치독
-    let inflightWatchdog = null
+    // ── Worker 기반 MediaPipe 루프 ────────────────────────────────────────────
+    let worker   = null
+    let frameCanvas = null
+    let frameCtx    = null
+    let workerReady = false
 
     const loop = () => {
       if (!active) return
-      const now   = performance.now()
-      const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / MAX_FPS
-      if (ready) {
-        inflight = true
-        lastSent = now
-        inflightWatchdog = setTimeout(() => {
-          console.warn('[useGesture] hands.send 타임아웃 — inflight 강제 해제')
-          inflight = false
-        }, 3000)
-        hands.send({ image: video }).catch(err => {
-          clearTimeout(inflightWatchdog)
-          inflight = false
-          console.warn('[useGesture] hands.send 오류:', err)
-        })
+      const now = performance.now()
+      if (!inflight && workerReady && video && video.readyState >= 2 &&
+          now - lastSent >= 1000 / MAX_FPS) {
+        const vw = video.videoWidth  || CAM_W
+        const vh = video.videoHeight || CAM_H
+        if (frameCanvas.width !== vw || frameCanvas.height !== vh) {
+          frameCanvas.width  = vw
+          frameCanvas.height = vh
+        }
+        frameCtx.drawImage(video, 0, 0)
+        const bitmap = frameCanvas.transferToImageBitmap()
+        inflight     = true
+        lastSent     = now
+        perf.sent++
+        perf.sendStarted = now
+        worker.postMessage({ bitmap, width: vw, height: vh }, [bitmap])
       }
+      logPerformance(now)
       rafId = requestAnimationFrame(loop)
     }
 
@@ -706,6 +743,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       try {
         stream = await openCamera()
         if (!active) { stream.getTracks().forEach(t => t.stop()); return }
+        cameraSettings = stream.getVideoTracks()[0]?.getSettings?.() ?? null
+        console.info('[useGesture] camera settings', cameraSettings)
 
         video = document.createElement('video')
         video.srcObject = stream
@@ -715,21 +754,39 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         if (!active) return
         if (videoRef) videoRef.current = video
 
-        // 실제 카메라 비율 측정 — 이후 모든 제스처 계산에 적용
         if (video.videoWidth && video.videoHeight) {
           camAR = video.videoWidth / video.videoHeight
           console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
         }
 
-        const { Hands } = await import('@mediapipe/hands')
-        hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
-        hands.setOptions({
-          maxNumHands:            2,
-          modelComplexity:        0,
-          minDetectionConfidence: 0.6,
-          minTrackingConfidence:  0.5,
-        })
-        hands.onResults(handleResults)
+        frameCanvas = document.createElement('canvas')
+        frameCanvas.width  = CAM_W
+        frameCanvas.height = CAM_H
+        frameCtx = frameCanvas.getContext('2d')
+
+        worker = new Worker(
+          new URL('./gestureWorker.js', import.meta.url),
+          { type: 'module' }
+        )
+        worker.onmessage = (e) => {
+          if (e.data?.type === 'ready') {
+            workerReady = true
+            return
+          }
+          inflight = false
+          const resultNow = performance.now()
+          const latency   = perf.sendStarted ? resultNow - perf.sendStarted : 0
+          perf.results++
+          perf.latencyTotal += latency
+          perf.latencyMax    = Math.max(perf.latencyMax, latency)
+          logPerformance(resultNow)
+          handleResults(e.data)
+        }
+        worker.onerror = (err) => {
+          console.error('[useGesture] Worker 오류:', err)
+          inflight = false
+        }
+
         loop()
 
       } catch (err) {
@@ -742,11 +799,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
-      clearTimeout(inflightWatchdog)
       clearTimeout(hideTimers.Left)
       clearTimeout(hideTimers.Right)
       if (rafId) cancelAnimationFrame(rafId)
-      try { hands?.close?.() } catch {}
+      worker?.terminate()
       stream?.getTracks().forEach(t => t.stop())
       if (videoRef) videoRef.current = null
     }
