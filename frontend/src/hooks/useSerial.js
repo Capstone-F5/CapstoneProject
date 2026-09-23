@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const CASH_MAP = {
   '1000WON':  1000,
@@ -55,24 +55,15 @@ function dispatchLine(line, onCard, onCash) {
   // RESET COMPLETE, TOTAL:*, --- 등은 무시
 }
 
-async function openAndRead(port, baudRate, onCard, onCash, activeRef) {
-  try {
-    if (!port.readable) await port.open({ baudRate })
-    await readPortLines(port, (line) => dispatchLine(line, onCard, onCash), activeRef)
-  } catch (err) {
-    console.warn(`[useSerial] 포트 열기 실패 (${baudRate}bps):`, err)
-  }
-}
-
 /**
  * Arduino 시리얼 입력 훅.
  * - 최초 1회: requestPermission()을 사용자 제스처(버튼 클릭 등)로 호출해 포트 권한 부여
  * - 이후 자동: getPorts()로 기허가 포트에 재연결
  *
- * @param {() => void}       opts.onCard  INPUT=CARD 수신 시 호출
- * @param {(n: number) => void} opts.onCash INPUT=*WON 수신 시 금액과 함께 호출
- * @param {boolean}          opts.enabled
- * @returns {{ requestPermission: () => Promise<void> }}
+ * @param {() => void}          opts.onCard  INPUT=CARD 수신 시 호출
+ * @param {(n: number) => void} opts.onCash  INPUT=*WON 수신 시 금액과 함께 호출
+ * @param {boolean}             opts.enabled
+ * @returns {{ requestPermission: () => Promise<void>, connected: boolean }}
  */
 export function useSerial({ onCard, onCash, enabled = true } = {}) {
   const onCardRef = useRef(onCard)
@@ -80,7 +71,36 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
   useEffect(() => { onCardRef.current = onCard }, [onCard])
   useEffect(() => { onCashRef.current = onCash }, [onCash])
 
-  const activeRef = useRef(false)
+  const activeRef    = useRef(false)
+  const openPorts    = useRef(new Set())
+  const setConnected = useRef(null)
+  const [connected, _setConnected] = useState(false)
+  setConnected.current = _setConnected
+
+  const markOpen = (port) => {
+    openPorts.current.add(port)
+    setConnected.current(true)
+  }
+  const markClosed = (port) => {
+    openPorts.current.delete(port)
+    if (openPorts.current.size === 0) setConnected.current(false)
+  }
+
+  const connectPort = async (port, baudRate) => {
+    try {
+      if (!port.readable) await port.open({ baudRate })
+      markOpen(port)
+      await readPortLines(
+        port,
+        (line) => dispatchLine(line, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt)),
+        activeRef,
+      )
+    } catch (err) {
+      console.warn(`[useSerial] 포트 열기 실패 (${baudRate}bps):`, err)
+    } finally {
+      markClosed(port)
+    }
+  }
 
   useEffect(() => {
     if (!enabled || !navigator?.serial) return
@@ -89,13 +109,12 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
     navigator.serial.getPorts().then(ports => {
       ports.forEach((port, i) => {
         const baud = BAUD_RATES[i] ?? BAUD_RATES[BAUD_RATES.length - 1]
-        openAndRead(port, baud, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt), activeRef)
+        connectPort(port, baud)
       })
     })
 
     const handleConnect = (e) => {
-      // 새로 꽂힌 포트는 일단 9600으로 시도
-      openAndRead(e.target, 9600, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt), activeRef)
+      connectPort(e.target, 9600)
     }
     navigator.serial.addEventListener('connect', handleConnect)
 
@@ -103,7 +122,7 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
       activeRef.current = false
       navigator.serial.removeEventListener('connect', handleConnect)
     }
-  }, [enabled])
+  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const requestPermission = async () => {
     if (!navigator?.serial) {
@@ -111,16 +130,14 @@ export function useSerial({ onCard, onCash, enabled = true } = {}) {
       return
     }
     try {
-      // 지폐(9600) 먼저
       const port1 = await navigator.serial.requestPort()
-      openAndRead(port1, 9600, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt), activeRef)
-      // 동전(115200)
+      connectPort(port1, 9600)
       const port2 = await navigator.serial.requestPort()
-      openAndRead(port2, 115200, () => onCardRef.current?.(), (amt) => onCashRef.current?.(amt), activeRef)
+      connectPort(port2, 115200)
     } catch (err) {
       if (err.name !== 'NotFoundError') console.warn('[useSerial] 포트 선택 취소 또는 오류:', err)
     }
   }
 
-  return { requestPermission }
+  return { requestPermission, connected }
 }

@@ -162,7 +162,7 @@ function AppContent() {
   // 시리얼 브릿지 — CartScreen이 등록, 시리얼 이벤트를 직접 처리
   const serialRef = useRef(null)
 
-  useSerial({
+  const { connected: serialConnected } = useSerial({
     onCard:  () => serialRef.current?.({ type: 'card' }),
     onCash:  (amount) => serialRef.current?.({ type: 'cash', amount }),
   })
@@ -739,7 +739,7 @@ function AppContent() {
     start:       <StartScreen {...props} />,
     orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
-    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} serialRef={serialRef} />,
+    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} serialRef={serialRef} serialConnected={serialConnected} />,
     payment:     <PaymentScreen {...props} />,
     complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
     cardPayment: <CardPaymentScreen {...props} />,
