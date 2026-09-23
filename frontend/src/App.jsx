@@ -737,11 +737,11 @@ function AppContent() {
 
   const screens = {
     start:       <StartScreen {...props} />,
-    orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
+    orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} narrate={!chatOpen} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
     cart:        <CartScreen {...props} voiceRef={screenVoiceRef} serialRef={serialRef} serialConnected={serialConnected} />,
     payment:     <PaymentScreen {...props} />,
-    complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
+    complete:    <CompletionScreen orderNum={orderNum} nav={nav} narrate={!chatOpen} />,
     cardPayment: <CardPaymentScreen {...props} />,
     payPayment:  <PayPaymentScreen {...props} />,
     cashPayment: <CashPaymentScreen {...props} />,

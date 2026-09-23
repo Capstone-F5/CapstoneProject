@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import Logo from '../components/Logo'
+import { playTTS } from '../utils/tts'
 import { lookupCustomer } from '../services/pointsService'
 import { createOrder, validateCoupon, previewDiscount } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
@@ -41,7 +42,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, serialRef, serialConnected = false, activeDiscounts = [] }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, voiceRef, serialRef, serialConnected = false, activeDiscounts = [] }) {
   const t = useT()
   const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
@@ -274,6 +275,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
   handleCompleteRef.current = handleComplete
+
+  // 터치 플로우 팝업 TTS 내레이션 (음성인식이 꺼진 경우에만)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showOrderTypeConfirm && !chatOpen) playTTS('식사 장소를 확인해 주세요') }, [showOrderTypeConfirm])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showPointPrompt && !chatOpen) playTTS('포인트를 적립하시겠습니까') }, [showPointPrompt])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showPaymentPopup && !chatOpen) playTTS('결제 수단을 선택해 주세요') }, [showPaymentPopup])
 
   return (
     <div style={{
