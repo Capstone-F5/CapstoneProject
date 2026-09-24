@@ -169,8 +169,8 @@ function _isOpenForSwipe(lm) {
 }
 
 // FSM debounce
-const G_CONFIRM     = 3
-const G_CONFIRM_OK  = 4
+const G_CONFIRM     = 2
+const G_CONFIRM_OK  = 3
 const G_COOLDOWN    = 800
 const G_COOLDOWN_OK = 600
 
