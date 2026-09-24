@@ -51,11 +51,14 @@ export async function getCachedAudio(text) {
     return audio
   }
 
-  // 파일 존재 여부 확인 (HEAD 요청)
+  // 파일 존재 여부 확인 (HEAD 요청).
+  // 상태 코드만 보면 안 된다 — SPA fallback이 없는 경로에도 index.html을 200으로
+  // 돌려주므로, HTML을 가리키는 Audio가 만들어져 NotSupportedError로 무음이 된다.
   try {
     const url = `${AUDIO_BASE}${filename}`
     const res = await fetch(url, { method: 'HEAD' })
     if (!res.ok) return null
+    if (!(res.headers.get('content-type') ?? '').startsWith('audio/')) return null
     _urlCache.set(filename, url)
     return new Audio(url)
   } catch {

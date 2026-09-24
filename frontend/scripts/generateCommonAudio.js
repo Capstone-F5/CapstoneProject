@@ -26,6 +26,13 @@ const PHRASES = {
   'anything_else.mp3':     '다른 도움이 필요하신가요?',
   'select_menu.mp3':       '메뉴를 선택해 주세요.',
   'say_quantity.mp3':      '수량을 말씀해 주세요.',
+  // 터치 플로우 내레이션 — ttsCache.js의 COMMON_PHRASES와 짝을 맞춰야 한다.
+  // 여기에 빠지면 파일이 생성되지 않아 해당 문구만 무음이 된다.
+  'select_order_type.mp3':  '식사하실 장소를 선택해 주세요.',
+  'select_menu_order.mp3':  '주문하실 메뉴를 선택해 주세요.',
+  'confirm_order_type.mp3': '식사 장소를 확인해 주세요.',
+  'ask_points.mp3':         '포인트를 적립하시겠습니까?',
+  'select_payment.mp3':     '결제 수단을 선택해 주세요.',
 }
 
 mkdirSync(OUTPUT_DIR, { recursive: true })

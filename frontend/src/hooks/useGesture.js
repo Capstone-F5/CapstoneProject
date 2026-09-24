@@ -21,11 +21,16 @@ const POINTER_MIRROR_X   = false
 const EXTENSION_MARGIN_STRICT = 1.15
 const EXTENSION_MARGIN_THUMB  = 1.05
 const EXTENSION_MARGIN_LOOSE  = 1.05  // 스와이프 open-hand 판정
-// 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식
-const EXTENSION_MARGIN_POINT       = 1.08
+// 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식.
+// 화면을 가리키면 검지가 카메라 쪽을 향해 2D 투영에서 짧아 보인다(단축). 손목 기준
+// 거리 비율로 재는 방식이라 이때 값이 크게 떨어지므로, 진입 문턱을 낮게 잡는다.
+const EXTENSION_MARGIN_POINT       = 1.04
+// 다른 손가락 "안 펴짐" 판정 — 느슨하게 쥔 주먹의 중지/약지가 펴진 걸로 읽히면
+// 검지를 아무리 잘 펴도 포인팅으로 인정되지 않는다. 그래서 STRICT보다 관대하게.
+const EXTENSION_MARGIN_FOLD_ENTER  = 1.17
 // 히스테리시스: 이미 가리키는 중이면 더 관대 (잠깐 굽혀도 유지)
 const EXTENSION_MARGIN_POINT_HOLD  = 1.00
-const EXTENSION_MARGIN_FOLD_HOLD   = 1.18  // 다른 손가락 "안 펴짐" 판정도 완화
+const EXTENSION_MARGIN_FOLD_HOLD   = 1.22  // 다른 손가락 "안 펴짐" 판정도 완화
 
 function _dist2d(a, b) {
   if (!a || !b) return Number.NaN
@@ -56,12 +61,18 @@ function _isValidLandmarks(lm) {
 }
 
 // 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
-// 카메라 비율에 무관하게 비교하려면 x를 보정해야 하지만,
-// 여기선 단순 임계값 비교이므로 2D 그대로 사용
 const MIN_PALM_SIZE = 0.10  // 이 이하면 너무 멀리 있는 손으로 간주
 
-function _palmSize(lm) {
-  return _dist2d(lm[0], lm[9])
+// 정규화 좌표의 x는 화면 비율만큼 압축되어 있다. 보정하지 않으면 손을 옆으로 눕혔을 때
+// 같은 거리에서도 크기가 작게 측정되어, 회전만으로 임계값 아래로 떨어진다.
+function _palmSize(lm, camAR = 1) {
+  const a = lm[0], b = lm[9]
+  if (!a || !b) return Number.NaN
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) ||
+      !Number.isFinite(b.x) || !Number.isFinite(b.y)) return Number.NaN
+  const dx = (a.x - b.x) * camAR
+  const dy = a.y - b.y
+  return Math.sqrt(dx * dx + dy * dy)
 }
 
 function _isFingerExtended(lm, tipIdx, pipIdx, margin = EXTENSION_MARGIN_STRICT) {
@@ -82,21 +93,21 @@ function _isThumbExtended(lm) {
 // 커서 활성 A: 검지만 핀 (엄지 무관)
 function _isPointing(lm) {
   return (
-     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
-    !_isFingerExtended(lm, 12, 10) &&
-    !_isFingerExtended(lm, 16, 14) &&
-    !_isFingerExtended(lm, 20, 18)
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT)      &&
+    !_isFingerExtended(lm, 12, 10, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 16, 14, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 20, 18, EXTENSION_MARGIN_FOLD_ENTER)
   )
 }
 
 // 커서 활성 B: 엄지+검지 동시에 핀 (핀치 전 준비 자세)
 function _isThumbIndexOpen(lm) {
   return (
-    _isThumbExtended(lm)                                  &&
-     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
-    !_isFingerExtended(lm, 12, 10)                        &&
-    !_isFingerExtended(lm, 16, 14)                        &&
-    !_isFingerExtended(lm, 20, 18)
+    _isThumbExtended(lm)                                        &&
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT)       &&
+    !_isFingerExtended(lm, 12, 10, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 16, 14, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 20, 18, EXTENSION_MARGIN_FOLD_ENTER)
   )
 }
 
@@ -120,6 +131,8 @@ const PINCH_RATIO_ENTER = 0.30   // 팜 대비 30% 이내: 핀치 진입
 const PINCH_RATIO_EXIT  = 0.44   // 팜 대비 44% 이내: 핀치 유지 (히스테리시스)
 
 function _isPinching(lm, alreadyPinching = false) {
+  // 분자(d)와 분모(palm) 모두 보정 없는 2D 거리라 비율이 서로 상쇄된다.
+  // 임계값 0.30/0.44는 이 상태로 튜닝된 값이라 palm에만 camAR을 넣으면 핀치가 과민해진다.
   const palm = _palmSize(lm)
   if (!Number.isFinite(palm) || palm < 1e-6) return false
   const d     = _dist2d(lm[4], lm[8])
@@ -512,12 +525,16 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let camAR    = AR_REF   // 카메라 실제 비율 (열린 후 갱신)
 
     // ── 포인터 상태 ──────────────────────────────────────────────────────────
-    const pointerStates = { Left: makePointerState(), Right: makePointerState() }
-    const wasActive     = { Left: false, Right: false }
+    // 화면 커서는 하나뿐이므로 손별로 나누지 않는다. 손별(Left/Right)로 키잉하면
+    // MediaPipe가 좌우 판별을 뒤집을 때마다 히스테리시스가 초기화되어,
+    // 손 추적은 멀쩡한데 커서만 꺼지는 현상이 생긴다 (lite 모델에서 특히 자주 뒤집힘).
+    const pointerState = makePointerState()
     // 한 번 가리키기 시작했으면 잠깐 흔들려도 끊기지 않게 — 히스테리시스
-    const wasPointing   = { Left: false, Right: false }
+    let wasActive   = false
+    let wasPointing = false
+    let pointerWasPinching = false
     const CURSOR_HIDE_DELAY_MS = 350
-    const hideTimers    = { Left: null, Right: null }
+    let hideTimer = null
 
     // ── 제스처 상태 ──────────────────────────────────────────────────────────
     const gestureStates = { Left: makeGestureState(), Right: makeGestureState() }
@@ -555,31 +572,32 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
 
       // ── 포인터 ────────────────────────────────────────────────────────────
+      // 모든 숨김 경로에 동일한 유예를 준다. 임계값 근처에서 한 프레임만 조건을 벗어나도
+      // 즉시 끄면 커서가 깜빡인다.
+      const hidePointerSoon = () => {
+        if (hideTimer) return
+        hideTimer = setTimeout(() => {
+          hideTimer = null
+          wasActive = false
+          pointerRef.current?.(null)
+        }, CURSOR_HIDE_DELAY_MS)
+      }
+
       try {
         if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
-            _palmSize(lms[activeIdx]) >= MIN_PALM_SIZE) {
+            _palmSize(lms[activeIdx], camAR) >= MIN_PALM_SIZE) {
           const lm       = lms[activeIdx]
           // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
-          const pointing = wasPointing[activeLabel]
+          const pointing = wasPointing
             ? (_isPointingHold(lm) || _isPointing(lm) || _isThumbIndexOpen(lm))
             : (_isPointing(lm)     || _isThumbIndexOpen(lm))
-          // 핀치도 히스테리시스 — 포인터 섹션에서는 wasPinching을 미리 읽고, 제스처 섹션에서 갱신
-          const pinching = !pointing && _isPinching(lm, wasPinching[activeLabel])
-          wasPointing[activeLabel] = pointing
+          const pinching = !pointing && _isPinching(lm, pointerWasPinching)
+          wasPointing        = pointing
+          pointerWasPinching = pinching
 
-          // 신뢰도 낮은 감지 무시 (화면 가장자리, 손 일부 잘림 등)
-          const handScore = handed[activeIdx]?.score ?? 1
-          if (handScore < 0.7) {
-            if (!hideTimers[activeLabel]) {
-              hideTimers[activeLabel] = setTimeout(() => {
-                hideTimers[activeLabel] = null
-                wasActive[activeLabel]  = false
-                pointerRef.current?.(null)
-              }, CURSOR_HIDE_DELAY_MS)
-            }
-          } else if (pointing || pinching) {
-            clearTimeout(hideTimers[activeLabel])
-            hideTimers[activeLabel] = null
+          if (pointing || pinching) {
+            clearTimeout(hideTimer)
+            hideTimer = null
 
             // 손목(0)↔중지MCP(9) 중간점 — 손 자세에 가장 안정적
             const px = (lm[0].x + lm[9].x) / 2
@@ -587,55 +605,44 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
             if (Number.isFinite(px) && Number.isFinite(py)) {
               // 재활성화 시 OneEuro 리셋 — 이전 상태가 남아 있으면 커서 점프 발생
-              if (!wasActive[activeLabel]) resetPointerState(pointerStates[activeLabel])
-              wasActive[activeLabel] = true
+              if (!wasActive) resetPointerState(pointerState)
+              wasActive = true
 
               // 절대 선형 매핑 — 방향별 마진 개별 적용
               const normX = Math.max(0, Math.min(1, (px - CAM_MARGIN_L)   / CAM_ACTIVE_X))
               const normY = Math.max(0, Math.min(1, (py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y))
-              const [sx, sy] = smoothPointer(
-                pointerStates[activeLabel], normX, normY, performance.now() / 1000
-              )
+              const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
               pointerRef.current?.({ x: sx, y: sy })
             } else {
-              clearTimeout(hideTimers[activeLabel])
-              hideTimers[activeLabel] = null
-              wasActive[activeLabel]  = false
-              pointerRef.current?.(null)
+              hidePointerSoon()
             }
           } else {
-            if (!hideTimers[activeLabel]) {
-              hideTimers[activeLabel] = setTimeout(() => {
-                hideTimers[activeLabel] = null
-                wasActive[activeLabel]  = false
-                pointerRef.current?.(null)
-              }, CURSOR_HIDE_DELAY_MS)
-            }
+            hidePointerSoon()
           }
         } else {
-          if (activeLabel) { clearTimeout(hideTimers[activeLabel]); hideTimers[activeLabel] = null }
-          pointerRef.current?.(null)
+          hidePointerSoon()
         }
       } catch (e) {
         console.warn('[useGesture] 포인터 계산 오류:', e)
-        pointerRef.current?.(null)
+        hidePointerSoon()
       }
 
-      // 안 보이는 손 리셋
+      // 안 보이는 손 리셋 — 제스처 상태는 손별로 유지되므로 라벨 기준이 맞다
       const seen = new Set(handed.map(h => h?.label).filter(Boolean))
       for (const lbl of ['Left', 'Right']) {
         if (!seen.has(lbl)) {
-          clearTimeout(hideTimers[lbl])
-          hideTimers[lbl]       = null
-          resetPointerState(pointerStates[lbl])
-          wasActive[lbl]        = false
-          wasPointing[lbl]      = false
           wasPinching[lbl]      = false
           gestureStates[lbl]    = makeGestureState()
           palmBufs[lbl].length  = 0
           lastSwipeDirs[lbl]    = null
           okNeedsOpen[lbl]      = false
         }
+      }
+      // 커서 히스테리시스는 손이 하나도 없을 때만 리셋한다. 좌우 라벨이 뒤집혔다는
+      // 이유로 끊으면 손을 계속 추적 중인데도 커서가 사라진다.
+      if (lms.length === 0) {
+        wasPointing        = false
+        pointerWasPinching = false
       }
 
       // ── 랜드마크 페이로드 (수집 도구용) ───────────────────────────────────
@@ -658,7 +665,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
-        if (_palmSize(lm) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
+        if (_palmSize(lm, camAR) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
@@ -760,18 +767,57 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     }
 
     const setup = async () => {
+      const t0 = performance.now()
       try {
-        stream = await openCamera()
-        if (!active) { stream.getTracks().forEach(t => t.stop()); return }
+        // 카메라 열기(V4L2 장치 열기)와 MediaPipe 로딩(WASM·모델 다운로드)은 서로
+        // 의존하지 않는다. 직렬로 두면 Pi4B에서 두 지연이 그대로 더해진다.
+        // 각 리소스는 만들어지는 즉시 바깥 변수에 대입해, 한쪽이 실패해도
+        // cleanup이 다른 쪽을 회수할 수 있게 한다.
+        const handsReady = (async () => {
+          const { Hands } = await import('@mediapipe/hands')
+          // StrictMode 이중 마운트에서 이미 정리된 실행이 여기까지 오면 Hands 인스턴스가
+          // 둘이 되고, Emscripten 전역 Module을 동시에 초기화하다
+          // "Module.arguments has been replaced" 어설션으로 죽는다.
+          if (!active) return
+          // CDN 의존성 제거: public/mediapipe-hands/ 에 복사된 로컬 바이너리 사용.
+          // Pi4B 환경에서 CDN 지연/차단 시 WASM 로딩 실패 문제 해결.
+          const MP_BASE = '/mediapipe-hands/'
+          hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
+          hands.setOptions({
+            maxNumHands:            1,
+            modelComplexity:        0,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence:  0.5,
+          })
+          hands.onResults(handleResults)
+          // 생략하면 첫 send()가 WASM·모델 로딩까지 떠안아 수 초간 멈춘다.
+          // 여기서 미리 끝내면 그 시간이 카메라 열기와 겹쳐 사라진다.
+          await hands.initialize()
+        })()
+
+        const cameraReady = (async () => {
+          const s = await openCamera()
+          // 정리된 실행이 카메라를 계속 쥐고 있으면 살아있는 실행이 NotReadableError를 맞는다.
+          if (!active) { s.getTracks().forEach(t => t.stop()); return }
+          stream = s
+          const v = document.createElement('video')
+          v.srcObject = stream
+          v.muted = true
+          v.setAttribute('playsinline', '')
+          await v.play()
+          video = v
+        })()
+
+        await Promise.all([handsReady, cameraReady])
+
+        if (!active) {
+          stream?.getTracks().forEach(t => t.stop())
+          try { hands?.close?.() } catch {}
+          return
+        }
+
         cameraSettings = stream.getVideoTracks()[0]?.getSettings?.() ?? null
         console.info('[useGesture] camera settings', cameraSettings)
-
-        video = document.createElement('video')
-        video.srcObject = stream
-        video.muted = true
-        video.setAttribute('playsinline', '')
-        await video.play()
-        if (!active) return
         if (videoRef) videoRef.current = video
 
         if (video.videoWidth && video.videoHeight) {
@@ -779,18 +825,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
         }
 
-        const { Hands } = await import('@mediapipe/hands')
-        // CDN 의존성 제거: public/mediapipe-hands/ 에 복사된 로컬 바이너리 사용.
-        // Pi4B 환경에서 CDN 지연/차단 시 WASM 로딩 실패 문제 해결.
-        const MP_BASE = '/mediapipe-hands/'
-        hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
-        hands.setOptions({
-          maxNumHands:            1,
-          modelComplexity:        0,
-          minDetectionConfidence: 0.7,
-          minTrackingConfidence:  0.5,
-        })
-        hands.onResults(handleResults)
+        console.info(`[useGesture] 초기화 완료 ${Math.round(performance.now() - t0)}ms`)
         loop()
 
       } catch (err) {
@@ -804,8 +839,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     return () => {
       active = false
       clearTimeout(inflightWatchdog)
-      clearTimeout(hideTimers.Left)
-      clearTimeout(hideTimers.Right)
+      clearTimeout(hideTimer)
       if (rafId) cancelAnimationFrame(rafId)
       try { hands?.close?.() } catch {}
       stream?.getTracks().forEach(t => t.stop())
