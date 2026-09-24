@@ -112,8 +112,13 @@ function AppContent() {
     const v = localStorage.getItem('pipEnabled')
     return v === null ? true : v === 'true'
   })
+  const [fingerEnabled, setFingerEnabled] = useState(() => {
+    const v = localStorage.getItem('fingerEnabled')
+    return v === null ? true : v === 'true'
+  })
   useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
   useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])
+  useEffect(() => { localStorage.setItem('fingerEnabled',  String(fingerEnabled))  }, [fingerEnabled])
 
   // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
   // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
@@ -499,7 +504,7 @@ function AppContent() {
   // 인코딩하고 서버는 계속 추론하는데, 결과를 받아 쓸 곳이 없다.
   const { pending: fingerPending, connected: fingerConnected } = useFingerCount({
     videoRef:  gestureVideoRef,
-    enabled:   gestureEnabled && !approachActive && FINGER_SCREENS.has(screen),
+    enabled:   gestureEnabled && fingerEnabled && !approachActive && FINGER_SCREENS.has(screen),
     onConfirm: handleFingerConfirm,
   })
 
@@ -1011,6 +1016,12 @@ function AppContent() {
             onClick={() => gestureEnabled && setPipEnabled(v => !v)}
             ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+          />
+          <ControlText
+            disabled={!gestureEnabled}
+            onClick={() => gestureEnabled && setFingerEnabled(v => !v)}
+            ko={`숫자인식 ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Finger ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
           {navigator?.serial && (
             <ControlText
