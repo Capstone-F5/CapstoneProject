@@ -803,7 +803,7 @@ function AppContent() {
   }
 
   return (
-    <GestureUIProvider enabled={gestureEnabled}>
+    <GestureUIProvider enabled={gestureEnabled} fingerEnabled={fingerEnabled}>
         {/* ── AI 동작 토스트 알림 ── */}
         {voiceToast && (
           <div key={voiceToast.key} style={{
