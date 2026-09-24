@@ -149,7 +149,11 @@ function AppContent() {
   const pointerDivRef   = useRef(null)   // 커서 DOM 노드
   // 커서가 켜져 있는 동안(검지 펴서 포인팅 중) YOLO 숫자 확정을 막는다.
   // 검지 1개 = 포인팅 자세 = digit 1 과 구분할 방법이 없어 의도치 않게 매장/포장이 선택됨.
-  const isPointingRef   = useRef(false)
+  const isPointingRef      = useRef(false)
+  const lastPointingOffRef = useRef(-Infinity)
+  // 커서가 꺼진 뒤 이 시간이 지나야 숫자 확정 허용.
+  // 포인팅 → 주먹 → 숫자 자세 전환 중에 잔여 vote가 확정되는 것을 막는다.
+  const POINTING_COOLDOWN_MS = 400
 
   // OK 로딩 링 — DOM 직접 조작
   const okRingRef = useRef(null)
@@ -265,6 +269,7 @@ function AppContent() {
   // 포인터: useGesture 의 onPointer 콜백 — React state 없이 DOM 직접 업데이트
   const handlePointer = useCallback((norm) => {
     if (!norm) {
+      if (isPointingRef.current) lastPointingOffRef.current = performance.now()
       isPointingRef.current = false
       pointerRef.current = null
       // opacity 만 끄기 — DOM은 유지해서 재등장 시 위치가 부드럽게 트랜지션됨
@@ -478,10 +483,11 @@ function AppContent() {
   // 확정된 숫자는 기존 제스처 경로로 흘려보낸다 — 화면별 동작 로직을 중복하지 않는다.
   // handleGesture의 orderType 분기가 hands.finger_count를 읽으므로 같은 모양으로 맞춘다.
   const handleFingerConfirm = useCallback((digit) => {
-    if (digit < 1 || digit > 5) return   // 현재 화면들이 쓰는 건 1~5뿐
-    // 검지를 펴서 커서로 가리키는 중에는 숫자 확정을 무시한다.
-    // 포인팅 자세(검지 1개)가 digit 1로 읽혀 의도치 않게 매장/포장이 선택되는 것을 방지.
-    if (isPointingRef.current) return
+    const sinceOff = performance.now() - lastPointingOffRef.current
+    const cooldownOk = sinceOff >= POINTING_COOLDOWN_MS
+    console.log(`[FingerConfirm] digit=${digit} screen=${screenRef.current} pointing=${isPointingRef.current} cooldown=${cooldownOk ? 'ok' : `${(POINTING_COOLDOWN_MS - sinceOff).toFixed(0)}ms 남음`} settled=${performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS}`)
+    if (digit < 1 || digit > 5)              { console.log('[FingerConfirm] 차단: digit 범위 초과'); return }
+    if (isPointingRef.current || !cooldownOk) { console.log('[FingerConfirm] 차단: 포인팅/쿨다운'); return }
     handleGesture({
       gesture:       `finger_${digit}`,
       hands:         { right: { finger_count: digit } },

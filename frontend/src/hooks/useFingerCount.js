@@ -140,6 +140,8 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
       const held = now - hold.since
       if (held >= HOLD_MS) {
         if (digit == null) { hold.since = now; setPending(null); return }  // 안전 가드
+        // 현재 프레임에 손이 없으면 vote 잔여값으로 확정되는 것 — 실제로 보여줄 때만 허용
+        if (rawDigit == null) { hold.since = now; setPending(null); return }
         const handsSummary = hands.map(h => `${h.digit}(${(h.conf * 100).toFixed(0)}%)`).join('+')
         console.log(`[FingerCount] 확정: ${digit} (${held.toFixed(0)}ms) [${handsSummary || '손없음'}]`)
         hold.lastFire = now
