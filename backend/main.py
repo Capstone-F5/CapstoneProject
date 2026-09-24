@@ -1,5 +1,6 @@
 import sys
 import os
+import asyncio
 import importlib
 import logging
 import time
@@ -32,6 +33,7 @@ for _cv_name, _cv_module in (
     ("gesture", "api.gesture_ws"),
     ("collect", "api.collect"),
     ("approach", "api.approach_ws"),
+    ("finger", "api.finger_ws"),
 ):
     try:
         _cv_routers.append(importlib.import_module(_cv_module).router)
@@ -62,10 +64,25 @@ from api.admin.stats import router as admin_stats_router
 from core.db import init_db
 
 
+async def _warmup_finger_model() -> None:
+    """YOLO 모델 로딩에 약 5초가 걸린다. 첫 WebSocket 연결이 이걸 떠안으면
+    사용자는 5초 동안 아무 반응 없는 화면을 본다. 서버 시작을 늦추지 않도록
+    백그라운드로 미리 올려둔다."""
+    try:
+        from ai_modules.cv.finger_counter import get_detector
+
+        await asyncio.to_thread(get_detector)
+        logging.info("finger 모델 예열 완료")
+    except Exception as e:  # noqa: BLE001
+        logging.warning("finger 모델 예열 실패: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    warmup = asyncio.create_task(_warmup_finger_model())
     yield
+    warmup.cancel()
 
 
 app = FastAPI(title="Kiosk Backend", lifespan=lifespan)

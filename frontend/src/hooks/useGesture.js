@@ -24,13 +24,14 @@ const EXTENSION_MARGIN_LOOSE  = 1.05  // 스와이프 open-hand 판정
 // 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식.
 // 화면을 가리키면 검지가 카메라 쪽을 향해 2D 투영에서 짧아 보인다(단축). 손목 기준
 // 거리 비율로 재는 방식이라 이때 값이 크게 떨어지므로, 진입 문턱을 낮게 잡는다.
-const EXTENSION_MARGIN_POINT       = 1.04
+const EXTENSION_MARGIN_POINT       = 1.06
 // 다른 손가락 "안 펴짐" 판정 — 느슨하게 쥔 주먹의 중지/약지가 펴진 걸로 읽히면
 // 검지를 아무리 잘 펴도 포인팅으로 인정되지 않는다. 그래서 STRICT보다 관대하게.
-const EXTENSION_MARGIN_FOLD_ENTER  = 1.17
+// 단 너무 관대하면 포인팅이 항상 켜져 있고 pinching = !pointing 이라 핀치가 막힌다.
+const EXTENSION_MARGIN_FOLD_ENTER  = 1.15
 // 히스테리시스: 이미 가리키는 중이면 더 관대 (잠깐 굽혀도 유지)
 const EXTENSION_MARGIN_POINT_HOLD  = 1.00
-const EXTENSION_MARGIN_FOLD_HOLD   = 1.22  // 다른 손가락 "안 펴짐" 판정도 완화
+const EXTENSION_MARGIN_FOLD_HOLD   = 1.19  // 다른 손가락 "안 펴짐" 판정도 완화
 
 function _dist2d(a, b) {
   if (!a || !b) return Number.NaN
@@ -167,27 +168,6 @@ function _isOpenForSwipe(lm) {
   return n >= 3
 }
 
-// 핀치 제외 정적 분류 — 루프에서 핀치를 별도 체크한 뒤 나머지 분류에 사용
-function _classifyStaticNoPinch(lm) {
-  const t = _isThumbExtended(lm)
-  const i = _isFingerExtended(lm, 8,  6)
-  const m = _isFingerExtended(lm, 12, 10)
-  const r = _isFingerExtended(lm, 16, 14)
-  const p = _isFingerExtended(lm, 20, 18)
-  const n = [t, i, m, r, p].filter(Boolean).length
-  if (n === 1 && i)                return 'finger_1'
-  if (n === 2 && i && m)           return 'finger_2'
-  if (n === 3 && i && m && r)      return 'finger_3'
-  if (n === 4 && i && m && r && p) return 'finger_4'
-  if (n === 5)                     return 'finger_5'
-  return null
-}
-
-function _classifyStatic(lm) {
-  if (_isPinching(lm)) return 'ok'
-  return _classifyStaticNoPinch(lm)
-}
-
 // FSM debounce
 const G_CONFIRM     = 3
 const G_CONFIRM_OK  = 4
@@ -322,7 +302,6 @@ function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm, camAR) {
 const _GESTURE_PRIORITY = {
   ok: 3,
   swipe_left: 2, swipe_right: 2, swipe_up: 2, swipe_down: 2,
-  finger_1: 1, finger_2: 1, finger_3: 1, finger_4: 1, finger_5: 1,
 }
 
 // ── One Euro Filter (Casiez et al. 2012) ────────────────────────────────────
@@ -694,8 +673,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           gestureStates[mpLabel].count     = 0
           gesture = swipe
         } else {
-          // _classifyStatic 내부의 _isPinching도 히스테리시스 적용
-          const raw     = pinching ? 'ok' : _classifyStaticNoPinch(lm)
+          const raw     = pinching ? 'ok' : null
           const blocked = (raw === 'ok' && okNeedsOpen[mpLabel]) ? null : raw
           gesture = _confirmStatic(gestureStates[mpLabel], blocked)
         }

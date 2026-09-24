@@ -16,6 +16,7 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
+import { useFingerCount } from './hooks/useFingerCount'
 import { useSerial } from './hooks/useSerial'
 import { GestureUIProvider } from './contexts/GestureUIContext'
 
@@ -26,11 +27,6 @@ const GESTURE_LABELS = {
   swipe_up:    '↑ 위로',
   swipe_down:  '↓ 아래로',
   ok:          '✓ 확인',
-  finger_1:    '☝ 1',
-  finger_2:    '✌ 2',
-  finger_3:    '3',
-  finger_4:    '4',
-  finger_5:    '✋ 5',
 }
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
@@ -38,6 +34,9 @@ const _isCollect = new URLSearchParams(window.location.search).has('collect')
 // 접근 감지 서버 추론에 TFLite 런타임(ai-edge-litert 또는 tensorflow)이 필요한데
 // 현재 환경에 없어 /ws/approach가 "모델 로드 실패"로 즉시 닫힌다. 런타임을 설치하면 true로.
 const APPROACH_DETECTION = false
+
+// 손가락 숫자를 동작에 쓰는 화면 — orderType(매장/포장), menu(단품/세트)
+const FINGER_SCREENS = new Set(['orderType', 'menu'])
 
 // orderType 화면 진입 직후, 직전 화면의 OK 핀치 해제 과도기 동작을 매장/포장 선택으로
 // 오인식하지 않도록 무시하는 유예 구간(ms)
@@ -467,9 +466,33 @@ function AppContent() {
     if (gesture.startsWith('swipe_')) showLabel(GESTURE_LABELS[gesture])
   }, [showLabel, fireOk, scrollAtPointer])
 
+  // 서버 YOLO가 숫자를 읽으려면 카메라 프레임이 필요하다. useGesture가 연 video를
+  // 그대로 넘겨받는다 — Pi는 카메라가 1대라 따로 열면 NotReadableError가 난다.
+  const gestureVideoRef = useRef(null)
+
+  // 확정된 숫자는 기존 제스처 경로로 흘려보낸다 — 화면별 동작 로직을 중복하지 않는다.
+  // handleGesture의 orderType 분기가 hands.finger_count를 읽으므로 같은 모양으로 맞춘다.
+  const handleFingerConfirm = useCallback((digit) => {
+    if (digit < 1 || digit > 5) return   // 현재 화면들이 쓰는 건 1~5뿐
+    handleGesture({
+      gesture:       `finger_${digit}`,
+      hands:         { right: { finger_count: digit } },
+      total_fingers: digit,
+    })
+  }, [handleGesture])
+
+  // 숫자를 실제로 쓰는 화면에서만 켠다. 전 화면에서 돌리면 Pi는 매 프레임 JPEG를
+  // 인코딩하고 서버는 계속 추론하는데, 결과를 받아 쓸 곳이 없다.
+  const { pending: fingerPending, connected: fingerConnected } = useFingerCount({
+    videoRef:  gestureVideoRef,
+    enabled:   gestureEnabled && !approachActive && FINGER_SCREENS.has(screen),
+    onConfirm: handleFingerConfirm,
+  })
+
   useGesture({
     onPointer:    handlePointer,
     onGesture:    handleGesture,
+    videoRef:     gestureVideoRef,
     enabled:      gestureEnabled && !approachActive,
     pipCanvasRef: gestureEnabled && pipEnabled ? pipCanvasRef : null,
   })
@@ -798,6 +821,34 @@ function AppContent() {
             <div>합계 &nbsp;: {gestureHud.total}개</div>
             <div style={{ color: gestureLabel ? '#7fff7f' : '#888' }}>
               제스처: {gestureLabel ?? '-'}
+            </div>
+          </div>
+        )}
+
+        {/* ── 숫자 인식 확정 팝업 — 같은 숫자를 1초 유지해야 실행된다 ── */}
+        {fingerPending && (
+          <div style={{
+            position: 'fixed', left: '50%', bottom: 140, transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.82)', color: '#fff',
+            padding: '20px 30px', borderRadius: 20,
+            display: 'flex', alignItems: 'center', gap: 20,
+            pointerEvents: 'none', zIndex: 9003,
+            boxShadow: '0 6px 28px rgba(0,0,0,0.4)',
+          }}>
+            <span style={{ fontSize: 60, fontWeight: 900, lineHeight: 1, minWidth: 56, textAlign: 'center' }}>
+              {fingerPending.digit}
+            </span>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>
+                그대로 유지하세요
+              </div>
+              <div style={{ width: 170, height: 9, background: 'rgba(255,255,255,0.22)', borderRadius: 5 }}>
+                <div style={{
+                  width: `${Math.round(fingerPending.progress * 100)}%`,
+                  height: '100%', background: '#F5B800', borderRadius: 5,
+                  transition: 'width 120ms linear',
+                }} />
+              </div>
             </div>
           </div>
         )}
