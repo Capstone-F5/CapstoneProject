@@ -145,8 +145,11 @@ function AppContent() {
   const pipCanvasRef = useRef(null)
 
   // 포인터 — DOM 직접 조작으로 React 리렌더 없이 30fps 업데이트
-  const pointerRef    = useRef(null)   // 최신 위치 { x, y }
-  const pointerDivRef = useRef(null)   // 커서 DOM 노드
+  const pointerRef      = useRef(null)   // 최신 위치 { x, y }
+  const pointerDivRef   = useRef(null)   // 커서 DOM 노드
+  // 커서가 켜져 있는 동안(검지 펴서 포인팅 중) YOLO 숫자 확정을 막는다.
+  // 검지 1개 = 포인팅 자세 = digit 1 과 구분할 방법이 없어 의도치 않게 매장/포장이 선택됨.
+  const isPointingRef   = useRef(false)
 
   // OK 로딩 링 — DOM 직접 조작
   const okRingRef = useRef(null)
@@ -262,12 +265,14 @@ function AppContent() {
   // 포인터: useGesture 의 onPointer 콜백 — React state 없이 DOM 직접 업데이트
   const handlePointer = useCallback((norm) => {
     if (!norm) {
+      isPointingRef.current = false
       pointerRef.current = null
       // opacity 만 끄기 — DOM은 유지해서 재등장 시 위치가 부드럽게 트랜지션됨
       if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
       clearEdge()
       return
     }
+    isPointingRef.current = true
     const p = normToScreen(norm)
     pointerRef.current = p
     const d = pointerDivRef.current
@@ -474,6 +479,9 @@ function AppContent() {
   // handleGesture의 orderType 분기가 hands.finger_count를 읽으므로 같은 모양으로 맞춘다.
   const handleFingerConfirm = useCallback((digit) => {
     if (digit < 1 || digit > 5) return   // 현재 화면들이 쓰는 건 1~5뿐
+    // 검지를 펴서 커서로 가리키는 중에는 숫자 확정을 무시한다.
+    // 포인팅 자세(검지 1개)가 digit 1로 읽혀 의도치 않게 매장/포장이 선택되는 것을 방지.
+    if (isPointingRef.current) return
     handleGesture({
       gesture:       `finger_${digit}`,
       hands:         { right: { finger_count: digit } },

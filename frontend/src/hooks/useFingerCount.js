@@ -108,20 +108,9 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
       if (vote.length > VOTE_WINDOW) vote.shift()
       const digit = majority(vote)
 
-      // ── 수신 로그 ────────────────────────────────────────────────────────
-      const handsSummary = hands.map(h => `${h.digit}(${(h.conf * 100).toFixed(0)}%)`).join('+')
-      console.log(
-        `[FingerCount] 수신: raw=${rawDigit ?? '-'} voted=${digit ?? '-'}` +
-        (handsSummary ? ` [${handsSummary}]` : ' [손 없음]') +
-        ` vote=${JSON.stringify(vote)}`
-      )
-
       // ── 쿨다운 ───────────────────────────────────────────────────────────
       const cooldownLeft = COOLDOWN_MS - (now - hold.lastFire)
-      if (cooldownLeft > 0) {
-        console.log(`[FingerCount] 쿨다운 중 — ${cooldownLeft.toFixed(0)}ms 남음`)
-        return
-      }
+      if (cooldownLeft > 0) return
 
       // ── Hold 상태 관리 ───────────────────────────────────────────────────
       if (digit !== hold.digit) {
@@ -146,15 +135,14 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
 
       const held = now - hold.since
       if (held >= HOLD_MS) {
-        console.log(`[FingerCount] 확정: ${digit} (${held.toFixed(0)}ms 유지)`)
+        const handsSummary = hands.map(h => `${h.digit}(${(h.conf * 100).toFixed(0)}%)`).join('+')
+        console.log(`[FingerCount] 확정: ${digit} (${held.toFixed(0)}ms) [${handsSummary || '손없음'}]`)
         hold.lastFire = now
         hold.digit    = null
         voteRef.current = []
         setPending(null)
         onConfirmRef.current?.(digit)
       } else {
-        const pct = (held / HOLD_MS * 100).toFixed(0)
-        console.log(`[FingerCount] 진행: ${digit} ${pct}%`)
         setPending({ digit, progress: held / HOLD_MS })
       }
     }
