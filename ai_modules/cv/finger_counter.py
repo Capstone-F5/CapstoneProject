@@ -16,8 +16,9 @@ import numpy as np
 
 MODEL_PATH = Path(__file__).parent / "models" / "finger_count_best.pt"
 IMGSZ = 640
-# 기본값 0.25는 키오스크에서 오검출이 잦다. 숫자를 잘못 고르면 주문이 틀어지므로 높게 잡는다.
-CONF_THRESHOLD = 0.5
+# 두 손을 동시에 보려면 두 번째 손이 부분적으로 가려지거나 각도가 달라도 잡아야 한다.
+# 0.5 → 0.40으로 낮춰 두 손 검출률을 높이고, 오검출은 MAX_HANDS=2 상한으로 제한한다.
+CONF_THRESHOLD = 0.40
 MAX_HANDS = 2
 
 
