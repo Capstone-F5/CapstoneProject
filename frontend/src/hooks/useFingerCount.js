@@ -109,8 +109,11 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
       const digit = majority(vote)
 
       // ── 쿨다운 ───────────────────────────────────────────────────────────
-      const cooldownLeft = COOLDOWN_MS - (now - hold.lastFire)
-      if (cooldownLeft > 0) return
+      if (now - hold.lastFire < COOLDOWN_MS) return
+
+      // digit=null이고 후보도 없으면 할 일이 없다.
+      // hold.since를 리셋하지 않으면 null 상태에서 HOLD_MS를 넘겨 spurious 확정이 발생한다.
+      if (digit == null && hold.digit == null) { setPending(null); return }
 
       // ── Hold 상태 관리 ───────────────────────────────────────────────────
       if (digit !== hold.digit) {
@@ -123,6 +126,7 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
         if (digit == null) {
           hold.digit = null
           hold.miss  = 0
+          hold.since = now   // 리셋 — 이 시점 이후 null 상태가 HOLD_MS를 넘지 않도록
           setPending(null)
           if (prev != null) console.log(`[FingerCount] 후보 해제: ${prev} → 없음`)
           return
@@ -135,10 +139,12 @@ export function useFingerCount({ videoRef, enabled = false, onConfirm } = {}) {
 
       const held = now - hold.since
       if (held >= HOLD_MS) {
+        if (digit == null) { hold.since = now; setPending(null); return }  // 안전 가드
         const handsSummary = hands.map(h => `${h.digit}(${(h.conf * 100).toFixed(0)}%)`).join('+')
         console.log(`[FingerCount] 확정: ${digit} (${held.toFixed(0)}ms) [${handsSummary || '손없음'}]`)
         hold.lastFire = now
         hold.digit    = null
+        hold.since    = now   // 리셋
         voteRef.current = []
         setPending(null)
         onConfirmRef.current?.(digit)
