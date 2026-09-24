@@ -835,9 +835,9 @@ function AppContent() {
             fontSize: 13, lineHeight: 1.8,
             fontFamily: 'monospace', pointerEvents: 'none', zIndex: 9002,
           }}>
-            <div>왼손 &nbsp;: {gestureHud.left}</div>
-            <div>오른손: {gestureHud.right}</div>
-            <div>합계 &nbsp;: {gestureHud.total}개</div>
+            {fingerEnabled && <div>왼손 &nbsp;: {gestureHud.left}</div>}
+            {fingerEnabled && <div>오른손: {gestureHud.right}</div>}
+            {fingerEnabled && <div>합계 &nbsp;: {gestureHud.total}개</div>}
             <div style={{ color: gestureLabel ? '#7fff7f' : '#888' }}>
               제스처: {gestureLabel ?? '-'}
             </div>
