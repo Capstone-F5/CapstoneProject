@@ -68,6 +68,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
   const isCompletingRef    = useRef(false)
   const handleCompleteRef  = useRef(null)  // serialRef에서 안전하게 참조
+  // 음성 브릿지 핸들러는 [voiceRef, cart, total] 때문에 클로저가 낡을 수 있어 팝업 상태를 ref로 미러링한다
+  const pointPromptOpenRef = useRef(false)
+  const orderTypeConfirmOpenRef = useRef(false)
 
   const handlePayClick = () => {
     if (cart.length === 0) {
@@ -197,6 +200,21 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           if (a.value === 'yes') setShowPointsPopup(true)
           else openPayment()
           return true
+        // 짧은 예/아니오 응답("네", "응", "아니요")을 LLM 없이 바로 처리 — 열려 있는 예/아니오 팝업이 있을 때만.
+        // 처리하지 않으면 false → 기존 LLM 경로로 넘어간다. LLM이 말하지 않으므로 다음 안내는 사전 녹음으로 직접 재생.
+        case 'quick_reply':
+          if (pointPromptOpenRef.current) {
+            setShowPointPrompt(false)
+            if (a.value === 'yes') setShowPointsPopup(true)
+            else { openPayment(); playTTS('결제 수단을 선택해 주세요') }
+            return true
+          }
+          if (orderTypeConfirmOpenRef.current) {
+            if (a.value === 'yes') { confirmOrderType(); playTTS('포인트를 적립하시겠습니까') }
+            else setShowOrderTypeConfirm(false)
+            return true
+          }
+          return false
         case 'points_phone':
           setShowPointsPopup(true)
           setPointsInput(a.phone ?? '')
@@ -276,6 +294,9 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     }
   }
   handleCompleteRef.current = handleComplete
+
+  pointPromptOpenRef.current = showPointPrompt
+  orderTypeConfirmOpenRef.current = showOrderTypeConfirm
 
   // 터치 플로우 팝업 TTS 내레이션 (음성인식이 꺼진 경우에만)
   // eslint-disable-next-line react-hooks/exhaustive-deps

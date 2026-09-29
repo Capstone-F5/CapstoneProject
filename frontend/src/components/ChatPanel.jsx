@@ -3,6 +3,44 @@ import { useMicVAD, utils } from '@ricky0123/vad-react'
 import { useLocale } from '../i18n/LocaleContext'
 import { getSessionId, newSessionId } from '../services/session'
 import { getCachedAudio } from '../utils/ttsCache'
+import { classifyQuickReply } from '../utils/quickReply'
+
+// ── 음성 응답 지연 계측 ──────────────────────────────────────────────────────
+// 한 턴(발화 종료 → 첫 오디오 재생)의 단계별 소요 시간을 콘솔과 백엔드(logs/voice_timing.log)에 남긴다.
+// 짧은 발화가 느린 이유(업로드/전사/LLM/TTS 중 어디가 병목인지)를 실측하기 위한 것.
+// t0=VAD가 발화 종료를 확정한 시각(말이 끝난 뒤 redemptionFrames 만큼 이미 지난 시점).
+let _activeTurn = null   // 아직 첫 오디오가 나오지 않은 가장 최근 턴
+
+function reportVoiceTurn(turn, reason) {
+  if (!turn || turn.reported) return
+  turn.reported = true
+  const d = (a, b) => (turn[a] != null && turn[b] != null ? Math.round(turn[b] - turn[a]) : null)
+  const summary = {
+    kind: 'turn',
+    reason,                                  // audio | quick | timeout
+    path: turn.quick ? 'quick' : 'llm',
+    speechMs: turn.speechMs,
+    textLen: turn.textLen ?? null,
+    sttMs: d('tSend', 'tStt'),               // 업로드 + 전사
+    sttToFirstTokenMs: d('tStt', 'tTok'),    // STT 끝 → LLM 첫 토큰
+    llmMs: d('tLlm', 'tLlmDone'),
+    toAudioMs: d('t0', 'tAudio'),            // 발화 종료 확정 → 첫 오디오 (체감 지연)
+    toActionMs: d('t0', 'tAction'),          // 빠른 응답 경로: 발화 종료 → 화면 동작
+  }
+  console.info('[voice:timing]', JSON.stringify(summary))
+  fetch('/api/diagnostics/voice-timing', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(summary), keepalive: true,
+  }).catch(() => {})
+}
+
+function markAudioStart() {
+  const turn = _activeTurn
+  if (!turn || turn.tAudio != null) return
+  turn.tAudio = performance.now()
+  _activeTurn = null
+  reportVoiceTurn(turn, 'audio')
+}
 
 const CSS = `
   @keyframes chatBlink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
@@ -46,7 +84,7 @@ window.addEventListener('beforeunload', () => {
   sessionStorage.removeItem(LANG_KEY)
 })
 
-export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction }) {
+export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction, onQuickReply }) {
   const { setLocale } = useLocale()
 
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
@@ -77,10 +115,13 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const screenRef2    = useRef(screen)
   const orderTypeRef  = useRef(orderType)
   const onActionRef   = useRef(onAction)
+  const onQuickReplyRef = useRef(onQuickReply)
+  const voiceTurnRef  = useRef(null)   // STT 직후 ~ LLM 시작 사이에 턴 정보를 넘기는 용도
   cartRef.current     = cart
   screenRef2.current  = screen
   orderTypeRef.current = orderType
   onActionRef.current  = onAction
+  onQuickReplyRef.current = onQuickReply
 
   // onSpeechEnd를 ref로 관리 → VAD 옵션이 재생성되지 않도록
   const speechEndHandlerRef = useRef(null)
@@ -115,7 +156,15 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       }
     },
     onSpeechEnd: (audio) => speechEndHandlerRef.current?.(audio),
-    onVADMisfire: () => setListening(false),
+    onVADMisfire: () => {
+      setListening(false)
+      // 너무 짧거나 약해서 발화로 인정되지 않은 소리 — 짧은 "어"/"응"이 여기서 버려지는지 확인용
+      console.info('[voice:misfire]')
+      fetch('/api/diagnostics/voice-timing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'misfire' }), keepalive: true,
+      }).catch(() => {})
+    },
   })
 
   // vadRef 항상 최신 유지
@@ -130,6 +179,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     // 이미 STT 처리 중이면 건너뜀 (동시 STT 방지)
     // isTypingRef(LLM 생성 중)는 여기서 차단하지 않음 — STT 후 pendingTextRef에 큐잉
     if (isProcessingRef.current) return
+
+    // 지연 계측 — 이 턴의 시작(발화 종료 확정) 시각과 발화 길이(16kHz 샘플 수 → ms)
+    const turn = { t0: performance.now(), speechMs: Math.round(audio.length / 16) }
 
     // Float32Array(16 kHz) → WAV Blob → 백엔드 Whisper
     const wavBlob = new Blob([utils.encodeWAV(audio)], { type: 'audio/wav' })
@@ -148,8 +200,10 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     if (detectedLangRef.current) form.append('language', detectedLangRef.current)
 
     try {
+      turn.tSend = performance.now()
       const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form, signal: controller.signal })
       const data = await res.json()
+      turn.tStt = performance.now()
       if (requestGeneration !== sessionGenerationRef.current) return
       const text = (data.text || '').trim()
 
@@ -163,8 +217,21 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       }
 
       if (text) {
+        turn.textLen = text.length
         window.dispatchEvent(new Event('gesture-activity'))  // idle 타이머 리셋
         setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
+
+        // 빠른 응답 경로: "네/응/그래/아니요" 같은 짧은 긍정·부정이고 현재 화면이 예/아니오를
+        // 기다리는 중이면(화면이 true를 반환) LLM 왕복 없이 바로 처리한다. 화면이 처리하지 않으면
+        // 아래 기존 경로(LLM)로 그대로 넘어간다.
+        const quick = classifyQuickReply(text)
+        if (quick && onQuickReplyRef.current?.(quick)) {
+          turn.quick = true
+          turn.tAction = performance.now()
+          reportVoiceTurn(turn, 'quick')
+          return
+        }
+        voiceTurnRef.current = turn
 
         // 시작 화면에서 뭔 말을 하든 → 주문 화면으로 자동 이동
         if (screenRef2.current === 'start') {
@@ -201,7 +268,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       await new Promise(resolve => {
         cached.onended = resolve
         cached.onerror = resolve
-        cached.play().catch(resolve)
+        cached.play().then(markAudioStart, resolve)
       })
       audioRef.current = null
       return
@@ -231,7 +298,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         await new Promise(resolve => {
           audio.onended = resolve
           audio.onerror = resolve
-          audio.play().catch(resolve)
+          audio.play().then(markAudioStart, resolve)
         })
         URL.revokeObjectURL(url)
         audioRef.current = null
@@ -255,7 +322,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
           new Promise(r => sb.addEventListener('updateend', r, { once: true }))
 
         const reader = res.body.getReader()
-        audio.play().catch(() => {})
+        audio.play().then(markAudioStart, () => {})
 
         try {
           while (activeRef.current) {
@@ -354,6 +421,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const msgId = `bot-${Date.now()}`
     setMessages(prev => [...prev, { id: msgId, role: 'bot', text: '' }])
 
+    // 이 응답이 STT 발화에서 시작된 것이면 그 턴에 LLM/오디오 시각을 이어 기록한다
+    const turn = voiceTurnRef.current
+    voiceTurnRef.current = null
+    if (turn) { turn.tLlm = performance.now(); _activeTurn = turn }
+
     let replyText = ''
     try {
       const res = await fetch('/ai_modules/llm/stream', {
@@ -398,6 +470,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
           try {
             const data = JSON.parse(line.slice(6))
             if (data.token) {
+              if (turn && turn.tTok == null) turn.tTok = performance.now()
               replyText += data.token
               ttsBufRef.current += data.token   // ← 토큰을 TTS 버퍼에 누적
               flushTtsBuf()                      // ← 문장 경계 감지 시 TTS 발행
@@ -409,6 +482,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
               onActionRef.current?.(data.action)
             }
             if (data.done && data.output) {
+              if (turn) {
+                turn.tLlmDone = performance.now()
+                // 오디오가 끝내 안 나오는 경우(TTS 실패 등)에도 기록이 남도록 5초 뒤 강제 보고
+                setTimeout(() => { if (_activeTurn === turn) { _activeTurn = null; reportVoiceTurn(turn, 'timeout') } }, 5000)
+              }
               replyText = data.output
               flushTtsBuf(true)                  // ← 잔여 버퍼 강제 플러시
               setMessages(prev =>

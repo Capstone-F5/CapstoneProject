@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -52,3 +53,28 @@ async def gesture_performance(body: GesturePerfIn, request: Request):
         body.maxInferenceMs,
         body.inflight,
     )
+
+
+# ── 음성 응답 지연 진단 ─────────────────────────────────────────────────────
+# 프론트(ChatPanel)가 발화 한 턴의 단계별 소요 시간(ms)을 보내면 한 줄 JSON으로 남긴다.
+# 짧은 발화("네", "어")가 왜 느린지 어느 구간이 병목인지 확인하기 위한 용도.
+_voice_logger = logging.getLogger("voice_timing")
+_voice_logger.setLevel(logging.INFO)
+_voice_logger.propagate = False
+if not _voice_logger.handlers:
+    _voice_handler = RotatingFileHandler(
+        os.path.join(_log_dir, "voice_timing.log"),
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    _voice_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    _voice_logger.addHandler(_voice_handler)
+
+
+@router.post("/voice-timing", status_code=204)
+async def voice_timing(body: dict, request: Request):
+    client = request.client.host if request.client else "unknown"
+    # 발화 텍스트는 개인정보가 될 수 있어 길이만 받는다(프론트도 텍스트를 보내지 않음).
+    body = {k: v for k, v in body.items() if k != "text"}
+    _voice_logger.info("client=%s %s", client, json.dumps(body, ensure_ascii=False, sort_keys=True))
