@@ -25,19 +25,22 @@ def _try_load():
         return _model_data
     _load_attempted = True
 
-    if not os.path.exists(_MODEL_PATH):
-        print(f"[classifier] 모델 파일 없음 — 규칙 기반으로 동작: {_MODEL_PATH}")
-        return None
-
-    try:
-        import joblib
-        _model_data = joblib.load(_MODEL_PATH)
-        print(f"[classifier] 정적 제스처 모델 로드됨. 클래스: {_model_data['classes']}")
-    except Exception as e:
-        print(f"[classifier] 모델 로드 실패: {e}")
-        _model_data = None
-
-    return _model_data
+    # scikit-learn MLP 모델 로드는 사용하지 않는다(제스처는 프론트 useGesture.js가 규칙 기반으로 판정).
+    # 삭제하지 않고 주석 처리 — 다시 쓰려면 아래를 복구하고 requirements.txt의 scikit-learn/joblib도 복구.
+    # if not os.path.exists(_MODEL_PATH):
+    #     print(f"[classifier] 모델 파일 없음 — 규칙 기반으로 동작: {_MODEL_PATH}")
+    #     return None
+    #
+    # try:
+    #     import joblib
+    #     _model_data = joblib.load(_MODEL_PATH)
+    #     print(f"[classifier] 정적 제스처 모델 로드됨. 클래스: {_model_data['classes']}")
+    # except Exception as e:
+    #     print(f"[classifier] 모델 로드 실패: {e}")
+    #     _model_data = None
+    #
+    # return _model_data
+    return None
 
 
 def _try_load_dynamic():
@@ -46,18 +49,20 @@ def _try_load_dynamic():
         return _dynamic_model_data
     _dynamic_load_attempted = True
 
-    if not os.path.exists(_DYNAMIC_MODEL_PATH):
-        print(f"[classifier] Dynamic model not found — rule-based swipe active: {_DYNAMIC_MODEL_PATH}")
-        return None
-
-    try:
-        import joblib as _jl
-        _dynamic_model_data = _jl.load(_DYNAMIC_MODEL_PATH)
-        print(f"[classifier] Dynamic model loaded. Classes: {_dynamic_model_data['classes']}")
-    except Exception as e:
-        print(f"[classifier] Dynamic model load failed: {e}")
-
-    return _dynamic_model_data
+    # scikit-learn MLP 로드 비활성 (위 _try_load와 같은 이유) — 삭제하지 않고 주석 처리.
+    # if not os.path.exists(_DYNAMIC_MODEL_PATH):
+    #     print(f"[classifier] Dynamic model not found — rule-based swipe active: {_DYNAMIC_MODEL_PATH}")
+    #     return None
+    #
+    # try:
+    #     import joblib as _jl
+    #     _dynamic_model_data = _jl.load(_DYNAMIC_MODEL_PATH)
+    #     print(f"[classifier] Dynamic model loaded. Classes: {_dynamic_model_data['classes']}")
+    # except Exception as e:
+    #     print(f"[classifier] Dynamic model load failed: {e}")
+    #
+    # return _dynamic_model_data
+    return None
 
 
 def normalize_landmarks(landmarks):
