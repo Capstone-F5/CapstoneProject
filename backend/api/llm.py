@@ -7,6 +7,9 @@ POST /ai_modules/llm
 
 POST /ai_modules/llm/stream
 - SSE: data:{"token":"..."} ... data:{"action":{...}} ... data:{"done":true,"output":"..."}
+
+POST /ai_modules/llm/note
+- 프론트가 LLM 없이 규칙 기반으로 처리한 짧은 응답("네"/"아니요")을 대화 기록에만 남긴다.
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.cart_context import cart_lines_from_db
-from ai_modules.llm.memory import reset_memory
+from ai_modules.llm.memory import get_memory, reset_memory, save_and_prune
 from core.db import SessionLocal
 from core.llm_service import run_agent, run_agent_stream
 from dao import cart_dao
@@ -125,3 +128,24 @@ async def llm_stream(req: LLMRequest):
 async def llm_reset(session_id: str):
     await reset_memory(session_id)
     return {"ok": True, "session_id": session_id}
+
+
+class QuickReplyNote(BaseModel):
+    session_id: str
+    user_text: str = Field(..., max_length=200)
+    note: str = Field(..., max_length=300)
+
+
+@router.post("/llm/note", status_code=204)
+async def llm_note(body: QuickReplyNote):
+    """규칙 기반 빠른 응답을 LLM 대화 기록에 남긴다(LLM 호출 없음).
+
+    빠른 경로는 LLM을 거치지 않으므로 그대로 두면 이후 턴에서 LLM이 같은 질문을 다시 하거나
+    사용자의 답을 모르는 채 대화를 이어간다. 사용자 발화와 화면이 처리한 결과를 한 턴으로 저장한다.
+    기록 실패가 사용자 흐름을 막으면 안 되므로 예외는 삼킨다.
+    """
+    try:
+        memory = await get_memory(body.session_id)
+        await save_and_prune(memory, body.user_text, body.note)
+    except Exception:  # noqa: BLE001
+        pass

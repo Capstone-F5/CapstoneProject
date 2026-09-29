@@ -229,6 +229,16 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
           turn.quick = true
           turn.tAction = performance.now()
           reportVoiceTurn(turn, 'quick')
+          // LLM을 거치지 않았으므로 대화 기록에도 남겨 다음 턴의 문맥이 끊기지 않게 한다(실패해도 무시)
+          fetch('/ai_modules/llm/note', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: sessionIdRef.current,
+              user_text: text,
+              note: `(화면이 사용자의 ${quick === 'yes' ? '긍정' : '부정'} 응답을 바로 처리했습니다. 현재 화면: ${screenRef2.current ?? '알 수 없음'})`,
+            }),
+            keepalive: true,
+          }).catch(() => {})
           return
         }
         voiceTurnRef.current = turn
