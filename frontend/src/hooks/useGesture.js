@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
 
 // ── 카메라 설정 ──────────────────────────────────────────────────────────────
-const CAM_W   = 480
-const CAM_H   = 360
+const CAM_W   = 640
+const CAM_H   = 480
 const MAX_FPS = 15
 // 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
 const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
@@ -10,8 +10,86 @@ const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
 const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
 
+// ── 손 인식 엔진 (Web Worker + MediaPipe Tasks HandLandmarker) ───────────────
+// 추론을 메인 스레드 밖으로 빼는 실험용 엔진. 기본은 기존 @mediapipe/hands(메인 스레드)다.
+// Pi 4 실측: 기존 132ms/7.2fps, 워커 GPU 162ms/5.8fps, 워커 CPU 250ms/3.8fps — 모델 연산 자체가
+// 병목이라 워커로 옮겨도 빨라지지 않아 기본값으로 쓰지 않는다. ?mpengine=worker 로만 켠다.
+// 워커 초기화가 실패하면 기존 엔진으로 되돌아간다.
+const USE_WORKER_ENGINE = new URLSearchParams(window.location.search).get('mpengine') === 'worker'
+const HAND_WASM_BASE   = '/mediapipe-tasks/wasm'
+const HAND_MODEL_PATH  = '/mediapipe-tasks/hand_landmarker.task'
+// 'GPU'는 워커의 OffscreenCanvas WebGL2를 쓴다. 비교 측정용으로 ?mpdelegate=GPU|CPU 로 바꿀 수 있다.
+const HAND_DELEGATE    = new URLSearchParams(window.location.search).get('mpdelegate') === 'GPU' ? 'GPU' : 'CPU'
+const WORKER_INIT_TIMEOUT_MS = 120000
+
+// send({image})를 가진 엔진을 돌려준다(@mediapipe/hands와 같은 인터페이스).
+// send()는 결과가 onResults로 전달된 뒤 resolve된다.
+// 반환: { promise, cancel } — 초기화 중 언마운트되면(StrictMode 이중 마운트 등) cancel()로
+// 워커를 바로 끊어, wasm 컴파일이 두 번 겹쳐 초기화가 늘어지는 것을 막는다.
+function createWorkerEngine(onResults) {
+  let cancel
+  const promise = new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/handLandmarker.worker.js', import.meta.url), { type: 'module' })
+    let pending = null
+    let ready   = false
+
+    const fail = (err) => {
+      if (!ready) { worker.terminate(); reject(err) }
+    }
+    cancel = () => { clearTimeout(timer); fail(new Error('cancelled')) }
+    const timer = setTimeout(() => fail(new Error('워커 초기화 시간 초과')), WORKER_INIT_TIMEOUT_MS)
+
+    worker.onerror = (e) => fail(new Error(e.message || '워커 로드 실패'))
+    worker.onmessage = (e) => {
+      const m = e.data
+      if (m.type === 'ready') {
+        ready = true
+        clearTimeout(timer)
+        resolve({
+          async send({ image }) {
+            const bitmap = await createImageBitmap(image)
+            return new Promise((res, rej) => {
+              pending = { res, rej }
+              worker.postMessage({ type: 'frame', bitmap, ts: performance.now() }, [bitmap])
+            })
+          },
+          close() {
+            pending?.rej(new Error('closed'))
+            pending = null
+            worker.postMessage({ type: 'close' })
+          },
+        })
+      } else if (m.type === 'error') {
+        clearTimeout(timer)
+        fail(new Error(m.message))
+      } else if (m.type === 'result') {
+        const p = pending
+        pending = null
+        onResults({ multiHandLandmarks: m.landmarks, multiHandedness: m.handedness, inferMs: m.inferMs })
+        p?.res()
+      } else if (m.type === 'frameError') {
+        const p = pending
+        pending = null
+        p?.rej(new Error(m.message))
+      }
+    }
+
+    worker.postMessage({
+      type: 'init',
+      wasmBase: HAND_WASM_BASE,
+      modelPath: HAND_MODEL_PATH,
+      delegate: HAND_DELEGATE,
+      numHands: 1,
+      minDetectionConfidence: 0.7,
+      minPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    })
+  })
+  return { promise, cancel: () => cancel() }
+}
+
 // ── 포인터 스무딩 파라미터 ────────────────────────────────────────────────────
-const POINTER_MIN_CUTOFF = 0.15
+const POINTER_MIN_CUTOFF = 0.4
 const POINTER_BETA       = 50.0
 const POINTER_D_CUTOFF   = 1.0
 const POINTER_DEADZONE   = 0.0018
@@ -151,6 +229,15 @@ const CAM_MARGIN_TOP = 0.25   // 상: 기본 10% + 손가락 끝↔손바닥 중
 const CAM_MARGIN_BOT = 0.10
 const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
 const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
+
+// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 5% 앞에서 커서가 화면 끝에 닿는다.
+// 카메라 가장자리에서는 랜드마크 인식이 불안정해 모서리 도달이 어렵기 때문.
+const CAM_EDGE_PAD = 0.05
+
+// 활성 구역 내 0~1 좌표를 패딩만큼 잘라내고 다시 0~1로 늘린다.
+function _padNorm(v) {
+  return Math.max(0, Math.min(1, (v - CAM_EDGE_PAD) / (1 - 2 * CAM_EDGE_PAD)))
+}
 
 // ── 클라이언트 사이드 제스처 인식 ────────────────────────────────────────────
 
@@ -464,6 +551,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let stream   = null
     let video    = null
     let hands    = null
+    let cancelEngine = null
     let rafId    = null
     let active   = true
     let inflight = false
@@ -471,7 +559,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let cameraSettings = null
     const perf = {
       windowStarted: performance.now(), sent: 0, results: 0,
-      latencyTotal: 0, latencyMax: 0, sendStarted: 0,
+      latencyTotal: 0, latencyMax: 0, sendStarted: 0, workerTotal: 0,
+      handFrames: 0, handLosses: 0, prevHand: false, pointerFrames: 0,
     }
 
     const logPerformance = (now = performance.now()) => {
@@ -487,8 +576,12 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         avgInferenceMs: +avgLatency.toFixed(1),
         maxInferenceMs: +perf.latencyMax.toFixed(1),
         inflight,
+        engineInferMs: +(perf.workerTotal / Math.max(perf.results, 1)).toFixed(1),
+        handRate: +(perf.handFrames / Math.max(perf.results, 1)).toFixed(3),
+        pointerRate: +(perf.pointerFrames / Math.max(perf.results, 1)).toFixed(3),
+        handLosses: perf.handLosses,
       }
-      console.info('[useGesture:perf]', metrics)
+      console.info('[useGesture:perf]', JSON.stringify(metrics))
       fetch('/api/diagnostics/gesture-performance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -500,6 +593,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       perf.results = 0
       perf.latencyTotal = 0
       perf.latencyMax = 0
+      perf.workerTotal = 0
+      perf.handFrames = 0
+      perf.handLosses = 0
+      perf.pointerFrames = 0
     }
     let camAR    = AR_REF   // 카메라 실제 비율 (열린 후 갱신)
 
@@ -534,12 +631,17 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       const resultNow = performance.now()
       const latency = perf.sendStarted ? resultNow - perf.sendStarted : 0
       perf.results++
+      perf.workerTotal += results.inferMs ?? 0
       perf.latencyTotal += latency
       perf.latencyMax = Math.max(perf.latencyMax, latency)
       logPerformance(resultNow)
 
       const lms    = results.multiHandLandmarks || []
       const handed = results.multiHandedness     || []
+      const hasHand = lms.length > 0
+      if (hasHand) perf.handFrames++
+      if (perf.prevHand && !hasHand) perf.handLosses++
+      perf.prevHand = hasHand
 
       // 사용자의 오른손(MediaPipe "Left") 우선
       let activeIdx   = -1
@@ -588,9 +690,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
               wasActive = true
 
               // 절대 선형 매핑 — 방향별 마진 개별 적용
-              const normX = Math.max(0, Math.min(1, (px - CAM_MARGIN_L)   / CAM_ACTIVE_X))
-              const normY = Math.max(0, Math.min(1, (py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y))
+              const normX = _padNorm((px - CAM_MARGIN_L)   / CAM_ACTIVE_X)
+              const normY = _padNorm((py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y)
               const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
+              perf.pointerFrames++
               pointerRef.current?.({ x: sx, y: sy })
             } else {
               hidePointerSoon()
@@ -752,6 +855,20 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         // 각 리소스는 만들어지는 즉시 바깥 변수에 대입해, 한쪽이 실패해도
         // cleanup이 다른 쪽을 회수할 수 있게 한다.
         const handsReady = (async () => {
+          try {
+            if (!USE_WORKER_ENGINE) throw new Error('worker engine disabled')
+            const creating = createWorkerEngine(handleResults)
+            cancelEngine = creating.cancel
+            const engine = await creating.promise
+            if (!active) { engine.close(); return }
+            hands = engine
+            console.info(`[useGesture] 손 인식 엔진: Worker HandLandmarker (${HAND_DELEGATE})`)
+            return
+          } catch (err) {
+            if (!active) return
+            if (USE_WORKER_ENGINE) console.warn('[useGesture] 워커 엔진 실패 — 메인 스레드 @mediapipe/hands로 대체:', err?.message ?? err)
+          }
+          if (!active) return
           const { Hands } = await import('@mediapipe/hands')
           // StrictMode 이중 마운트에서 이미 정리된 실행이 여기까지 오면 Hands 인스턴스가
           // 둘이 되고, Emscripten 전역 Module을 동시에 초기화하다
@@ -816,6 +933,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
+      cancelEngine?.()
       clearTimeout(inflightWatchdog)
       clearTimeout(hideTimer)
       if (rafId) cancelAnimationFrame(rafId)

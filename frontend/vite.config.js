@@ -24,6 +24,9 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, '')
   const useHttps = env.VITE_HTTPS !== 'false'
+  // start_servers.ps1이 빈 포트를 찾아 BACKEND_PORT로 넘겨준다(기본 8000).
+  const backendPort = process.env.BACKEND_PORT || env.PORT || '8000'
+  const backendHttp = `http://localhost:${backendPort}`
 
   return {
     customLogger: logger,
@@ -35,6 +38,8 @@ export default defineConfig(({ mode }) => {
     ],
     envDir: projectRoot,
     base: './',
+    // 손 인식 워커는 모듈 워커(MediaPipe wasm 로더를 import()로 불러옴)라 빌드도 es 형식이어야 한다.
+    worker: { format: 'es' },
     optimizeDeps: {
       // vad-react / vad-web: CJS → ESM 변환을 위해 pre-bundle 포함
       include: ['@ricky0123/vad-react', '@ricky0123/vad-web'],
@@ -77,10 +82,10 @@ export default defineConfig(({ mode }) => {
         'Cross-Origin-Embedder-Policy': 'credentialless',
       },
       proxy: {
-        '/ws': { target: 'ws://localhost:8000', ws: true },
-        '/api': { target: 'http://localhost:8000' },
-        '/ai_modules': { target: 'http://localhost:8000' },
-        '/static': { target: 'http://localhost:8000' },
+        '/ws': { target: `ws://localhost:${backendPort}`, ws: true },
+        '/api': { target: backendHttp },
+        '/ai_modules': { target: backendHttp },
+        '/static': { target: backendHttp },
       },
     },
   }
