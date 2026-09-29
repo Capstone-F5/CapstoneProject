@@ -12,6 +12,11 @@ from typing import Any, AsyncIterator
 
 from langchain_core.messages import SystemMessage
 
+from core.cart_context import (
+    cart_summary as _cart_summary,
+    format_cart_status_reply,
+    is_cart_status_query,
+)
 from ai_modules.llm.action_context import (
     get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot,
 )
@@ -65,33 +70,6 @@ def _prepend_language(chat_history: list, language: str | None) -> list:
     if not instruction:
         return chat_history
     return [SystemMessage(content=instruction)] + chat_history
-
-
-def _cart_summary(cart: list) -> str:
-    """장바구니 스냅샷을 사람이 읽는 요약 문자열로 변환."""
-    if not cart:
-        return "현재 장바구니: 비어 있음"
-    lines = ["현재 장바구니: (수정/삭제 시 cart_id로 정확한 줄을 지정)"]
-    total = 0
-    for c in cart:
-        name = c.get("name") or f"메뉴#{c.get('menu_id')}"
-        qty = c.get("quantity", 1)
-        price = c.get("unit_price", 0)
-        subtotal = qty * price
-        total += subtotal
-        type_label = "세트" if c.get("item_type") == "set" else "단품"
-        excl = c.get("exclusion", "없음")
-        cid = c.get("cart_id")
-        line = f"  - cart_id={cid} | menu_id={c.get('menu_id')} | {name}({type_label}) x{qty}  소계 {subtotal}원"
-        if excl and excl != "없음":
-            line += f"  [{excl}]"
-        side = c.get("side")
-        drink = c.get("drink")
-        if side or drink:
-            line += f"  [사이드:{side} / 음료:{drink}]"
-        lines.append(line)
-    lines.append(f"  합계: {total}원")
-    return "\n".join(lines)
 
 
 # 화면별 가능 동작 짧은 안내 (프롬프트 [화면별 가능 동작] 과 일치시켜 유지)
@@ -172,6 +150,20 @@ async def run_agent_stream(
     set_user_input(user_input)
     set_checkout_snapshot(checkout_snapshot(session_id))
     reset_actions()
+
+    if is_cart_status_query(user_input):
+        output = format_cart_status_reply(cart, language, user_input)
+        try:
+            memory = await get_memory(session_id)
+            await save_and_prune(memory, user_input, output)
+        except Exception:  # noqa: BLE001 - cart status must not depend on memory/model health
+            pass
+        log_turn(
+            session_id=session_id, user_input=user_input, output=output, actions=[],
+            language=language, screen=screen, order_type=order_type,
+        )
+        yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
+        return
 
     output_parts: list[str] = []
     in_tool_call = False
@@ -268,6 +260,24 @@ async def run_agent(
     set_user_input(user_input)
     set_checkout_snapshot(checkout_snapshot(session_id))
     reset_actions()
+
+    if is_cart_status_query(user_input):
+        output = format_cart_status_reply(cart, language, user_input)
+        try:
+            memory = await get_memory(session_id)
+            await save_and_prune(memory, user_input, output)
+        except Exception:  # noqa: BLE001 - cart status must not depend on memory/model health
+            pass
+        log_turn(
+            session_id=session_id, user_input=user_input, output=output, actions=[],
+            language=language, screen=screen, order_type=order_type,
+        )
+        return {
+            "session_id": session_id,
+            "output": output,
+            "actions": [],
+            "intermediate_steps": [],
+        }
 
     memory = await get_memory(session_id)
     executor = get_agent_executor()

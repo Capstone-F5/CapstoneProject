@@ -1,8 +1,8 @@
-import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
-
 // ─────────────────────────────────────────────────────────────────
+import { normalizeSetOptions } from './menuOptions'
+
 // GET /api/menu?locale=ko → { categories: [CategoryOut], menu_items: { burger|side|beverage: [MenuItemOut] } }
-// 이 함수가 백엔드 응답을 화면이 기대하는 { categories, menuItems, setSides, setDrinks, setSurcharge } 로 변환한다.
+// 이 함수가 백엔드 응답을 화면이 기대하는 { categories, menuItems } 형태로 변환한다.
 // ─────────────────────────────────────────────────────────────────
 
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
@@ -39,11 +39,14 @@ function adaptItem(i, locale) {
   // '없음'은 "제외 옵션 없음"을 나타내는 내부 값으로 앱 전역에서 그대로 비교되므로
   // (App.jsx/ItemDetailModal.jsx/CartScreen.jsx 등) 언어와 무관하게 항상 이 문자열을 쓴다.
   // 화면에 보여줄 때만 각 화면에서 로캘에 맞게 표시 문구로 바꾼다.
+  const options = i.options ?? []
+  const availableOptions = options.filter(o => o.is_available !== false)
   const exclusions = [
     '없음',
-    ...i.options.filter(o => o.option_group === 'EXCLUDE').map(o => (isKo ? o.name_ko : o.name_en)),
+    ...availableOptions.filter(o => o.option_group === 'EXCLUDE').map(o => (isKo ? o.name_ko : o.name_en)),
   ]
-  const hasSet = i.options.some(o => o.option_group === 'SET_UPGRADE')
+  const hasSet = availableOptions.some(o => o.option_group === 'SET_UPGRADE')
+  const { setSides, setDrinks, setSurcharge } = normalizeSetOptions(options)
   // 외국어 locale에서는 한국어 설명 텍스트 대신 kcal 수치만 표시
   const desc = isKo ? stripNamePrefix(i.description) : parseKcalStr(i.description)
   return {
@@ -59,13 +62,16 @@ function adaptItem(i, locale) {
     desc,
     hasSet,
     exclusions,
+    setSides,
+    setDrinks,
+    setSurcharge,
     // 이미지는 DB(menu_items.image_url/set_image_url) 매칭을 그대로 사용 — 관리자 대시보드에서
     // 나중에 이 필드를 직접 관리할 수 있도록 프론트에 하드코딩된 이름 매핑을 두지 않는다.
     image: i.image_url ?? null,
     setImage: i.set_image_url ?? i.image_url ?? null,
     isPopular: i.is_popular,
     // 원본 options 보존 — App.jsx가 담기/카트 복원 시 selected_options 조립에 재사용
-    options: i.options,
+    options,
   }
 }
 
@@ -117,11 +123,5 @@ export async function fetchMenuData(locale = 'ko') {
     categories,
     menuItems,
     activeDiscounts,
-    // 세트 사이드/음료 선택 UI는 이름·이미지 표시용으로 menuData.js 상수를 계속 사용한다.
-    // (실제 가격·주문 반영은 백엔드의 SET_SIDE/SET_DRINK 옵션이 담당 — 이름 문자열이
-    //  backend/core/seed.py 의 시드값과 반드시 동일해야 한다)
-    setSides: SET_SIDES,
-    setDrinks: SET_DRINKS,
-    setSurcharge: SET_SURCHARGE,
   }
 }

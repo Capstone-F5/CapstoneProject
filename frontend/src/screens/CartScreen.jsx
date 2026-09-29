@@ -859,14 +859,13 @@ function CashIllustration() {
   )
 }
 
-function translateOptionName(korName, locale) {
+function translateOptionName(korName, locale, nameEn = null) {
   if (!korName || locale === 'ko') return korName
   const all = [...SET_SIDES, ...SET_DRINKS]
   const found = all.find(x => x.name === korName)
-  if (!found) return korName
-  if (locale === 'ja') return found.nameJa ?? found.nameEn ?? korName
-  if (locale === 'zh') return found.nameZh ?? found.nameEn ?? korName
-  return found.nameEn ?? korName
+  if (locale === 'ja') return found?.nameJa ?? found?.nameEn ?? nameEn ?? korName
+  if (locale === 'zh') return found?.nameZh ?? found?.nameEn ?? nameEn ?? korName
+  return found?.nameEn ?? nameEn ?? korName
 }
 
 /* ── CartItem ── */
@@ -874,6 +873,9 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
   const t = useT()
   const { locale } = useLocale()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
+  const exclusionLabel = item.exclusions?.length
+    ? item.exclusions.map(option => translateOptionName(option.name, locale, option.nameEn)).join(', ')
+    : item.exclusion
   return (
     <div style={{
       background: '#fff', borderRadius: 14, marginBottom: 12,
@@ -936,9 +938,9 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
             gridColumn: '2 / -1', gridRow: 2, background: '#ededed',
             borderRadius: 10, overflow: 'hidden', alignSelf: 'center', marginTop: 4,
           }}>
-            {item.exclusion && item.exclusion !== '없음' && <SubRow label={item.exclusion} extra={0} />}
-            {item.side  && <SubRow label={translateOptionName(item.side,  locale)} extra={item.sideExtra}  />}
-            {item.drink && <SubRow label={translateOptionName(item.drink, locale)} extra={item.drinkExtra} />}
+            {item.exclusion && item.exclusion !== '없음' && <SubRow label={exclusionLabel} extra={0} />}
+            {item.side  && <SubRow label={translateOptionName(item.side,  locale, item.sideEn)} extra={item.sideExtra}  />}
+            {item.drink && <SubRow label={translateOptionName(item.drink, locale, item.drinkEn)} extra={item.drinkExtra} />}
           </div>
         )}
       </div>

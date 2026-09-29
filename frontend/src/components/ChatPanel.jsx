@@ -57,6 +57,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const activeRef       = useRef(true)
   const isTypingRef     = useRef(false)
   const sessionIdRef    = useRef(getSessionId())
+  const sessionGenerationRef = useRef(0)
+  const activeLlmRequestRef = useRef(null)
+  const activeSttRequestRef = useRef(null)
   const audioRef        = useRef(null)    // 재생 중 Audio — 정리용
   // 스트리밍 TTS 큐: LLM 토큰이 쌓이는 동안 문장 단위로 TTS를 순차 재생
   const ttsQueueRef  = useRef([])   // 재생 대기 중인 텍스트 청크
@@ -122,6 +125,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   speechEndHandlerRef.current = useCallback(async (audio) => {
     setListening(false)
     if (!activeRef.current) return
+    const requestGeneration = sessionGenerationRef.current
 
     // 이미 STT 처리 중이면 건너뜀 (동시 STT 방지)
     // isTypingRef(LLM 생성 중)는 여기서 차단하지 않음 — STT 후 pendingTextRef에 큐잉
@@ -134,6 +138,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
     // STT 구간 시작 — 이 플래그로 동일 구간에 다른 발화가 끼어드는 것을 차단
     isProcessingRef.current = true
+    const controller = new AbortController()
+    activeSttRequestRef.current = controller
 
     const form = new FormData()
     form.append('audio', wavBlob, 'audio.wav')
@@ -142,8 +148,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     if (detectedLangRef.current) form.append('language', detectedLangRef.current)
 
     try {
-      const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form })
+      const res  = await fetch('/ai_modules/stt', { method: 'POST', body: form, signal: controller.signal })
       const data = await res.json()
+      if (requestGeneration !== sessionGenerationRef.current) return
       const text = (data.text || '').trim()
 
       // 첫 발화에서 언어 감지 → 이후 대화 전체에 고정
@@ -172,9 +179,13 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         }
       }
     } catch (e) {
+      if (requestGeneration !== sessionGenerationRef.current) return
       console.error('[ChatPanel] STT error:', e)
     } finally {
-      isProcessingRef.current = false   // STT 구간 종료
+      if (requestGeneration === sessionGenerationRef.current) {
+        if (activeSttRequestRef.current === controller) activeSttRequestRef.current = null
+        isProcessingRef.current = false   // STT 구간 종료
+      }
     }
   }, [setLocale])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -330,6 +341,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   // ─── LLM: SSE 스트리밍 ───────────────────────────────────────────────────────
 
   async function handleBotReply(userText) {
+    const requestGeneration = sessionGenerationRef.current
+    const controller = new AbortController()
+    activeLlmRequestRef.current = controller
     // 이전 TTS 큐/오디오 정리 후 새 응답 시작
     clearTtsQueue()
     setIsTyping(true)
@@ -344,6 +358,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     try {
       const res = await fetch('/ai_modules/llm/stream', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionIdRef.current,
@@ -370,6 +385,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
       while (true) {
         const { done, value } = await reader.read()
+        if (requestGeneration !== sessionGenerationRef.current) return
         if (done) break
         buffer += decoder.decode(value, { stream: true })
 
@@ -389,7 +405,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
               )
             }
-            if (data.action) {
+            if (data.action && requestGeneration === sessionGenerationRef.current) {
               onActionRef.current?.(data.action)
             }
             if (data.done && data.output) {
@@ -415,6 +431,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         }
       }
     } catch (e) {
+      if (requestGeneration !== sessionGenerationRef.current) return
       replyText = connectionErrorMessage(detectedLangRef.current)
       flushTtsBuf(true)
       setMessages(prev =>
@@ -423,6 +440,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       console.error('[ChatPanel] LLM error:', e)
     }
 
+    if (requestGeneration !== sessionGenerationRef.current) return
+    if (activeLlmRequestRef.current === controller) activeLlmRequestRef.current = null
     setIsTyping(false)
     isTypingRef.current = false
 
@@ -481,18 +500,24 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const handleReset = async () => {
       // 백엔드 LLM 메모리 초기화
       const oldSid = sessionIdRef.current
-      try {
-        await fetch(`/ai_modules/llm/reset?session_id=${oldSid}`, { method: 'POST' })
-      } catch {}
-
-      // 새 세션 ID 발급 (카트 API도 동일 모듈을 통해 이 새 세션을 바라보게 됨)
+      sessionGenerationRef.current += 1
+      activeLlmRequestRef.current?.abort()
+      activeLlmRequestRef.current = null
+      activeSttRequestRef.current?.abort()
+      activeSttRequestRef.current = null
+      isProcessingRef.current = false
+      pendingTextRef.current = null
+      clearTtsQueue()
+      // 새 ID를 먼저 저장해 이후 장바구니 요청과 즉시 같은 세션을 바라보게 한다.
       sessionIdRef.current = newSessionId()
-
-      // 프론트 상태 초기화
+      cartRef.current = []
       detectedLangRef.current = null
       setMessages(INIT_MESSAGES)
       setIsTyping(false)
       isTypingRef.current = false
+      try {
+        await fetch(`/ai_modules/llm/reset?session_id=${oldSid}`, { method: 'POST' })
+      } catch {}
     }
     window.addEventListener('kiosk-session-reset', handleReset)
     return () => window.removeEventListener('kiosk-session-reset', handleReset)

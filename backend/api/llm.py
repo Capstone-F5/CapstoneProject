@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from core.cart_context import cart_lines_from_db
 from ai_modules.llm.memory import reset_memory
 from core.db import SessionLocal
 from core.llm_service import run_agent, run_agent_stream
@@ -24,34 +25,24 @@ router = APIRouter(prefix="/ai_modules", tags=["llm"])
 
 
 async def _authoritative_cart(session_id: str, fallback: list[dict]) -> list[dict]:
-    """LLM 컨텍스트는 React state가 아닌 DB 장바구니를 최우선으로 사용한다.
+    """LLM 컨텍스트는 DB 카트를 우선 사용하고, 아직 행이 없으면 요청 스냅샷을 쓴다.
 
-    터치 담기 직후에는 브라우저의 cart state가 아직 재렌더되지 않을 수 있다. 이때
-    빈 스냅샷을 그대로 LLM에 넘기면 실제로 담긴 메뉴가 없다고 잘못 안내할 수 있다.
+    터치 담기 직후에는 브라우저 상태와 DB 커밋 사이에 짧은 시차가 생길 수 있다.
+    같은 요청에서 전달된 스냅샷을 폴백으로 사용해 장바구니가 비었다고 잘못 안내하지 않는다.
     """
+    fallback = fallback or []
     try:
         async with SessionLocal() as db:
             cart = await cart_dao.get_cart_with_items(db, session_id)
-            if cart is None:
-                return []
-            return [
-                {
-                    "cart_id": item.id,
-                    "menu_id": item.menu_item_id,
-                    "name": item.menu_item.name_ko if item.menu_item else None,
-                    "quantity": item.quantity,
-                    "unit_price": float(item.unit_price),
-                    "item_type": "single",
-                    "exclusion": item.special_note or "없음",
-                }
-                for item in cart.items
-            ]
+            return cart_lines_from_db(cart, fallback)
     except Exception:
         # DB가 일시적으로 읽히지 않는 경우에는 기존 클라이언트 스냅샷으로 계속 처리한다.
         return fallback
 
 
 class CartLine(BaseModel):
+    cart_item_id: str | float | int | None = None
+    # Accept older clients until every kiosk has sent the normalized field.
     cart_id: str | float | int | None = None
     menu_id: str | int
     name: str | None = None
@@ -59,8 +50,10 @@ class CartLine(BaseModel):
     quantity: int = 1
     unit_price: float = 0
     exclusion: str = "없음"
+    exclusions: list[str] = Field(default_factory=list)
     side: str | None = None
     drink: str | None = None
+    special_note: str | None = None
 
 
 class ModalState(BaseModel):

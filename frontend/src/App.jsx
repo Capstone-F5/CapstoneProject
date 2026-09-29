@@ -19,6 +19,7 @@ import { useApproachDetector } from './hooks/useApproachDetector'
 import { useFingerCount } from './hooks/useFingerCount'
 import { useSerial } from './hooks/useSerial'
 import { GestureUIProvider } from './contexts/GestureUIContext'
+import { findMenuOption } from './services/menuOptions'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -45,25 +46,39 @@ const ORDER_TYPE_GESTURE_GRACE_MS = 900
 // 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
 const CONTROL_BAR_HEIGHT = 58
 
-// 메뉴 원본(options 포함)에서 특정 그룹의 옵션을 이름으로 찾는다.
-// name이 없으면(SET_UPGRADE처럼 단일 옵션인 경우) 그룹만으로 찾는다.
-function findOption(menu, group, name) {
-  return menu?.options?.find(o => o.option_group === group && (name == null || o.name_ko === name))
-}
-
 // 백엔드 CartItemOut → 화면(CartItem 등)이 기대하는 로컬 카트 항목 형태로 역매핑.
 function adaptCartItem(ci, menuById) {
   const menu = menuById[ci.menu_item_id]
   const opts = ci.selected_options || []
   const matchGroup = (group) => {
     for (const sel of opts) {
-      const opt = menu?.options?.find(o => o.id === sel.option_id)
+      const opt = menu?.options?.find(o => o.id === sel.option_id) ?? (
+        sel.option_group === group ? {
+          id: sel.option_id,
+          option_group: sel.option_group,
+          name_ko: sel.name,
+          name_en: sel.name_en,
+          additional_price: sel.additional_price,
+        } : null
+      )
       if (opt && opt.option_group === group) return opt
     }
     return null
   }
+  const matchGroups = (group) => opts.flatMap(sel => {
+    const option = menu?.options?.find(o => o.id === sel.option_id) ?? (
+      sel.option_group === group ? {
+        id: sel.option_id,
+        option_group: sel.option_group,
+        name_ko: sel.name,
+        name_en: sel.name_en,
+        additional_price: sel.additional_price,
+      } : null
+    )
+    return option?.option_group === group ? [option] : []
+  })
   const isSet    = !!matchGroup('SET_UPGRADE')
-  const exclOpt  = matchGroup('EXCLUDE')
+  const exclusionOptions = matchGroups('EXCLUDE')
   const sideOpt  = matchGroup('SET_SIDE')
   const drinkOpt = matchGroup('SET_DRINK')
   return {
@@ -79,10 +94,13 @@ function adaptCartItem(ci, menuById) {
     finalPrice: Number(ci.final_price ?? ci.unit_price),
     discountAmount: Number(ci.discount_amount ?? 0),
     appliedDiscounts: ci.applied_discounts ?? [],
-    exclusion: exclOpt?.name_ko ?? '없음',
+    exclusion: exclusionOptions.map(option => option.name_ko).join(', ') || '없음',
+    exclusions: exclusionOptions.map(option => ({ name: option.name_ko, nameEn: option.name_en })),
     side: sideOpt?.name_ko ?? null,
+    sideEn: sideOpt?.name_en ?? null,
     sideExtra: Number(sideOpt?.additional_price ?? 0),
     drink: drinkOpt?.name_ko ?? null,
+    drinkEn: drinkOpt?.name_en ?? null,
     drinkExtra: Number(drinkOpt?.additional_price ?? 0),
     special_note: ci.special_note,
     key: ci.cart_item_id,
@@ -97,6 +115,7 @@ function AppContent() {
   const activeDiscounts = menuData?.activeDiscounts ?? []
   const [screen,    setScreen]    = useState('start')
   const [cart,      setCart]      = useState([])
+  const cartRequestIdRef = useRef(0)
   const [orderType, setOrderType] = useState(null)
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
@@ -531,7 +550,9 @@ function AppContent() {
   const nav = (s) => {
     if (s === 'start') {
       // 새 손님 시작 — 채팅 닫기, 언어·세션 초기화
+      cartRequestIdRef.current += 1
       setChatOpen(false)
+      setCart([])
       setLocale('ko')
       sessionStorage.removeItem('kiosk_detected_lang')
       // 세션 ID 재발급은 ChatPanel의 kiosk-session-reset 핸들러(newSessionId())가 전담
@@ -543,12 +564,17 @@ function AppContent() {
 
   // 백엔드 카트(session_id 기준)가 단일 소스 — 서버에서 다시 받아와 로컬 state에 반영한다.
   const refreshCart = useCallback(async () => {
+    const requestId = ++cartRequestIdRef.current
     try {
       const data = await cartService.fetchCart()
-      setCart(data.items.map(ci => adaptCartItem(ci, menuByIdRef.current)))
+      if (requestId === cartRequestIdRef.current) {
+        setCart(data.items.map(ci => adaptCartItem(ci, menuByIdRef.current)))
+      }
     } catch (e) {
-      console.error('[cart] refresh 실패:', e)
-      showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
+      if (requestId === cartRequestIdRef.current) {
+        console.error('[cart] refresh 실패:', e)
+        showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
+      }
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -559,13 +585,13 @@ function AppContent() {
 
     const selected_options = []
     if (draft.type === 'set') {
-      const su = findOption(menu, 'SET_UPGRADE')
+      const su = findMenuOption(menu, 'SET_UPGRADE')
       if (su) selected_options.push({ option_id: su.id, name: su.name_ko })
-      if (draft.side)  { const s = findOption(menu, 'SET_SIDE',  draft.side);  if (s) selected_options.push({ option_id: s.id, name: s.name_ko }) }
-      if (draft.drink) { const d = findOption(menu, 'SET_DRINK', draft.drink); if (d) selected_options.push({ option_id: d.id, name: d.name_ko }) }
+      if (draft.side)  { const s = findMenuOption(menu, 'SET_SIDE',  draft.side);  if (s) selected_options.push({ option_id: s.id, name: s.name_ko }) }
+      if (draft.drink) { const d = findMenuOption(menu, 'SET_DRINK', draft.drink); if (d) selected_options.push({ option_id: d.id, name: d.name_ko }) }
     }
     if (draft.exclusion && draft.exclusion !== '없음') {
-      const ex = findOption(menu, 'EXCLUDE', draft.exclusion)
+      const ex = findMenuOption(menu, 'EXCLUDE', draft.exclusion)
       if (ex) selected_options.push({ option_id: ex.id, name: ex.name_ko })
     }
 
@@ -585,6 +611,7 @@ function AppContent() {
 
   // 낙관적 업데이트(즉각 반응) 후 서버에 반영, 실패하면 refreshCart로 서버 진실을 되돌림
   const updateQty = async (cartId, qty) => {
+    cartRequestIdRef.current += 1
     setCart(prev => qty <= 0 ? prev.filter(c => c.cartId !== cartId)
                               : prev.map(c => c.cartId === cartId ? { ...c, qty } : c))
     try {
@@ -598,6 +625,7 @@ function AppContent() {
   }
 
   const clearCart = async () => {
+    cartRequestIdRef.current += 1
     setCart([])
     try {
       await cartService.clearCartApi()
@@ -609,15 +637,17 @@ function AppContent() {
   // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
   const cartForLLM = useMemo(() =>
     cart.map(c => ({
-      cart_id:   c.cartId,
+      cart_item_id: c.cartId,
       menu_id:   c.id,
       name:      c.name,
       item_type: c.type,
       quantity:  c.qty,
-      unit_price: c.unitPrice,
+      unit_price: c.finalPrice ?? c.unitPrice,
       exclusion: c.exclusion,
+      exclusions: c.exclusions?.map(option => option.name) ?? [],
       side:      c.side,
       drink:     c.drink,
+      special_note: c.special_note,
     }))
   , [cart])
 
@@ -788,6 +818,7 @@ function AppContent() {
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = cart.reduce((sum, c) => sum + (c.finalPrice ?? c.unitPrice) * c.qty, 0)
+  const showControlBar = screen === 'start'
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, menuData, activeDiscounts, isLoading: isMenuLoading, error: menuError, retry: retryMenu }
 
   const screens = {
@@ -954,7 +985,7 @@ function AppContent() {
           display: 'flex', flexDirection: 'column',
           height: '100dvh', minHeight: '100vh',
           overflow: 'hidden',
-          paddingBottom: CONTROL_BAR_HEIGHT,
+          paddingBottom: showControlBar ? CONTROL_BAR_HEIGHT : 0,
         }}>
           {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
@@ -982,9 +1013,8 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 항상 화면 맨 아래 고정
-             (음성인식 UI가 열려도 그 아래에 그대로 고정 — 위로 밀려 올라가지 않음) ── */}
-        <div
+        {/* ── 접근성 컨트롤 바 — 주문 시작 전 화면에서만 표시 ── */}
+        {showControlBar && <div
           style={{
             position: 'fixed',
             bottom: 0,
@@ -1023,14 +1053,14 @@ function AppContent() {
             ko={`숫자인식 ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Finger ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
-          {navigator?.serial && (
+          {navigator?.serial && serialPortCount !== 2 && (
             <ControlText
               onClick={serialRequestPermission}
               ko={`시리얼 ${serialPortCount}개`}
               en={`Serial ${serialPortCount}`}
             />
           )}
-        </div>
+        </div>}
       </GestureUIProvider>
   )
 }

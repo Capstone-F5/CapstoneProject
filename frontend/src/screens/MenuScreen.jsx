@@ -313,7 +313,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     )
   }
 
-  const { categories, menuItems, setSides, setDrinks, setSurcharge, activeDiscounts = [] } = menuData
+  const { categories, menuItems, activeDiscounts = [] } = menuData
+  const modalSetSurcharge = modalItem?.setSurcharge ?? 0
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -542,9 +543,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           item={modalItem}
           onSelect={handleTypeSelect}
           onClose={closeModal}
-          setSurcharge={setSurcharge}
+          setSurcharge={modalSetSurcharge}
           singleDiscount={getServerDiscount(modalItem)}
-          setDiscount={getSetDiscount(modalItem, setSurcharge)}
+          setDiscount={getSetDiscount(modalItem, modalSetSurcharge)}
         />
       )}
 
@@ -555,9 +556,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           type={modalType}
           onAdd={handleAdd}
           onClose={closeModal}
-          setSides={setSides}
-          setDrinks={setDrinks}
-          setSurcharge={setSurcharge}
+          setSides={modalItem.setSides ?? []}
+          setDrinks={modalItem.setDrinks ?? []}
+          setSurcharge={modalSetSurcharge}
           initialQty={voiceOpts?.qty ?? null}
           initialExclusion={voiceOpts?.exclusion ?? null}
           initialSideName={voiceOpts?.sideName ?? null}

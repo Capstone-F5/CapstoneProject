@@ -14,6 +14,7 @@ from langchain_core.tools import tool
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
 from .action_context import push_action, get_user_input, get_checkout_snapshot
 from .session_context import get_session_id
+from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
 from . import checkout_progress
 from .rag import search_menu as _rag_search_menu
@@ -282,13 +283,18 @@ def add_item(
     return msg
 
 @tool
-def remove_item(cart_item_id: str) -> str:
+def remove_item(cart_item_id: str | None = None) -> str:
     """장바구니에서 특정 항목을 삭제한다.
     Args:
-        cart_item_id: 삭제할 장바구니 항목의 UUID. get_cart_status로 확인 가능.
+        cart_item_id: 삭제할 장바구니 항목의 UUID. 생략 시 항목이 하나일 때만 자동 선택한다.
     """
     session_id = get_session_id()
     try:
+        cart = _run(api_client.get_cart(session_id))
+        cart_item, error = resolve_cart_item(cart, cart_item_id)
+        if error:
+            return error
+        cart_item_id = cart_item["cart_item_id"]
         _run(api_client.remove_cart_item(session_id, cart_item_id))
     except Exception as e:
         return _friendly_error("삭제 실패", e)
@@ -298,47 +304,63 @@ def remove_item(cart_item_id: str) -> str:
 
 @tool
 def update_item_options(
-    cart_item_id: str,
+    cart_item_id: str | None = None,
     quantity: int | None = None,
+    item_type: str | None = None,
     side: str | None = None,
     drink: str | None = None,
     exclusions: list[str] | None = None,
     special_note: str | None = None,
 ) -> str:
-    """장바구니 항목의 수량 또는 옵션을 변경한다.
+    """장바구니 항목의 수량, 단품/세트 여부 또는 옵션을 변경한다.
     Args:
-        cart_item_id: 변경할 장바구니 항목 UUID.
+        cart_item_id: 변경할 장바구니 항목 UUID. 생략 시 항목이 하나일 때만 자동 선택한다.
         quantity: 새 수량.
+        item_type: 단품/세트 전환 시 single 또는 set. 세트로 바꿀 때 사이드와 음료도 지정한다.
         side: 새 세트 사이드 이름(세트 항목에만 해당). 예: "치즈스틱"
         drink: 새 세트 음료 이름(세트 항목에만 해당). 예: "콜라"
         exclusions: 새 제외 옵션 목록.
         special_note: 새 특이사항.
     """
     session_id = get_session_id()
+    if item_type not in (None, "single", "set"):
+        return "오류: item_type은 single 또는 set이어야 합니다."
+    if item_type == "single" and (side is not None or drink is not None):
+        return "단품에는 사이드나 음료 옵션을 지정할 수 없습니다."
+    if not any(value is not None for value in (quantity, item_type, side, drink, exclusions, special_note)):
+        return "변경할 내용을 알려주세요."
+
+    try:
+        cart = _run(api_client.get_cart(session_id))
+        cart_item, error = resolve_cart_item(cart, cart_item_id)
+        if error:
+            return error
+        cart_item_id = cart_item["cart_item_id"]
+    except Exception as e:
+        return _friendly_error("장바구니 조회 실패", e)
+
     payload: dict = {}
     if quantity is not None:
         payload["quantity"] = quantity
     if special_note is not None:
         payload["special_note"] = special_note
 
-    if exclusions is not None or side is not None or drink is not None:
+    if exclusions is not None or side is not None or drink is not None or item_type is not None:
         # exclusions/side/drink 가 그동안 payload에 전혀 반영되지 않아 "재료 빼줘",
         # "사이드 바꿔줘" 같은 후속 요청이 조용히 무시되던 버그 수정. 지정되지 않은
         # 그룹(세트업그레이드 등)의 기존 선택은 그대로 유지하고 해당 그룹만 교체한다.
         try:
-            cart = _run(api_client.get_cart(session_id))
-            cart_item = next(
-                (ci for ci in cart.get("items", []) if ci["cart_item_id"] == cart_item_id), None
-            )
-            if cart_item is None:
-                return f"오류: 장바구니에서 해당 항목을 찾을 수 없습니다 ({cart_item_id})"
             menu_item = _run(api_client.fetch_menu_item_by_id(cart_item["menu_item_id"]))
         except Exception as e:
             return _friendly_error("옵션 조회 실패", e)
 
+        if menu_item is None:
+            return f"오류: 메뉴 정보를 찾을 수 없습니다 ({cart_item['menu_item_id']})"
         options = (menu_item or {}).get("options", [])
         option_by_id = {o["id"]: o for o in options}
         replace_groups = set()
+        if item_type is not None:
+            replace_groups.update({"SET_UPGRADE", "SET_SIDE", "SET_DRINK"})
         if exclusions is not None:
             replace_groups.add("EXCLUDE")
         if side is not None:
@@ -352,6 +374,13 @@ def update_item_options(
         ]
 
         new_selected = []
+        if item_type == "set":
+            set_opt = next((o for o in options if o.get("option_group") == "SET_UPGRADE"), None)
+            if set_opt is None:
+                return f"오류: {menu_item['name_ko']}는 세트 주문이 불가합니다."
+            if not side or not drink:
+                return "세트로 변경하려면 사이드와 음료를 모두 확인해야 합니다. 고객에게 먼저 물어보세요."
+            new_selected.append({"option_id": set_opt["id"], "name": set_opt["name_ko"]})
         for excl in (exclusions or []):
             opt = _find_option_by_name(options, "EXCLUDE", excl, available_only=True)
             if opt:
@@ -386,22 +415,7 @@ def get_cart_status() -> str:
     except Exception as e:
         return _friendly_error("장바구니 조회 실패", e)
 
-    items = cart.get("items", [])
-    if not items:
-        return "장바구니가 비어있습니다."
-
-    lines = ["[현재 장바구니]"]
-    for item in items:
-        opts = ", ".join(o["name"] for o in item.get("selected_options", []))
-        line = f"- {item['name_ko']} x{item['quantity']} ({int(float(item['unit_price']))}원)"
-        if opts:
-            line += f" [{opts}]"
-        if item.get("special_note"):
-            line += f" [{item['special_note']}]"
-        line += f" (cart_item_id: {item['cart_item_id']})"
-        lines.append(line)
-    lines.append(f"합계: {int(float(cart.get('total', 0)))}원")
-    return "\n".join(lines)
+    return cart_status_text(cart)
 
 @tool
 def clear_cart() -> str:
