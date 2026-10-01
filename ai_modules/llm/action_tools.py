@@ -12,7 +12,8 @@ from langchain_core.tools import tool
 #   action_context.py 에 있던 전역 변수(_session_id) 방식은 동시 요청 시 서로 다른 세션의
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
-from .action_context import push_action, get_user_input, get_checkout_snapshot
+import re
+from .action_context import push_action, get_actions, get_user_input, get_checkout_snapshot
 from .session_context import get_session_id
 from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
@@ -417,9 +418,28 @@ def get_cart_status() -> str:
 
     return cart_status_text(cart)
 
+_CLEAR_CART_RE = re.compile(
+    r"전부|모두|다\s*지|싹|비워|비우|초기화|처음부터|주문\s*(?:전체\s*)?취소|전체\s*(?:삭제|취소)|"
+    r"clear|empty|remove\s+(?:all|everything)|delete\s+(?:all|everything)|start\s+over|reset|cancel\s+(?:the\s+)?(?:whole\s+)?order|"
+    r"全部|清空|取消订单|すべて削除|全部削除|空にして|クリア|最初から|从头|重新开始",
+    re.IGNORECASE,
+)
+
+
+def _explicit_clear_request(text: str) -> bool:
+    return bool(_CLEAR_CART_RE.search(text or ""))
+
+
 @tool
 def clear_cart() -> str:
     """장바구니를 전부 비운다."""
+    # ★ 되돌릴 수 없는 동작이므로 손님이 전체 삭제를 분명히 말했을 때만 실행한다. "결제 취소하고 주문
+    # 수정할래"를 장바구니 비우기로 해석해 손님의 주문이 통째로 사라지는 사례가 재현되어 걸어 둔다.
+    if not _explicit_clear_request(get_user_input()):
+        return (
+            "오류: 손님이 장바구니 전체 삭제를 분명히 말하지 않았습니다. 장바구니를 비우지 말고, "
+            "무엇을 수정하고 싶은지(수량·옵션·특정 메뉴 삭제 등) 물어보세요."
+        )
     session_id = get_session_id()
     try:
         _run(api_client.delete_cart(session_id))
@@ -572,6 +592,16 @@ def ui_action(
             return f"오류: action '{action}' 의 value 는 {sorted(allowed)} 중 하나여야 합니다."
     elif action in ("open_item", "points_phone") and not value:
         return f"오류: action '{action}' 은 value 가 필요합니다."
+
+    if action == "start_checkout":
+        # ★ 결제 시작은 한 번이면 된다. 포인트 단계까지 이미 끝났거나(이전 턴), 이번 턴에 결제 수단을 이미
+        # 정했는데 start_checkout을 또 부르면 화면이 포인트 질문 팝업을 다시 띄운다 — 손님이 "카드로 할게요"라고
+        # 할 때마다 "결제 전 포인트 적립하시겠어요?"가 반복되던 현상(대화 로그로 확인)의 원인.
+        if "points" in get_checkout_snapshot() or any(x.get("type") == "payment_method" for x in get_actions()):
+            return (
+                "오류: 결제는 이미 시작되어 포인트 단계까지 진행됐습니다. start_checkout을 다시 호출하지 말고, "
+                "포인트 질문도 다시 하지 말고, 고객이 말한 다음 단계(결제 수단 선택 등)만 처리하세요."
+            )
 
     if action == "points":
         # ★ 포인트 질문은 반드시 고객이 실제로 그 질문을 들은 뒤(=start_checkout이 이전 턴에

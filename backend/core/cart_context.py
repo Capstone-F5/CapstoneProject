@@ -162,11 +162,15 @@ def is_cart_status_query(text: str) -> bool:
         re.IGNORECASE,
     ))
     has_cart_topic = bool(re.search(
-        r"(?:장바구니|카트|담겨|담겼|담긴|담았|넣은|넣었|담아|뺀\s*거|뺀거|제외|사이드|음료|\bcart\b|"
+        r"(?:장바구니|카트|담겨|담겼|담긴|담았|넣은|넣었|담아|뺀\s*거|뺀거|제외|\bcart\b|"
         r"\badded\b|\bremoved\b|购物车|購物車|カート|入れた|除外)",
         normalized,
         re.IGNORECASE,
     ))
+    # "사이드", "음료"는 메뉴 카테고리 이름이기도 하다. "음료는 어떤 게 있어요?"는 메뉴 질문이지 장바구니
+    # 질문이 아니므로, 담기·선택 같은 장바구니 동사가 함께 있을 때만 장바구니 주제로 본다.
+    if not has_cart_topic and re.search(r"사이드|음료", normalized):
+        has_cart_topic = bool(re.search(r"담|넣|추가|뺐|뺀|선택|고른|주문한|시킨|시켰", normalized))
     return has_question and has_cart_topic
 
 

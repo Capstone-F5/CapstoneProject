@@ -22,6 +22,7 @@ from ai_modules.llm.action_context import (
 )
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
+from .intent_fallback import ensure_actions
 from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id
 from ai_modules.llm.rag import get_active_discount_context
@@ -59,6 +60,65 @@ _FALLBACK_MESSAGES: dict[str, str] = {
 def _fallback_message(language: str | None) -> str:
     normalized = language if language in _NATIVE_LANGS else "en"
     return _FALLBACK_MESSAGES.get(normalized, _FALLBACK_MESSAGES["en"])
+
+
+# 응답 언어 알림 — 도구 결과가 한국어로 와서 영어/일본어/중국어 손님에게도 한국어로 답하는 것을 막는다.
+# 시스템 지시는 대화 맨 앞에 있어 도구 호출을 거치면 약해지므로, 질문 바로 뒤에 짧게 한 번 더 붙인다.
+# (메모리에는 원문만 저장하고, 모델 입력에만 붙인다.)
+_LANG_REMINDERS: dict[str, str] = {
+    "en": "\n\n[Reply in English (or the user's own language) — not Korean. Menu item names may stay in Korean.]",
+    "ja": "\n\n[必ず日本語で答えてください。韓国語の文は使わないでください。]",
+    "zh": "\n\n[请务必用中文回答，不要使用韩语句子。]",
+}
+
+
+def _agent_input(user_input: str, language: str | None) -> str:
+    return user_input + _LANG_REMINDERS.get(language or "", "")
+
+
+def _resolve_language(declared: str | None, text: str) -> str | None:
+    """요청이 선언한 언어와 실제 입력 문자를 대조해 이번 턴의 응답 언어를 정한다.
+
+    프론트는 세션 첫 발화에서 감지한 언어를 이후 모든 요청에 고정해 보낸다. 그래서 한국어로 시작한
+    세션에서 손님이 영어로 말하면 "한국어로 답하라"는 지시가 계속 붙어 한국어 답이 온다. 또
+    language가 없으면 지시가 없어 모델이 한국어 프롬프트·한국어 도구 결과에 끌려 한국어로 답한다.
+    문자 구성이 분명할 때만 선언을 덮어쓰고, 모호한 짧은 입력("네", "OK", 숫자)은 선언을 따른다.
+    """
+    t = text or ""
+    hangul = sum(1 for c in t if "가" <= c <= "힣")
+    kana = sum(1 for c in t if "぀" <= c <= "ヿ")
+    han = sum(1 for c in t if "一" <= c <= "鿿")
+    latin = sum(1 for c in t if c.isascii() and c.isalpha())
+
+    if not declared:
+        # 선언이 없으면 문자 구성으로 추론한다(약한 근거라도 쓴다)
+        if hangul:
+            return "ko"
+        if kana:
+            return "ja"
+        if han:
+            return "zh"
+        if latin >= 3:
+            return "en"
+        return None
+
+    # 선언이 있을 때는 입력이 선언과 분명히 다른 문자일 때만 바꾼다
+    if hangul >= 2 and declared != "ko":
+        return "ko"
+    if declared == "ko" and hangul == 0:
+        if kana >= 2:
+            return "ja"
+        if han >= 2:
+            return "zh"
+        if latin >= 8:
+            return "en"
+    if declared in ("en", "zh") and kana >= 2 and hangul == 0:
+        return "ja"
+    if declared in ("en", "ja") and han >= 2 and kana == 0 and hangul == 0:
+        return "zh"
+    if declared in ("zh", "ja") and hangul == 0 and kana == 0 and han == 0 and latin >= 8:
+        return "en"
+    return declared
 
 
 def _prepend_language(chat_history: list, language: str | None) -> list:
@@ -148,8 +208,10 @@ async def run_agent_stream(
     set_session_id(session_id)
     set_cart(cart)
     set_user_input(user_input)
-    set_checkout_snapshot(checkout_snapshot(session_id))
+    snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
+    set_checkout_snapshot(snapshot_before)
     reset_actions()
+    language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
 
     if is_cart_status_query(user_input):
         output = format_cart_status_reply(cart, language, user_input)
@@ -190,7 +252,7 @@ async def run_agent_stream(
         chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
         async for event in executor.astream_events(
-            {"input": user_input, "chat_history": chat_history},
+            {"input": _agent_input(user_input, language), "chat_history": chat_history},
             version="v1",
         ):
             kind = event["event"]
@@ -233,6 +295,9 @@ async def run_agent_stream(
 
     await save_and_prune(memory, user_input, output)
 
+    # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작(주문 유형·결제 시작·결제 수단)을 규칙으로 보완
+    ensure_actions(session_id, user_input, screen, cart, snapshot_before)
+
     # 인라인으로 아직 전송되지 않은 나머지 액션 전송 (안전장치)
     remaining = get_actions()[emitted_count:]
     for action in remaining:
@@ -258,8 +323,10 @@ async def run_agent(
     set_session_id(session_id)
     set_cart(cart)
     set_user_input(user_input)
-    set_checkout_snapshot(checkout_snapshot(session_id))
+    snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
+    set_checkout_snapshot(snapshot_before)
     reset_actions()
+    language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
 
     if is_cart_status_query(user_input):
         output = format_cart_status_reply(cart, language, user_input)
@@ -292,9 +359,12 @@ async def run_agent(
     chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
     result = await executor.ainvoke(
-        {"input": user_input, "chat_history": chat_history}
+        {"input": _agent_input(user_input, language), "chat_history": chat_history}
     )
     output = result.get("output", "")
+
+    # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작을 규칙으로 보완
+    ensure_actions(session_id, user_input, screen, cart, snapshot_before)
 
     await save_and_prune(memory, user_input, output)
     log_turn(

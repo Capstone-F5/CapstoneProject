@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from core.cart_context import cart_lines_from_db
 from ai_modules.llm.memory import get_memory, reset_memory, save_and_prune
+from ai_modules.llm import checkout_progress
 from core.db import SessionLocal
 from core.llm_service import run_agent, run_agent_stream
 from dao import cart_dao
@@ -127,6 +128,7 @@ async def llm_stream(req: LLMRequest):
 @router.post("/llm/reset")
 async def llm_reset(session_id: str):
     await reset_memory(session_id)
+    checkout_progress.reset(session_id)
     return {"ok": True, "session_id": session_id}
 
 
@@ -149,3 +151,23 @@ async def llm_note(body: QuickReplyNote):
         await save_and_prune(memory, body.user_text, body.note)
     except Exception:  # noqa: BLE001
         pass
+
+
+class CheckoutStepIn(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=64)
+    steps: list[str] = Field(..., max_length=4)
+
+
+@router.post("/llm/checkout-step", status_code=204)
+async def llm_checkout_step(body: CheckoutStepIn):
+    """화면(터치/빠른 응답)에서 이미 끝난 결제 단계를 서버의 결제 진행 상태에 기록한다.
+
+    서버는 "포인트 질문을 먼저 해야 결제 수단을 받는다"는 순서를 checkout_progress로 강제한다.
+    그런데 터치로 포인트 팝업에 답했거나 빠른 응답(예/아니오)으로 LLM을 거치지 않으면 서버는 그 사실을
+    몰라서, 사용자가 결제 수단을 말할 때마다 포인트를 다시 묻는 무한 반복이 생긴다.
+    허용 단계만 받는다.
+    """
+    for step in body.steps:
+        if step in ("start_checkout", "points"):
+            checkout_progress.mark_done(body.session_id, step)
+
