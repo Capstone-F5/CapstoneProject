@@ -72,16 +72,27 @@ if (-not $backendReady) {
     exit 1
 }
 
-# Frontend
+# Frontend — 포트는 자동: 5173부터 비어 있는 포트를 찾는다(다른 프로그램이 쓰고 있으면 다음 번호).
+# Pi 키오스크는 start_kiosk.sh가 이 포트를 스스로 찾아 접속하므로 번호가 바뀌어도 된다.
+$vitePort = 5173
+while (-not (Test-PortFree $vitePort)) {
+    Write-Host "  Port $vitePort is in use, trying next..." -ForegroundColor Yellow
+    $vitePort++
+    if ($vitePort -gt 5200) {
+        Write-Host "  No free port found in 5173-5200." -ForegroundColor Red
+        exit 1
+    }
+}
+$env:VITE_PORT = "$vitePort"
 Start-Process powershell `
     -WorkingDirectory $frontend `
     -ArgumentList "-NoExit", "-Command", "npm run dev"
 
 Write-Host ""
 Write-Host "  Backend  : http://localhost:$backendPort"
-Write-Host "  Frontend : https://localhost:5173 (5173이 사용 중이면 Vite 창에 표시된 포트)"
+Write-Host "  Frontend : https://localhost:$vitePort"
 Write-Host ""
 Write-Host "  Run 'ipconfig' to find PC IP for Galaxy Tab access."
-Write-Host "  Access: https://[PC_IP]:5173"
+Write-Host "  Access: https://[PC_IP]:$vitePort"
 Write-Host ""
 

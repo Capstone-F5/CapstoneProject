@@ -74,6 +74,10 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
+      // 포트는 자동이다. start_servers.ps1이 비어 있는 포트를 찾아 VITE_PORT로 넘기면 그 포트를 쓰고,
+      // 직접 npm run dev 하면 Vite 기본 동작(사용 중이면 다음 번호)을 따른다.
+      // Pi 키오스크는 deploy/raspberry-pi/start_kiosk.sh가 실행 중인 포트를 찾아 접속한다.
+      ...(process.env.VITE_PORT ? { port: Number(process.env.VITE_PORT), strictPort: true } : {}),
       allowedHosts: ['cap.dmuce-stu.kr'],
       headers: {
         // onnxruntime-web 1.18+은 threaded WASM만 제공 → SharedArrayBuffer 필요
