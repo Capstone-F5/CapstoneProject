@@ -84,8 +84,26 @@ window.addEventListener('beforeunload', () => {
   sessionStorage.removeItem(LANG_KEY)
 })
 
+// 빠른 경로로 처리한 응답을 LLM 대화 기록에 '어시스턴트가 이렇게 답한 것'처럼 남긴다.
+// LLM은 결제 단계를 대화 기록으로 판단한다(포인트 질문이 끝나야 결제 수단 단계로 감).
+// 그래서 어떤 질문에 어떤 답을 했고 다음 단계가 무엇인지를 LLM이 직접 말했을 법한 문장으로 적는다.
+function quickReplyNote(handled, quick, screen) {
+  switch (handled) {
+    case 'points_no':
+      return '알겠습니다. 포인트 적립 없이 진행하겠습니다. 포인트 질문은 끝났고, 이제 결제 수단을 고르실 차례입니다. 결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?'
+    case 'points_yes':
+      return '포인트를 적립하겠습니다. 전화번호를 말씀해 주세요.'
+    case 'order_type_confirm':
+      return '식사 장소를 확인했습니다. 포인트 적립하시겠어요?'
+    case 'order_type_cancel':
+      return '식사 장소 확인 창을 닫았습니다. 다른 도움이 필요하신가요?'
+    default:
+      return `(화면이 사용자의 ${quick === 'yes' ? '긍정' : '부정'} 응답을 바로 처리했습니다. 현재 화면: ${screen ?? '알 수 없음'})`
+  }
+}
+
 export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction, onQuickReply }) {
-  const { setLocale } = useLocale()
+  const { locale: uiLocale, setLocale } = useLocale()
 
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
   const [isTyping,  setIsTyping]  = useState(false)
@@ -103,6 +121,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const ttsQueueRef  = useRef([])   // 재생 대기 중인 텍스트 청크
   const ttsBusyRef   = useRef(false) // 현재 TTS 재생 중 여부
   const ttsBufRef    = useRef('')    // 아직 TTS에 보내지 않은 토큰 버퍼
+  const vadResumeTimerRef = useRef(null)   // TTS가 끝난 뒤 마이크 감지를 다시 켜는 타이머
+  const recentSpokenRef   = useRef([])     // 최근에 스피커로 낸 문장 [{ norm, at }] — 에코 판별용
   // 발화 직렬화: STT 진행 중(isProcessingRef) 또는 LLM 생성 중(isTypingRef) 동안
   // 새 발화는 pendingTextRef에 저장했다가 완료 후 처리
   const isProcessingRef = useRef(false)  // STT fetch 진행 중 플래그 (isTypingRef gap 차단)
@@ -148,6 +168,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
     onSpeechStart: () => {
+      // 스피커에서 재생 중일 때 들어온 소리는 사용자가 아니라 마이크가 다시 들은 TTS(에코)일 가능성이 크다.
+      // 이때 끼어들기로 처리하면 말하는 도중에 TTS가 스스로 끊긴다.
+      if (ttsBusyRef.current || audioRef.current) return
       if (activeRef.current && !isTypingRef.current) {
         setListening(true)
         window.dispatchEvent(new Event('gesture-activity'))  // 말하는 순간 idle 타이머 리셋
@@ -167,8 +190,31 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     },
   })
 
+  // 화면의 언어 버튼이나 "영어로 바꿔줘" 같은 설정으로 UI 언어가 바뀌면(한국어 외) 음성·AI 언어도 맞춘다.
+  // 한국어는 새 손님 초기화(nav('start'))로도 돌아오므로 건드리지 않는다 — 이 경우는 다음 발화에서 다시 감지.
+  const uiLocaleMountedRef = useRef(false)
+  useEffect(() => {
+    if (!uiLocaleMountedRef.current) { uiLocaleMountedRef.current = true; return }
+    if (uiLocale && uiLocale !== 'ko' && detectedLangRef.current !== uiLocale) {
+      detectedLangRef.current = uiLocale
+      sessionStorage.setItem(LANG_KEY, uiLocale)
+    }
+  }, [uiLocale])
+
   // vadRef 항상 최신 유지
   useEffect(() => { vadRef.current = vad }, [vad])
+
+  // 다른 곳(utils/tts.js의 화면 안내음)에서 재생하는 소리도 마이크가 듣지 않도록 같이 막는다.
+  useEffect(() => {
+    const onStart = () => pauseVadForTts()
+    const onEnd   = () => maybeResumeVad()
+    window.addEventListener('kiosk-tts-start', onStart)
+    window.addEventListener('kiosk-tts-end', onEnd)
+    return () => {
+      window.removeEventListener('kiosk-tts-start', onStart)
+      window.removeEventListener('kiosk-tts-end', onEnd)
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // speechEndHandlerRef 업데이트 — isTyping·detectedLang 등 최신 상태 참조
   speechEndHandlerRef.current = useCallback(async (audio) => {
@@ -207,6 +253,12 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       if (requestGeneration !== sessionGenerationRef.current) return
       const text = (data.text || '').trim()
 
+      // 마이크가 스피커 소리를 다시 들어 전사된 경우(방금 낸 안내 문장과 거의 같음)는 버린다.
+      if (text && isEchoOfBot(text)) {
+        console.info('[voice] 방금 낸 안내음과 같아 에코로 판단하고 무시:', text)
+        return
+      }
+
       // 첫 발화에서 언어 감지 → 이후 대화 전체에 고정
       if (data.language && !detectedLangRef.current) {
         const raw    = data.language.slice(0, 2).toLowerCase()
@@ -214,6 +266,16 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         detectedLangRef.current = locale
         sessionStorage.setItem(LANG_KEY, locale)
         setLocale(locale)
+      } else if (data.language && detectedLangRef.current) {
+        // 세션 언어가 이미 정해져 있어도, 이번 발화가 다른 언어임이 분명하면(6자 이상) 따라 바꾼다.
+        // 한국어로 시작한 세션에서 영어로 말했는데 한국어 답이 오던 문제 방지. 짧은 발화("네", "OK")는 바꾸지 않는다.
+        const heard = langToLocale(data.language.slice(0, 2).toLowerCase())
+        if (heard !== detectedLangRef.current && text.replace(/\s/g, '').length >= 6) {
+          console.info(`[voice] 발화 언어가 달라 세션 언어를 바꿉니다: ${detectedLangRef.current} → ${heard}`)
+          detectedLangRef.current = heard
+          sessionStorage.setItem(LANG_KEY, heard)
+          setLocale(heard)
+        }
       }
 
       if (text) {
@@ -225,7 +287,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         // 기다리는 중이면(화면이 true를 반환) LLM 왕복 없이 바로 처리한다. 화면이 처리하지 않으면
         // 아래 기존 경로(LLM)로 그대로 넘어간다.
         const quick = classifyQuickReply(text)
-        if (quick && onQuickReplyRef.current?.(quick)) {
+        const quickHandled = quick ? onQuickReplyRef.current?.(quick) : false
+        if (quick && quickHandled) {
           turn.quick = true
           turn.tAction = performance.now()
           reportVoiceTurn(turn, 'quick')
@@ -235,7 +298,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
             body: JSON.stringify({
               session_id: sessionIdRef.current,
               user_text: text,
-              note: `(화면이 사용자의 ${quick === 'yes' ? '긍정' : '부정'} 응답을 바로 처리했습니다. 현재 화면: ${screenRef2.current ?? '알 수 없음'})`,
+              note: quickReplyNote(quickHandled, quick, screenRef2.current),
             }),
             keepalive: true,
           }).catch(() => {})
@@ -268,8 +331,60 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   // ─── TTS: MediaSource 스트리밍 재생 ─────────────────────────────────────────
 
+  // ─── 에코(스피커 → 마이크) 방지 ──────────────────────────────────────────────
+  // 마이크가 TTS 소리를 다시 들으면 ① VAD가 발화로 오인해 끼어들기로 TTS를 끊거나
+  // ② STT가 안내 문장을 사용자 말로 받아적는다. 그래서 TTS가 재생되는 동안은 마이크 감지를 멈추고
+  // (반이중), 끝난 뒤 스피커 잔향이 가라앉을 시간을 두고 다시 켠다. 그래도 새어 들어온 경우를 위해
+  // 전사 결과가 방금 낸 안내 문장과 거의 같으면 버린다.
+  const VAD_RESUME_TAIL_MS = 600
+  const ECHO_WINDOW_MS     = 30000
+
+  function pauseVadForTts() {
+    clearTimeout(vadResumeTimerRef.current)
+    try { vadRef.current?.pause() } catch {}
+  }
+
+  function maybeResumeVad() {
+    if (!activeRef.current) return
+    if (isTypingRef.current) return                                        // 아직 LLM 생성 중
+    if (ttsBusyRef.current || ttsQueueRef.current.length) return           // 아직 안내음 재생 중
+    clearTimeout(vadResumeTimerRef.current)
+    vadResumeTimerRef.current = setTimeout(() => {
+      if (!activeRef.current || isTypingRef.current) return
+      if (ttsBusyRef.current || ttsQueueRef.current.length || audioRef.current) return
+      vadRef.current?.start()
+    }, VAD_RESUME_TAIL_MS)
+  }
+
+  const normSpeech = (t) => (t || '').toLowerCase().replace(/[^0-9a-z가-힣぀-ヿ一-鿿]/g, '')
+
+  function rememberSpoken(text) {
+    const norm = normSpeech(text)
+    if (!norm) return
+    const now = Date.now()
+    recentSpokenRef.current = [...recentSpokenRef.current.filter(x => now - x.at < ECHO_WINDOW_MS), { norm, at: now }].slice(-8)
+  }
+
+  const bigrams = (s) => { const out = new Set(); for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2)); return out }
+
+  function isEchoOfBot(text) {
+    const t = normSpeech(text)
+    if (t.length < 4) return false          // "네", "응" 같은 짧은 대답은 에코로 보지 않는다
+    const now = Date.now()
+    return recentSpokenRef.current.some(({ norm, at }) => {
+      if (now - at > ECHO_WINDOW_MS) return false
+      if (norm.includes(t) || t.includes(norm)) return true
+      if (t.length < 8) return false
+      const a = bigrams(t), b = bigrams(norm)
+      let inter = 0; a.forEach(x => { if (b.has(x)) inter++ })
+      return inter / Math.min(a.size, b.size) >= 0.8     // 문장 대부분이 겹치면 에코
+    })
+  }
+
   async function playTts(text) {
     if (!text || !activeRef.current) return
+    pauseVadForTts()      // 재생하는 동안 마이크 감지를 멈춘다(끝나면 drain/finally에서 다시 켬)
+    rememberSpoken(text)
 
     // 사전 녹음 파일이 있으면 API 호출 없이 즉시 재생
     const cached = await getCachedAudio(text)
@@ -377,6 +492,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   async function drainTtsQueue() {
     if (!activeRef.current || ttsQueueRef.current.length === 0) {
       ttsBusyRef.current = false
+      maybeResumeVad()    // 안내음이 모두 끝났다 — 잠시 뒤 마이크 감지 재개
       return
     }
     ttsBusyRef.current = true
@@ -535,8 +651,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
     if (!activeRef.current) return
 
-    // LLM 완료 → VAD 재개
-    setTimeout(() => vadRef.current?.start(), 100)
+    // LLM 완료 → TTS가 아직 재생 중이면 끝난 뒤에, 아니면 곧바로 VAD 재개
+    maybeResumeVad()
 
     // 대기 중인 발화가 있으면 이어서 처리
     const pending = pendingTextRef.current
@@ -576,8 +692,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     if (!isOpen) return
     const timer = setTimeout(() => {
       if (!activeRef.current) return
-      // VAD를 멈추지 않고 재생 — onSpeechStart에서 TTS 중단 처리
+      // 인사말이 끝난 뒤에 마이크를 다시 켠다(재생 중 마이크가 소리를 되받아 끊기는 것을 막음)
       playTts('안녕하세요! F버거 주문 도우미입니다. 메뉴 추천, 주문 방법 등 궁금한 점을 말씀해 주세요.')
+        .finally(() => maybeResumeVad())
     }, 300)
     return () => clearTimeout(timer)
   }, [isOpen])  // eslint-disable-line react-hooks/exhaustive-deps

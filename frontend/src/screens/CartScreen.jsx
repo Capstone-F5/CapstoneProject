@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import Logo from '../components/Logo'
 import { playTTS } from '../utils/tts'
+import { markCheckoutSteps } from '../services/checkoutService'
 import { lookupCustomer } from '../services/pointsService'
 import { createOrder, validateCoupon, previewDiscount } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
@@ -203,16 +204,19 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
         // 짧은 예/아니오 응답("네", "응", "아니요")을 LLM 없이 바로 처리 — 열려 있는 예/아니오 팝업이 있을 때만.
         // 처리하지 않으면 false → 기존 LLM 경로로 넘어간다. LLM이 말하지 않으므로 다음 안내는 사전 녹음으로 직접 재생.
         case 'quick_reply':
+          // 반환값: 처리한 내용을 나타내는 태그(문자열) 또는 false. ChatPanel이 이 태그로 LLM 대화 기록에
+          // '어떤 질문에 어떻게 답했는지'를 정확히 남긴다 — 그렇지 않으면 LLM이 포인트 질문이 아직
+          // 답변되지 않은 줄 알고 결제 수단을 말할 때마다 포인트를 다시 묻는다(무한 반복).
           if (pointPromptOpenRef.current) {
             setShowPointPrompt(false)
-            if (a.value === 'yes') setShowPointsPopup(true)
-            else { openPayment(); playTTS('결제 수단을 선택해 주세요') }
-            return true
+            if (a.value === 'yes') { setShowPointsPopup(true); return 'points_yes' }
+            openPayment(); playTTS('결제 수단을 선택해 주세요')
+            return 'points_no'
           }
           if (orderTypeConfirmOpenRef.current) {
-            if (a.value === 'yes') { confirmOrderType(); playTTS('포인트를 적립하시겠습니까') }
-            else setShowOrderTypeConfirm(false)
-            return true
+            if (a.value === 'yes') { confirmOrderType(); playTTS('포인트를 적립하시겠습니까'); return 'order_type_confirm' }
+            setShowOrderTypeConfirm(false)
+            return 'order_type_cancel'
           }
           return false
         case 'points_phone':
@@ -238,12 +242,15 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   useEffect(() => {
     if (!serialRef) return
     serialRef.current = (event) => {
-      if (event.type === 'card') {
-        // INPUT=CARD = 카드 리더기 승인 완료 신호 → 결제 처리
-        if (showCardPayment) handleCompleteRef.current?.()
-      } else if (event.type === 'cash') {
-        setReceivedCash(prev => prev + event.amount)
+      // 카드 결제 팝업이 열려 있으면 두 아두이노(Coin·Cash)의 어떤 신호든 카드 승인으로 본다.
+      // (INPUT=CARD, INPUT=…WON, TOTAL, INPUT=UNKNOWN/RETRY. 부팅 신호 RESET COMPLETE는 오지 않는다.)
+      // handleComplete가 isCompletingRef로 중복 호출을 막는다.
+      if (showCardPayment) {
+        if (['card', 'cash', 'signal'].includes(event.type)) handleCompleteRef.current?.()
+        return
       }
+      // 카드 팝업이 아닐 때: 현금 금액은 기존처럼 누적하고, 카드·기타 신호는 무시한다.
+      if (event.type === 'cash') setReceivedCash(prev => prev + event.amount)
     }
     return () => { if (serialRef) serialRef.current = null }
   }, [serialRef, showCardPayment])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -297,6 +304,11 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
   pointPromptOpenRef.current = showPointPrompt
   orderTypeConfirmOpenRef.current = showOrderTypeConfirm
+
+  // 결제 단계 진행을 서버에 알린다 — 터치·빠른 응답으로 단계를 넘겨도 LLM이 "포인트를 아직 안 물었다"고
+  // 보고 결제 수단을 말할 때마다 포인트를 되묻는 무한 반복을 막는다.
+  useEffect(() => { if (showPointPrompt) markCheckoutSteps(['start_checkout']) }, [showPointPrompt])
+  useEffect(() => { if (showPointsPopup || showPaymentPopup) markCheckoutSteps(['start_checkout', 'points']) }, [showPointsPopup, showPaymentPopup])
 
   // 터치 플로우 팝업 TTS 내레이션 (음성인식이 꺼진 경우에만)
   // eslint-disable-next-line react-hooks/exhaustive-deps

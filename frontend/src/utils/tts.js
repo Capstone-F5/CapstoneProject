@@ -7,6 +7,15 @@ let _current = null
 // 각 await 뒤에 이 번호를 확인해 뒤처진 요청을 버린다.
 let _seq = 0
 
+// 재생 시작·끝을 알린다 — 채팅(음성) 모드의 마이크가 스피커 소리를 되받지 않도록 ChatPanel이 듣는다.
+const emit = (name) => { try { window.dispatchEvent(new Event(name)) } catch {} }
+const trackEnd = (audio) => {
+  const done = () => emit('kiosk-tts-end')
+  audio.addEventListener('ended', done, { once: true })
+  audio.addEventListener('error', done, { once: true })
+  audio.addEventListener('pause', done, { once: true })
+}
+
 export function stopTTS() {
   _seq++
   if (_current) { _current.pause(); _current.currentTime = 0; _current = null }
@@ -21,6 +30,8 @@ export async function playTTS(text) {
     if (seq !== _seq) return
     if (cached) {
       _current = cached
+      emit('kiosk-tts-start')
+      trackEnd(cached)
       // 재생 실패를 catch로 떨어뜨려 API 경로로 넘긴다. 예전엔 로그만 찍고
       // return 해버려서, 사전 녹음 파일이 없으면 fallback 없이 무음이 됐다.
       await cached.play()
@@ -47,8 +58,10 @@ export async function playTTS(text) {
     const url = URL.createObjectURL(blob)
     const audio = new Audio(url)
     _current = audio
+    emit('kiosk-tts-start')
+    trackEnd(audio)
     audio.onended = () => { URL.revokeObjectURL(url); if (_current === audio) _current = null }
-    audio.play().catch(e => console.warn('[TTS] API 재생 차단:', e?.name ?? e))
+    audio.play().catch(e => { console.warn('[TTS] API 재생 차단:', e?.name ?? e); emit('kiosk-tts-end') })
   } catch (e) {
     console.warn('[TTS] API 요청 실패:', e)
   }

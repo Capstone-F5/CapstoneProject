@@ -273,6 +273,7 @@ function AppContent() {
   } = useSerial({
     onCard:  () => serialRef.current?.({ type: 'card' }),
     onCash:  (amount) => serialRef.current?.({ type: 'cash', amount }),
+    onSignal: (line) => serialRef.current?.({ type: 'signal', line }),
   })
 
   // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
@@ -1136,7 +1137,7 @@ function AppContent() {
               modalStateRef={modalStateRef}
               onAction={handleVoiceAction}
               // 짧은 "네/아니요" 응답을 화면이 바로 처리할 수 있으면 true(LLM 왕복 생략)
-              onQuickReply={(value) => screenVoiceRef.current?.({ type: 'quick_reply', value }) === true}
+              onQuickReply={(value) => screenVoiceRef.current?.({ type: 'quick_reply', value }) || false}
             />
           </div>
         </div>
