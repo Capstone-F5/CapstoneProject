@@ -336,7 +336,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   // ② STT가 안내 문장을 사용자 말로 받아적는다. 그래서 TTS가 재생되는 동안은 마이크 감지를 멈추고
   // (반이중), 끝난 뒤 스피커 잔향이 가라앉을 시간을 두고 다시 켠다. 그래도 새어 들어온 경우를 위해
   // 전사 결과가 방금 낸 안내 문장과 거의 같으면 버린다.
-  const VAD_RESUME_TAIL_MS = 600
+  // 꼬리 시간이 길수록 에코는 안전하지만 손님이 바로 말해도 첫마디를 놓친다. 새어 든 경우는 아래
+  // 전사 필터(isEchoOfBot)가 한 번 더 걸러 주므로 250ms로 짧게 둔다.
+  const VAD_RESUME_TAIL_MS = 250
   const ECHO_WINDOW_MS     = 30000
 
   function pauseVadForTts() {

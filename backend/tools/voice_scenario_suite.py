@@ -632,6 +632,174 @@ SCENARIOS: list[Scenario] = [
 ]
 
 
+# ── Z. 전체 흐름: 한 세션에서 시작 화면부터 결제 수단 선택까지 이어서 진행 ─────────────────────
+# 화면·주문 유형 상태는 하네스가 액션(order_type/navigate/start_checkout)을 보고 프론트처럼 이어 간다.
+def _pay(method, points="적립 안 할게요"):
+    return [
+        say("결제할게요", actions=["start_checkout"]),
+        say(points, actions=["points"]),
+        say(method, actions=["payment_method"]),
+    ]
+
+
+def _begin(order_text="매장에서 먹을게요"):
+    return [
+        state("start", None),
+        say("안녕하세요", no_actions=["add_item"], out_any=["매장", "포장"]),
+        say(order_text, actions=["order_type"]),
+    ]
+
+
+FLOW_SCENARIOS: list[Scenario] = [
+    # ── 쉬운 흐름 ───────────────────────────────────────────────────────────
+    Scenario("Z01", "전체흐름", "[쉬움] 매장 · 단품 1개 · 적립 안 함 · 카드", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z02", "전체흐름", "[쉬움] 포장 · 세트(사이드·음료 질문) · 간편결제", [
+        *_begin("포장할게요"),
+        say("불고기버거 세트로 하나 줘", no_actions=["add_item"]),
+        say("감자튀김으로 할게요"),
+        say("콜라요", cart=[line("불고기 버거", 1, set=True, has=["감자튀김", "콜라"])]),
+        *_pay("삼성페이로 할게요"),
+    ]),
+    Scenario("Z03", "전체흐름", "[쉬움] 매장 · 단품 + 음료 · 현금", [
+        *_begin(),
+        say("데리버거 단품 하나랑 콜라 하나 줘", cart=[line("데리버거", 1), line("콜라", 1)]),
+        *_pay("현금으로 낼게요"),
+    ]),
+    Scenario("Z04", "전체흐름", "[쉬움] 포인트 적립(전화번호) 후 카드", [
+        *_begin(),
+        say("치즈버거 단품 하나요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("포인트 적립할게요", actions=["points"]),
+        say("공일공 일이삼사 오육칠팔", actions=["points_phone"]),
+        say("카드로 결제할게요", actions=["payment_method"]),
+    ]),
+    Scenario("Z05", "전체흐름", "[쉬움] 메뉴 질문 후 가장 저렴한 버거 주문", [
+        *_begin(),
+        say("버거 뭐 있어요?", unchanged=True, no_actions=["add_item"]),
+        say("가장 저렴한 버거가 뭐예요?", unchanged=True, out_any=["데리버거", "4,000", "4000"]),
+        say("그걸로 단품 하나 줘", cart=[line("데리버거", 1)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z06", "전체흐름", "[쉬움] 수량을 늘린 뒤 결제", [
+        *_begin(),
+        say("치즈버거 단품 하나", cart=[line("치즈 버거", 1)]),
+        say("하나 더 줘", cart=[line("치즈 버거", total=2)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z07", "전체흐름", "[쉬움] 영어로 처음부터 끝까지", [
+        state("start", None),
+        say("Hello", lang="en", reply_lang="en", no_actions=["add_item"]),
+        say("Dine in please", lang="en", actions=["order_type"]),
+        say("One cheese burger, single please", lang="en", cart=[line("치즈 버거", 1)]),
+        say("I would like to pay", lang="en", actions=["start_checkout"]),
+        say("No points", lang="en", actions=["points"]),
+        say("Card please", lang="en", actions=["payment_method"]),
+    ]),
+    Scenario("Z08", "전체흐름", "[쉬움] 터치로 담고 음성으로 결제 진행", [
+        state(M, T),
+        touch_add("치즈 버거", 1),
+        say("콜라도 하나 추가해줘", cart=[line("치즈 버거", 1), line("콜라", 1)]),
+        *_pay("카카오페이로 할게요"),
+    ]),
+    Scenario("Z09", "전체흐름", "[쉬움] 사이드 단품 여러 개 후 결제", [
+        *_begin("포장이요"),
+        say("치즈버거 단품 하나, 감자튀김 둘, 사이다 하나", cart=[line("치즈 버거", 1), line("감자튀김", 2), line("사이다", 1)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z10", "전체흐름", "[쉬움] 일본어로 주문 후 결제", [
+        state("start", None),
+        say("こんにちは", lang="ja", reply_lang="ja", no_actions=["add_item"]),
+        say("店内で食べます", lang="ja", actions=["order_type"]),
+        say("チーズバーガー単品を一つください", lang="ja", cart=[line("치즈 버거", 1)]),
+        say("お会計をお願いします", lang="ja", actions=["start_checkout"]),
+        say("ポイントは貯めません", lang="ja", actions=["points"]),
+        say("カードで払います", lang="ja", actions=["payment_method"]),
+    ]),
+
+    # ── 까다로운 흐름 ───────────────────────────────────────────────────────
+    Scenario("Z11", "전체흐름", "[까다로움] 담은 메뉴를 번복하고 다른 메뉴로 교체", [
+        *_begin(),
+        say("치즈버거 단품 하나", cart=[line("치즈 버거", 1)]),
+        say("아니 그거 빼고 새우버거 단품으로 줘", cart=[line("새우 버거", 1)], lines=1),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z12", "전체흐름", "[까다로움] 세트 사이드를 말하다 번복", [
+        *_begin("포장할게요"),
+        say("F버거 세트로 줘", no_actions=["add_item"]),
+        say("사이드는 치즈스틱이요", no_actions=["add_item"]),
+        say("아 아니다 양념감자튀김으로 할게요", no_actions=["add_item"]),
+        say("음료는 사이다", cart=[line("F 버거", 1, set=True, has=["양념감자튀김", "사이다"], lacks=["치즈스틱"])]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z13", "전체흐름", "[까다로움] 재료 제외 + 수량 2개", [
+        *_begin(),
+        say("치즈버거 단품 두 개, 양파는 빼주세요", cart=[line("치즈 버거", 2, has=["양파"])]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z14", "전체흐름", "[까다로움] 결제 단계에서 돌아가 메뉴 추가 후 재결제", [
+        *_begin(),
+        say("치즈버거 단품 하나", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("아 잠깐 콜라도 하나 추가할게요", cart=[line("치즈 버거", 1), line("콜라", 1)]),
+        # 결제는 이미 시작된 상태라 start_checkout을 다시 내지 않고 포인트 질문으로 이어지는 것이 설계다
+        say("이제 결제할게요", out_any=["포인트", "적립"]),
+        say("적립 안 할게요", actions=["points"]),
+        say("카드로 할게요", actions=["payment_method"]),
+    ]),
+    Scenario("Z15", "전체흐름", "[까다로움] 전화번호를 짧게 말했다가 정정", [
+        *_begin(),
+        say("치즈버거 단품 하나", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("포인트 적립할게요", actions=["points"]),
+        say("공일공 일이삼사", no_actions=["points_phone"]),
+        say("죄송해요 공일공 일이삼사 오육칠팔이요", actions=["points_phone"]),
+        say("카드로 할게요", actions=["payment_method"]),
+    ]),
+    Scenario("Z16", "전체흐름", "[까다로움] 결제 수단을 현금에서 카드로 바꿈", [
+        *_begin(),
+        say("치즈버거 단품 하나", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("적립 안 할게요", actions=["points"]),
+        say("현금으로 낼게요", actions=["payment_method"]),
+        say("아 카드로 바꿀게요", actions=["payment_method"]),
+    ]),
+    Scenario("Z17", "전체흐름", "[까다로움] 터치와 음성을 번갈아 쓰며 변경 후 결제", [
+        state(M, D),
+        touch_add("데리버거", 1),
+        say("그거 세트로 바꿔줘, 사이드는 감자튀김 음료는 콜라", cart=[line("데리버거", 1, set=True, has=["감자튀김", "콜라"])]),
+        touch_add("생수", 1),
+        say("생수 하나 더", cart=[line("생수", total=2)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z18", "전체흐름", "[까다로움] 가장 비싼 버거를 물어보고 주문", [
+        *_begin("포장할게요"),
+        say("제일 비싼 버거가 뭐예요?", unchanged=True, out_any=["그릴드", "7,800", "7800"]),
+        say("그걸 단품으로 하나 줘", cart=[line("그릴드 비프 버거", 1)]),
+        *_pay("카드로 할게요"),
+    ]),
+    Scenario("Z19", "전체흐름", "[까다로움] 단품/세트 되묻기 + 가격 질문 + 추가 주문", [
+        *_begin("포장할게요"),
+        say("치즈버거 하나 줘", no_actions=["add_item"]),
+        say("단품이요", cart=[line("치즈 버거", 1)]),
+        say("콜라는 얼마예요?", unchanged=True, out_any=["원"]),
+        say("콜라 하나 추가해줘", cart=[line("치즈 버거", 1), line("콜라", 1)]),
+        *_pay("삼성페이로 할게요"),
+    ]),
+    Scenario("Z20", "전체흐름", "[까다로움] 장바구니 확인 → 일부 삭제 → 결제", [
+        *_begin(),
+        say("치즈버거 단품 하나랑 감자튀김 하나", cart=[line("치즈 버거", 1), line("감자튀김", 1)]),
+        say("지금 뭐 담겼어?", unchanged=True, no_actions=["add_item"]),
+        say("감자튀김은 빼줘", cart=[line("치즈 버거", 1)], lines=1),
+        *_pay("카드로 할게요"),
+    ]),
+]
+SCENARIOS += FLOW_SCENARIOS
+
+
 # ── 실행기 ──────────────────────────────────────────────────────────────────
 def norm(s: str) -> str:
     return re.sub(r"[\s()（）]", "", s or "").lower()

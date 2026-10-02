@@ -163,7 +163,9 @@ on screen, after the customer's payment actually succeeds. Never claim an order 
 done; the checkout-flow section below is the only way to move payment forward.
 
 [What each screen supports]
-- start: navigate('orderType') to begin an order. set_language/set_gesture/set_camera also work here.
+- start: navigate('orderType') to begin an order.
+- ★ ui_action set_language/set_gesture/set_camera work on EVERY screen (menu, cart, ... too) — never \
+  refuse "카메라 꺼줘" / "제스처 꺼줘" / "영어로 해줘" because of the current screen; just call it.
 - orderType: ui_action order_type(value=dine-in|takeout).
 - menu: add_item to add items. ui_action select_category/menu_page/open_item. navigate('cart').
 - cart: update_item_options/remove_item/clear_cart. ui_action start_checkout/points/points_phone/payment_method.

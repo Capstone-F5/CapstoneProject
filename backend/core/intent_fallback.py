@@ -46,6 +46,10 @@ _EXPLICIT_METHOD: list[tuple[str, tuple[str, ...]]] = [
 ]
 _GENERIC_PAY = ("페이", "pay")
 
+# 포인트 적립 의사. 부정이 먼저 나오는지 본다("적립 안 할게요" 안에 "적립"과 "할게요"가 같이 있다).
+_POINTS_NO = re.compile(r"적립\s*(?:은|는)?\s*(?:안|하지\s*않|않|괜찮|필요\s*없)|no\s*points|don'?t\s*(?:want|need)|不用积分|ポイントは(?:貯めません|いりません)", re.IGNORECASE)
+_POINTS_YES = re.compile(r"적립\s*(?:할게|할래|해\s*주세요|해주세요|해\s*줘|해줘|하겠|할께|하고\s*싶|부탁)|포인트\s*(?:쌓|적립)|earn\s*points|collect\s*points|积分|ポイントを貯め", re.IGNORECASE)
+
 
 def _has(actions: list[dict], kind: str) -> bool:
     return any(a.get("type") == kind for a in actions)
@@ -105,6 +109,17 @@ def ensure_actions(
         method = _method_from(text)
         if method:
             added.append({"type": "payment_method", "value": method})
+
+    # 3-2) 포인트 적립 여부 — 질문(start_checkout)이 이전 턴에 끝났고 아직 답이 기록되지 않았을 때만
+    if (screen == "cart" and "start_checkout" in snapshot_before and "points" not in snapshot_before
+            and not _has(actions, "points") and not _has(actions, "points_phone")
+            and not _has(actions, "payment_method")):
+        if _POINTS_NO.search(text):
+            added.append({"type": "points", "value": "no"})
+            checkout_progress.mark_done(session_id, "points")
+        elif _POINTS_YES.search(text):
+            added.append({"type": "points", "value": "yes"})
+            checkout_progress.mark_done(session_id, "points")
 
     # 4) 장바구니 열기 — "장바구니 보여줘"에 모델이 화면 설명만 하고 navigate를 빼먹는 경우
     if (screen not in ("cart", "payment") and cart and not _has(actions, "navigate")

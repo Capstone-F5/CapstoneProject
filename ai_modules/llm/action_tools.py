@@ -190,6 +190,29 @@ def search_menu(query: str, k: int = 5) -> str:
         lines.append(line)
     return "\n".join(lines)
 
+def _menu_key(name: str) -> str:
+    return re.sub(r"\s+", "", (name or "").split("(")[0])
+
+
+def _mentions_other_menu(text: str, item: dict) -> str | None:
+    """발화에 다른 메뉴 이름은 있고 `item` 이름은 없으면 그 다른 메뉴의 이름을 돌려준다(아니면 None)."""
+    compact = re.sub(r"\s+", "", text or "")
+    mine = _menu_key(item.get("name_ko", ""))
+    if not compact or not mine or mine in compact:
+        return None
+    try:
+        menu = _run(api_client.fetch_menu_items())
+    except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
+        return None
+    # 긴 이름부터 비교해 "제로콜라"가 "콜라"로 잘못 걸리는 일을 줄인다
+    names = sorted({i["name_ko"] for i in menu}, key=lambda n: -len(_menu_key(n)))
+    for n in names:
+        key = _menu_key(n)
+        if len(key) >= 2 and key in compact and key not in mine and mine not in key:
+            return n
+    return None
+
+
 def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
     """발화에서 "양파 빼고"처럼 이 메뉴의 EXCLUDE 옵션 재료 뒤에 빼/제외/없이가 붙은 것만 골라낸다."""
     found: list[str] = []
@@ -241,6 +264,18 @@ def add_item(
 
     if not item.get("is_available", True):
         return f"죄송합니다, {item['name_ko']}는 현재 품절입니다."
+
+    # 직전 턴의 menu_item_id를 그대로 재사용해 엉뚱한 메뉴가 담기는 것을 막는다.
+    # ("치즈버거 담은 뒤 '콜라도 추가해줘' → 치즈 버거가 한 개 더 담김") 이번 발화에 다른 메뉴 이름이
+    # 있는데 이 메뉴 이름은 없으면 되돌려 보내 search_menu로 올바른 id를 찾게 한다. 세트의 사이드·음료
+    # 답변처럼 다른 이름이 정상적으로 나오는 경우(upgrade_to_set)와 외국어 발화(한국어 이름 없음)는 건너뛴다.
+    if not upgrade_to_set:
+        wrong = _mentions_other_menu(get_user_input(), item)
+        if wrong:
+            return (
+                f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{item['name_ko']}'입니다. "
+                f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요."
+            )
 
     # 옵션 구성 로직
     selected_options = []
@@ -465,6 +500,8 @@ def _spoken_digits(text: str) -> str:
     전화번호를 말한 턴인지 판단하는 용도라, 숫자가 거의 없는 발화는 빈 문자열을 돌려 검사를 건너뛴다.
     """
     # 일반 단어에도 '일·이·오·구'가 들어 있으므로, 숫자 글자가 (공백·하이픈만 사이에 두고) 이어진 구간만 센다.
+    # "…오육칠팔이요"의 '이요'는 숫자 '이(2)'가 아니라 서술 어미라서 숫자 뒤에 붙은 어미는 먼저 뗀다.
+    text = re.sub(r"(?<=[0-9공영일이삼사오육륙칠팔구])(이요|이에요|이예요|입니다)", " ", text or "")
     runs = re.findall(r"[0-9공영일이삼사오육륙칠팔구](?:[\s\-]*[0-9공영일이삼사오육륙칠팔구])+", text or "")
     best = max(("".join(c if c.isdigit() else _KO_DIGITS[c] for c in r if c.isdigit() or c in _KO_DIGITS)
                 for r in runs), key=len, default="")
