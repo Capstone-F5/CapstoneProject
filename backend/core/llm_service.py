@@ -7,6 +7,7 @@ LangChain Agent 실행 래퍼.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, AsyncIterator
 
@@ -21,6 +22,7 @@ from ai_modules.llm.action_context import (
     get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
     set_stt_original, set_recent_user_text, reset_guards, record_guard, get_guard_hits,
 )
+from ai_modules.llm import guards, order_parser
 from ai_modules.llm.guards import NOISE_REPLY, correct_reply, fix_stt, guard_mode, is_noise
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
@@ -66,7 +68,62 @@ def _remember_history(mem_vars: dict) -> None:
     last_bot = next((str(getattr(m, "content", "")) for m in reversed(history) if getattr(m, "type", "") == "ai"), "")
     humans = [str(getattr(m, "content", "")) for m in history if getattr(m, "type", "") == "human"]
     set_last_bot_text(last_bot)
-    set_recent_user_text(" ".join(humans[-3:]))
+    set_recent_user_text(" ¦ ".join(humans[-3:]))   # ¦로 턴을 구분(가드가 가장 최근 턴부터 찾는다)
+
+
+async def _complete_missing_order(user_input: str, output: str) -> str | None:
+    """모델이 손님의 단순 주문("메뉴 이름 + 수량 + 단품")을 일부 또는 전부 처리하지 않았을 때, 빠진 품목만 코드가
+    직접 담고 맞는 확인 문구를 돌려준다. 처리 안 했다는 신호는 응답에서 읽는다: 담았다고 말만 함 / 있는 메뉴를
+    "메뉴에 없다·품절"이라 함 / 이미 단품이라고 했는데 단품·세트를 되묻는 경우.
+    문장이 단순 주문이라고 확신할 수 없으면 아무것도 하지 않는다. 이름 없이 "단품으로 줘"라고만 답한 경우에는
+    직전 안내가 버거 하나를 가리킬 때 그 버거를 담는다."""
+    if guard_mode() != "enforce" or not guards.has_hangul(user_input):
+        return None
+    actions = get_actions()
+    if any(a.get("type") == "update_item" or (a.get("type") == "add_item" and a.get("upgrade_to_set")) for a in actions):
+        return None   # 옵션·수량을 바꾸거나 세트를 담는 중이면 건드리지 않는다
+    signal = order_parser.reply_failed_to_act(output)
+    if not signal:
+        return None
+    from ai_modules.llm import api_client
+    from ai_modules.llm.action_context import get_last_bot_text
+    if order_parser.awaiting_set_option(get_last_bot_text()):
+        return None   # 세트의 사이드·음료를 고르는 중이다("콜라로 주세요"는 단품 주문이 아니다)
+    from ai_modules.llm.action_tools import add_item as add_item_tool
+    try:
+        menu = await api_client.fetch_menu_items()
+    except Exception:  # noqa: BLE001
+        return None
+    parsed = order_parser.parse_simple_order(user_input, menu)
+    if not parsed:
+        names = [i["name_ko"] for i in menu]
+        burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+        compact_user = "".join(user_input.split())
+        if (not order_parser.named_menus(compact_user, names) and guards.mentions_single(user_input)
+                and not guards.mentions_set(user_input)):
+            from_bot = order_parser.named_menus("".join(get_last_bot_text().split()), burgers)
+            target = next((i for i in menu if i["name_ko"] == from_bot[0]), None) if len(from_bot) == 1 else None
+            if target:
+                parsed = [(target, guards.quantity_in(user_input) or 1)]
+    if not parsed:
+        return None
+    already = {a.get("menu_item_id") for a in actions if a.get("type") == "add_item"}
+    missing = [(item, qty) for item, qty in parsed if item["id"] not in already]
+    if not missing:
+        return None   # 말한 것은 모두 담겨 있다
+    detail = (f"「{user_input[:40]}」 응답 신호={signal}, 빠진 품목을 코드가 담음: "
+              + ", ".join(f"{i['name_ko']}×{q}" for i, q in missing))
+    done = 0
+    for item, qty in missing:
+        result = await asyncio.to_thread(
+            add_item_tool.invoke, {"menu_item_id": item["id"], "quantity": qty, "upgrade_to_set": False})
+        if not str(result).startswith("오류"):
+            done += 1
+    if done != len(missing):
+        record_guard("simple_order_failed", detail, blocked=False, fixed=False)
+        return None
+    record_guard("simple_order_completed", detail, blocked=False, fixed=True)
+    return order_parser.confirmation_text(parsed)
 
 
 def _align_reply_with_actions(output: str) -> str:
@@ -358,6 +415,9 @@ async def run_agent_stream(
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작(주문 유형·결제 시작·결제 수단)을 규칙으로 보완
     ensure_actions(session_id, user_input, screen, cart, snapshot_before)
+    completed = await _complete_missing_order(user_input, output)
+    if completed:
+        output = completed
     output = _align_reply_with_actions(output)
     await save_and_prune(memory, user_input, output)
 
@@ -450,6 +510,9 @@ async def run_agent(
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작을 규칙으로 보완
     ensure_actions(session_id, user_input, screen, cart, snapshot_before)
+    completed = await _complete_missing_order(user_input, output)
+    if completed:
+        output = completed
     output = _align_reply_with_actions(output)
 
     await save_and_prune(memory, user_input, output)

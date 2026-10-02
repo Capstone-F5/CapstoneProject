@@ -15,8 +15,10 @@ from langchain_core.tools import tool
 import re
 from .action_context import (
     push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text, get_recent_user_text,
+    add_seen_this_turn,
 )
 from . import guards
+from .order_parser import menu_key as _menu_key, named_menus as _named_menus
 from .session_context import get_session_id
 from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
@@ -193,26 +195,10 @@ def search_menu(query: str, k: int = 5) -> str:
         lines.append(line)
     return "\n".join(lines)
 
-def _menu_key(name: str) -> str:
-    return re.sub(r"\s+", "", (name or "").split("(")[0])
-
-
-def _named_menus(compact: str, names: list[str]) -> list[str]:
-    """붙여 쓴 문장에서 언급된 메뉴 이름을 돌려준다. 긴 이름부터 찾아 지워서
-    "더블 치즈 버거"를 말했을 때 "치즈 버거"까지 같이 걸리는 일을 막는다."""
-    found: list[str] = []
-    rest = compact
-    for n in sorted(names, key=lambda x: -len(_menu_key(x))):
-        key = _menu_key(n)
-        if len(key) >= 2 and key in rest:
-            found.append(n)
-            rest = rest.replace(key, " ")
-    return found
-
-
 def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_set: bool = False,
-                         menu: list | None = None) -> str | None:
-    """LLM이 넘긴 메뉴(`item`)가 손님이 말한 메뉴와 다르면 손님이 말한 쪽 이름을 돌려준다(맞거나 모르면 None).
+                         menu: list | None = None, recent: str = "") -> tuple[str, bool] | None:
+    """LLM이 넘긴 메뉴(`item`)가 손님이 말한 메뉴와 다르면 (손님이 말한 쪽 이름, 그 메뉴가 하나로 정해지는지)를
+    돌려준다(맞거나 모르면 None). 하나로 정해지면 호출한 쪽이 거절하지 않고 맞는 메뉴로 바로잡을 수 있다.
 
     - 버거: 이번 발화에 버거 이름이 있으면 그 버거여야 한다. 발화에 이름이 없는 "맞아요" 같은 확인
       답변이면 직전에 키오스크가 말한 버거여야 한다. (직전 턴의 id를 재사용해 비건 버거 세트가
@@ -238,19 +224,24 @@ def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_s
             # 재사용한 것이다. (세트 주문에서는 사이드·음료 이름이 정상적으로 나오므로 제외)
             others = [n for n in _named_menus(compact, list({i["name_ko"] for i in menu})) if n not in burgers]
             if others and not any(_menu_key(n) in mine or mine in _menu_key(n) for n in others):
-                return others[0]
+                return others[0], len(others) == 1
         if not expected:
             expected = _named_menus(re.sub(r"\s+", "", last_bot or ""), burgers)
+        if not expected:
+            # 직전 키오스크 안내에도 버거 이름이 없으면, 버거 이름이 나온 가장 최근 손님 발화를 따른다
+            # ("치킨다릿살버거 세트로 하나 줘" → … → "콜라로 주세요"처럼 이름 없이 이어 말하는 경우)
+            for turn in reversed([t for t in (recent or "").split("¦") if t.strip()]):
+                expected = _named_menus(re.sub(r"\s+", "", turn), burgers)
+                if expected:
+                    break
         if expected and not any(_menu_key(n) == mine for n in expected):
-            return expected[0]
+            return expected[0], len(expected) == 1
         return None
     if not compact or mine in compact:
         return None
-    for n in _named_menus(compact, list({i["name_ko"] for i in menu})):
-        key = _menu_key(n)
-        if key not in mine and mine not in key:
-            return n
-    return None
+    others = [n for n in _named_menus(compact, list({i["name_ko"] for i in menu}))
+              if _menu_key(n) not in mine and mine not in _menu_key(n)]
+    return (others[0], len(others) == 1) if others else None
 
 
 def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
@@ -266,9 +257,32 @@ def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
     return found
 
 
-def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str | None, drink: str | None) -> str | None:
-    """add_item 호출이 손님이 한 말과 맞는지 규칙으로 검사한다. 어긋나면 거절 메시지(문자열), 통과면 None.
-    모든 개입은 guards.block이 기록한다. 한국어 발화에서만 동작하고, 근거가 없으면 막지 않는다."""
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _resolve_menu_by_name(name: str, menu: list | None) -> dict | None:
+    """메뉴 이름(또는 비슷한 이름)으로 메뉴 하나를 찾는다. "치킨너겟" → "너겟(4조각)". 하나로 정해질 때만 돌려준다."""
+    key = _menu_key(name)
+    if not menu or len(key) < 2:
+        return None
+    exact = [i for i in menu if _menu_key(i["name_ko"]) == key]
+    if len(exact) == 1:
+        return exact[0]
+    near = [i for i in menu if key in _menu_key(i["name_ko"]) or _menu_key(i["name_ko"]) in key]
+    if len(near) == 1:
+        return near[0]
+    # 여럿이면 이름이 가장 길게 겹치는 하나(그 길이가 유일할 때만)
+    scored = sorted(((len(_menu_key(i["name_ko"])), i) for i in near), key=lambda x: -x[0])
+    if len(scored) >= 2 and scored[0][0] > scored[1][0]:
+        return scored[0][1]
+    return None
+
+
+def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str | None, drink: str | None
+                    ) -> tuple[str | None, dict, int]:
+    """add_item 호출이 손님이 한 말과 맞는지 규칙으로 검사한다. (거절 메시지 또는 None, 사용할 항목, 사용할 수량)을 돌려준다.
+    메뉴가 어긋났는데 손님이 말한 메뉴가 하나로 정해지면 거절하지 않고 맞는 메뉴로 바로잡는다(항목이 바뀜).
+    모든 개입은 guards가 기록한다. 한국어 발화에서만 동작하고, 근거가 없으면 막지 않는다."""
     user, recent, last_bot = get_user_input(), get_recent_user_text(), get_last_bot_text()
     name = item["name_ko"]
     try:
@@ -277,16 +291,28 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
         menu = None
 
     # 1) 메뉴 일치 — 직전 턴의 menu_item_id 재사용
-    wrong = _mentions_other_menu(user, item, last_bot, upgrade_to_set, menu)
-    if wrong:
-        msg = guards.block(
-            "menu_mismatch", f"「{user[:30]}」 말한 메뉴={wrong} / 전달된 메뉴={name}",
-            f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{name}'입니다. "
-            f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요.")
-        if msg:
-            return msg
+    found = _mentions_other_menu(user, item, last_bot, upgrade_to_set, menu, recent)
+    if found:
+        wrong, unique = found
+        target = _resolve_menu_by_name(wrong, menu) if unique else None
+        if target and (not upgrade_to_set or any(o.get("option_group") == "SET_UPGRADE" for o in target.get("options") or [])):
+            if guards.fix("menu_mismatch", f"「{user[:30]}」 {name} → {target['name_ko']}(손님이 말한 메뉴)로 바로잡음"):
+                try:
+                    fixed_item = _run(api_client.fetch_menu_item_by_id(target["id"]))
+                except Exception:  # noqa: BLE001
+                    fixed_item = None
+                if fixed_item:
+                    item, name = fixed_item, fixed_item["name_ko"]
+                    found = None
+        if found:
+            msg = guards.block(
+                "menu_mismatch", f"「{user[:30]}」 말한 메뉴={wrong} / 전달된 메뉴={name}",
+                f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{name}'입니다. "
+                f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요.")
+            if msg:
+                return msg, item, quantity
     if not (guards.has_hangul(user) or guards.has_hangul(recent)):
-        return None   # 외국어 발화는 아래 한국어 규칙을 적용하지 않는다
+        return None, item, quantity   # 외국어 발화는 아래 한국어 규칙을 적용하지 않는다
 
     # 2) 질문형 발화에서는 담지 않는다 ("콜라는 얼마예요?")
     if guards.is_question_only(user):
@@ -294,7 +320,7 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
             "question_add", f"「{user[:30]}」 질문형인데 {name} 담기 시도",
             "오류: 손님이 가격·정보를 물었을 뿐 담아 달라고 하지 않았습니다. 장바구니에 담지 말고 질문에 답하세요.")
         if msg:
-            return msg
+            return msg, item, quantity
 
     is_burger = any(o.get("option_group") == "SET_UPGRADE" for o in item.get("options") or [])
 
@@ -305,7 +331,7 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
             "set_ungrounded", f"「{user[:30]}」 세트라고 말하지 않았는데 {name} 세트 담기 시도",
             f"오류: 손님이 '{name}'을(를) 세트로 달라고 말하지 않았습니다. 단품/세트를 먼저 물어보세요.")
         if msg:
-            return msg
+            return msg, item, quantity
 
     # 4) 세트의 사이드·음료는 손님이 실제로 말한 것이어야 한다(지어내서 채우기 금지)
     if upgrade_to_set:
@@ -318,7 +344,7 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
                     f"오류: 손님이 {label}를 '{value}'(으)로 말하지 않았습니다. 임의로 고르지 말고 {label}를 먼저 "
                     f"물어본 뒤 손님이 고른 것으로 다시 호출하세요.")
                 if msg:
-                    return msg
+                    return msg, item, quantity
 
     # 5) 버거는 단품/세트를 말하지 않았으면 먼저 물어야 한다(같은 단품을 더 담는 경우는 예외)
     if is_burger and not upgrade_to_set and not (
@@ -338,20 +364,25 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
                 f"오류: 손님이 '{name}'을(를) 단품으로 달라고 말하지 않았습니다. 담지 말고 "
                 f"'단품으로 드릴까요, 세트로 드릴까요?'라고 먼저 물어보세요.")
             if msg:
-                return msg
+                return msg, item, quantity
 
     # 6) 수량 — 발화에 수량 표현이 하나뿐이고 메뉴도 하나뿐이면 둘이 같아야 한다
     spoken_qty = guards.quantity_in(user)
     if spoken_qty is not None and menu:
         named = _named_menus(re.sub(r"\s+", "", user), list({i["name_ko"] for i in menu}))
         if len(named) == 1 and spoken_qty != quantity:
-            msg = guards.block(
-                "quantity_mismatch", f"「{user[:30]}」 말한 수량={spoken_qty} / 전달된 수량={quantity}",
-                f"오류: 손님이 말한 수량은 {spoken_qty}개인데 quantity={quantity}로 호출했습니다. "
-                f"quantity={spoken_qty}로 다시 호출하세요.")
-            if msg:
-                return msg
-    return None
+            # 손님이 말한 수량이 하나로 정해지므로 거절하지 않고 그 수량으로 바로잡는다(모델은 거절을 받으면
+            # 같은 호출을 되풀이하다 반복 한도에 걸리는 일이 있었다)
+            if guards.fix("quantity_mismatch", f"「{user[:30]}」 수량 {quantity} → {spoken_qty}(손님이 말한 수량)로 바로잡음"):
+                quantity = spoken_qty
+            else:
+                msg = guards.block(
+                    "quantity_mismatch", f"「{user[:30]}」 말한 수량={spoken_qty} / 전달된 수량={quantity}",
+                    f"오류: 손님이 말한 수량은 {spoken_qty}개인데 quantity={quantity}로 호출했습니다. "
+                    f"quantity={spoken_qty}로 다시 호출하세요.")
+                if msg:
+                    return msg, item, quantity
+    return None, item, quantity
 
 
 def _target_mismatch(user: str, target_name: str, menu: list | None) -> str | None:
@@ -395,6 +426,16 @@ def add_item(
     """
     session_id = get_session_id()
 
+    # 모델이 menu_item_id 자리에 UUID 대신 메뉴 이름("치킨너겟")을 넣는 경우가 많다(다품목 주문에서 특히).
+    # 그대로 두면 "메뉴를 찾을 수 없다"가 되고, 모델이 그러고도 "담았습니다"라고 답하기도 한다 → 이름으로 찾아 준다.
+    if not _UUID_RE.match(str(menu_item_id or "")):
+        try:
+            by_name = _resolve_menu_by_name(str(menu_item_id or ""), _run(api_client.fetch_menu_items()))
+        except Exception:  # noqa: BLE001
+            by_name = None
+        if by_name and guards.fix("id_is_name", f"menu_item_id='{menu_item_id}' → {by_name['name_ko']}"):
+            menu_item_id = by_name["id"]
+
     try:
         # 단건 조회 API 호출
         item = _run(api_client.fetch_menu_item_by_id(menu_item_id))
@@ -408,9 +449,17 @@ def add_item(
         return f"죄송합니다, {item['name_ko']}는 현재 품절입니다."
 
     # 규칙 기반 검사(ai_modules/llm/guards.py): 손님이 한 말과 어긋난 호출은 되돌려 보낸다.
-    blocked = _check_add_item(item, quantity, upgrade_to_set, side, drink)
+    blocked, item, quantity = _check_add_item(item, quantity, upgrade_to_set, side, drink)
     if blocked:
         return blocked
+    menu_item_id = item.get("id", menu_item_id)   # 메뉴가 바로잡혔으면 그 id로 담는다
+
+    # 같은 턴에 같은 추가를 또 하려는 호출은 무시한다. 모델이 틀린 id로 add_item을 여러 번 부르고 가드가 그것들을
+    # 같은 메뉴로 바로잡으면 같은 메뉴가 중복으로 담긴다(실제로 데리버거가 6개가 됨).
+    dup_key = (item.get("id"), bool(upgrade_to_set), side, drink, int(quantity))
+    if add_seen_this_turn(dup_key):
+        guards.fix("duplicate_add", f"이번 턴에 이미 담은 {item['name_ko']} {quantity}개 중복 호출 무시")
+        return f"{item['name_ko']} {quantity}개는 이번 요청에서 이미 담았습니다. 다시 담지 말고 손님에게 결과를 안내하세요."
 
     # 옵션 구성 로직
     selected_options = []
@@ -557,6 +606,15 @@ def update_item_options(
                 menu = _run(api_client.fetch_menu_items())
             except Exception:  # noqa: BLE001
                 menu = None
+            user_text = get_user_input()
+            spoken = guards.quantity_in(user_text)
+            if (spoken is not None and quantity == spoken and guards.has_add_verb(user_text)
+                    and not guards.has_change_verb(user_text) and not guards.has_remove_intent(user_text)):
+                # "게살버거 단품 두 개 담아줘"는 이미 1개가 있으면 3개가 되어야 한다(모델이 2개로 "변경"하는 사고)
+                current = int(cart_item.get("quantity", 1))
+                if guards.fix("update_should_add",
+                              f"「{user_text[:30]}」 {cart_item.get('name_ko')} 기존 {current}개 + {spoken}개 = {current + spoken}개"):
+                    quantity = current + spoken
             wrong = _target_mismatch(get_user_input(), cart_item.get("name_ko", ""), menu)
             if wrong:
                 msg = guards.block(

@@ -28,6 +28,7 @@ _stt_original: ContextVar[str] = ContextVar("kiosk_stt_original", default="")
 _recent_user_text: ContextVar[str] = ContextVar("kiosk_recent_user_text", default="")
 _guard_hits: ContextVar[list] = ContextVar("kiosk_guard_hits", default=[])
 _guard_rejects: ContextVar[int] = ContextVar("kiosk_guard_rejects", default=0)
+_added_keys: ContextVar[set] = ContextVar("kiosk_added_keys", default=set())
 
 
 def set_cart(cart: list) -> None:
@@ -59,11 +60,22 @@ def reset_guards() -> None:
     """새 턴 시작 시 가드 기록과 거절 횟수를 비운다."""
     _guard_hits.set([])
     _guard_rejects.set(0)
+    _added_keys.set(set())
 
 
-def record_guard(rule: str, detail: str, blocked: bool) -> None:
-    """가드가 개입한 사실을 남긴다. blocked=False면 shadow 모드(기록만)."""
-    _guard_hits.get().append({"rule": rule, "detail": detail, "blocked": blocked})
+def record_guard(rule: str, detail: str, blocked: bool, fixed: bool = False) -> None:
+    """가드가 개입한 사실을 남긴다. blocked=도구 호출을 거절함, fixed=코드가 값을 바로잡아 그대로 진행함,
+    둘 다 False면 shadow 모드(기록만)."""
+    _guard_hits.get().append({"rule": rule, "detail": detail, "blocked": blocked, "fixed": fixed})
+
+
+def add_seen_this_turn(key) -> bool:
+    """이번 턴에 같은 추가(key)를 이미 했으면 True. 처음이면 기록하고 False."""
+    seen = _added_keys.get()
+    if key in seen:
+        return True
+    seen.add(key)
+    return False
 
 
 def get_guard_hits() -> list:

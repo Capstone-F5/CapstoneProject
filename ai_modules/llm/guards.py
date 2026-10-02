@@ -76,6 +76,20 @@ def block(rule: str, detail: str, message: str) -> str | None:
     return message
 
 
+def fix(rule: str, detail: str) -> bool:
+    """코드가 값을 바로잡아 그대로 진행해도 되는지 알려 준다(바로잡을 수 있을 때만 호출).
+    enforce면 True(고침으로 기록), shadow면 기록만 하고 False, off면 False.
+    모델에게 거절하고 다시 시키는 것보다 확실해서, 손님이 말한 대상이 하나로 정해질 때는 이쪽을 쓴다."""
+    mode = guard_mode()
+    if mode == "off":
+        return False
+    if mode == "shadow":
+        record_guard(rule, detail, blocked=False, fixed=False)
+        return False
+    record_guard(rule, detail, blocked=False, fixed=True)
+    return True
+
+
 # ── 발화에서 뽑는 규칙 ────────────────────────────────────────────────────────
 _HANGUL = re.compile(r"[가-힣]")
 _KO_NUM = {"하나": 1, "한": 1, "둘": 2, "두": 2, "셋": 3, "세": 3, "넷": 4, "네": 4,
@@ -106,6 +120,19 @@ _ORDER_VERB = re.compile(r"줘|주세요|주라|주실|담아|담을|추가|할�
 _SINGLE_WORDS = re.compile(r"단품|그냥|버거만|단독|single|単品|单品", re.IGNORECASE)
 _SET_WORDS = re.compile(r"세트|set\b|セット|套餐", re.IGNORECASE)
 _CONFIRM = re.compile(r"^\W*(?:어\W*)?(?:네|예|응|어|그래|맞아|맞아요|좋아|좋아요|그걸로|그거|그렇게|오케이|ok|okay)", re.IGNORECASE)
+
+
+_ADD_VERB = re.compile(r"담아|추가해|추가할|주세요|줘|주라|주실")
+_CHANGE_VERB = re.compile(r"바꿔|바꾸|변경|수정|로\s*해|으로\s*해|로\s*줄|만\s*주|말고|대신")
+
+
+def has_add_verb(text: str) -> bool:
+    return bool(_ADD_VERB.search(text or ""))
+
+
+def has_change_verb(text: str) -> bool:
+    """"바꿔줘/…로 해줘"처럼 수량을 그 값으로 정하라는 뜻이 분명한 표현. ("두 개 더 줘"는 더하라는 뜻이라 넣지 않는다)"""
+    return bool(_CHANGE_VERB.search(text or ""))
 
 
 def has_remove_intent(text: str) -> bool:
@@ -158,6 +185,11 @@ _UNFULFILLED = {
     "remove": "죄송합니다, 아직 장바구니에서 빼지 못했어요. 어떤 메뉴인지 한 번 더 말씀해 주세요.",
     "change": "죄송합니다, 아직 변경하지 못했어요. 어떻게 바꿀지 한 번 더 말씀해 주세요.",
 }
+
+
+def claims_add(output: str) -> bool:
+    """응답이 "담았습니다/추가했습니다"라고 주장하는가."""
+    return bool(output) and bool(_CLAIM_ADD.search(output))
 
 
 def correct_reply(output: str, action_types: list[str]) -> str | None:

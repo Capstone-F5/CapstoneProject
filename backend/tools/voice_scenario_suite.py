@@ -1144,16 +1144,16 @@ def main() -> int:
             for g in t.get("guards", []):
                 row = per_guard.setdefault(g["rule"], [0, 0, 0])
                 row[0] += 1
-                row[1] += bool(g.get("blocked"))
+                row[1] += bool(g.get("blocked") or g.get("fixed"))
                 row[2] += bool(t["fails"])
     if per_guard:
-        print("\n가드 개입 (규칙별)  — 개입 횟수 / 실제로 막음 / 그 턴이 실패로 끝난 횟수")
+        print("\n가드 개입 (규칙별)  — 개입 횟수 / 막음·고침 / 그 턴이 실패로 끝난 횟수")
         for rule, (n, blocked, failed) in sorted(per_guard.items(), key=lambda kv: -kv[1][0]):
             print(f"  {rule:<24} {n:>3} / {blocked:>3} / {failed:>3}")
         for r in results:
             for t in r.turns:
                 for g in t.get("guards", []):
-                    mark = "막음" if g.get("blocked") else "기록만"
+                    mark = "막음" if g.get("blocked") else ("고침" if g.get("fixed") else "기록만")
                     print(f"    [{r.scenario.id}] {mark} {g['rule']}: {g['detail']}")
     if per_op:
         print("\n조작별 실패 (턴 기준)")
