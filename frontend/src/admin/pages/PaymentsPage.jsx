@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { fetchAdminPayments, refundPayment } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
+import OrderNumber from '../components/OrderNumber.jsx'
 
 const FILTERS = [
   { key: 'all',      label: '전체' },
@@ -44,7 +45,7 @@ function RefundModal({ payment, onClose, onConfirm }) {
       <div className="modal-box">
         <div className="modal-title">환불 처리</div>
         <p style={{ fontSize:'13px', color:'#666', marginBottom:'16px' }}>
-          주문 <strong className="order-number">#{payment.order_number}</strong>의 결제
+          주문 <OrderNumber value={payment.order_number} />의 결제
           ({Number(payment.amount).toLocaleString('ko-KR')}원)를 환불합니다.
         </p>
         <div style={{
@@ -141,7 +142,7 @@ export default function PaymentsPage() {
             )}
             {filtered.map(p => (
               <tr key={p.payment_id}>
-                <td className="order-number">#{p.order_number}</td>
+                <td><OrderNumber value={p.order_number} /></td>
                 <td>{p.method}</td>
                 <td>
                   <span style={{ marginRight:'8px' }}>{Number(p.amount).toLocaleString('ko-KR')}원</span>

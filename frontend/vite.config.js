@@ -24,6 +24,9 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, '')
   const useHttps = env.VITE_HTTPS !== 'false'
+  // start_servers.ps1이 빈 포트를 찾아 BACKEND_PORT로 넘겨준다(기본 8000).
+  const backendPort = process.env.BACKEND_PORT || env.PORT || '8000'
+  const backendHttp = `http://localhost:${backendPort}`
 
   return {
     customLogger: logger,
@@ -35,6 +38,8 @@ export default defineConfig(({ mode }) => {
     ],
     envDir: projectRoot,
     base: './',
+    // 손 인식 워커는 모듈 워커(MediaPipe wasm 로더를 import()로 불러옴)라 빌드도 es 형식이어야 한다.
+    worker: { format: 'es' },
     optimizeDeps: {
       // vad-react / vad-web: CJS → ESM 변환을 위해 pre-bundle 포함
       include: ['@ricky0123/vad-react', '@ricky0123/vad-web'],
@@ -69,6 +74,10 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
+      // 포트는 자동이다. start_servers.ps1이 비어 있는 포트를 찾아 VITE_PORT로 넘기면 그 포트를 쓰고,
+      // 직접 npm run dev 하면 Vite 기본 동작(사용 중이면 다음 번호)을 따른다.
+      // Pi 키오스크는 deploy/raspberry-pi/start_kiosk.sh가 실행 중인 포트를 찾아 접속한다.
+      ...(process.env.VITE_PORT ? { port: Number(process.env.VITE_PORT), strictPort: true } : {}),
       allowedHosts: ['cap.dmuce-stu.kr'],
       headers: {
         // onnxruntime-web 1.18+은 threaded WASM만 제공 → SharedArrayBuffer 필요
@@ -77,10 +86,10 @@ export default defineConfig(({ mode }) => {
         'Cross-Origin-Embedder-Policy': 'credentialless',
       },
       proxy: {
-        '/ws': { target: 'ws://localhost:8000', ws: true },
-        '/api': { target: 'http://localhost:8000' },
-        '/ai_modules': { target: 'http://localhost:8000' },
-        '/static': { target: 'http://localhost:8000' },
+        '/ws': { target: `ws://localhost:${backendPort}`, ws: true },
+        '/api': { target: backendHttp },
+        '/ai_modules': { target: backendHttp },
+        '/static': { target: backendHttp },
       },
     },
   }

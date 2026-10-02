@@ -9,6 +9,7 @@ from dao.cart_dao import (
 from dao.menu_dao import get_menu_item_by_id
 from dao import discount_dao
 from core.pricing import calculate_cart_item_price
+from core.cart_context import selected_options_with_groups
 from schemas.cart_schemas import CartItemIn, CartItemOut, CartItemUpdateIn, CartOut
 
 router = APIRouter(prefix="/api/cart", tags=["cart"])
@@ -25,6 +26,9 @@ async def get_cart(session_id: str, db: AsyncSession = Depends(get_session)):
     discounts = await discount_dao.get_active_discounts(db)
     for ci in cart.items:
         price = calculate_cart_item_price(ci.menu_item, ci.selected_options or [], discounts)
+        selected_options = selected_options_with_groups(
+            ci.selected_options, ci.menu_item.options
+        )
         items_out.append(CartItemOut(
             cart_item_id=ci.id,
             menu_item_id=ci.menu_item_id,
@@ -36,7 +40,7 @@ async def get_cart(session_id: str, db: AsyncSession = Depends(get_session)):
             final_price=price["final_price"],
             applied_discounts=price["applied_discounts"],
             category_id=ci.menu_item.category_id,
-            selected_options=ci.selected_options or [],
+            selected_options=selected_options,
             special_note=ci.special_note,
         ))
         total += price["final_price"] * ci.quantity

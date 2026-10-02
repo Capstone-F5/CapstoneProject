@@ -1,13 +1,19 @@
 import { useState, useEffect } from 'react'
 import Logo from '../components/Logo'
 import useT from '../i18n/useT'
+import { playTTS } from '../utils/tts'
 
 const TOTAL_SECONDS = 10
 
-export default function CompletionScreen({ orderNum, nav }) {
+export default function CompletionScreen({ orderNum, nav, narrate }) {
   const t = useT()
-  const numStr = String(orderNum ?? 0).padStart(3, '0')
+  // DB에 YYYYMMDDNNN 형식으로 저장 — 끝 3자리만 고객 표시용 주문 번호로 사용
+  const numStr = String(orderNum ?? 0).slice(-3).padStart(3, '0')
   const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS)
+
+  useEffect(() => {
+    if (narrate) playTTS('결제가 완료되었습니다')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const interval = setInterval(() => {

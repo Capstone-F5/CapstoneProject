@@ -76,7 +76,7 @@ const ItemDetailModal = forwardRef(function ItemDetailModal({
   const isSet      = type === 'set'
   const unitPrice  = item.price
     + (isSet ? setSurcharge : 0)
-    + (isSet && side && drink ? side.extra + drink.extra : 0)
+    + (isSet ? (side?.extra ?? 0) + (drink?.extra ?? 0) : 0)
 
   const displayImage = isSet ? (item.setImage ?? item.image) : item.image
   const displayName  = isSet ? `${item.name} ${t('set')}` : item.name

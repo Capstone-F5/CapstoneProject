@@ -11,6 +11,8 @@ import json
 import os
 from datetime import datetime, timezone
 
+from ai_modules.llm.action_context import get_guard_hits, get_stt_original
+
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "conversations")
 
 
@@ -40,6 +42,12 @@ def log_turn(
             "actions": actions,
             "error": error,
         }
+        hits = get_guard_hits()
+        if hits:
+            record["guards"] = hits   # 규칙 가드가 개입한 기록(어떤 규칙이, 왜)
+        original = get_stt_original()
+        if original:
+            record["stt_original"] = original   # STT 교정 전 원문(어떤 오인식이 자주 나오는지 보려고)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001

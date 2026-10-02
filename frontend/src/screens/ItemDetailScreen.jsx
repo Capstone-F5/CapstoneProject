@@ -1,18 +1,17 @@
 import { useState } from 'react'
-import { SET_SIDES, SET_DRINKS, SET_SURCHARGE } from '../data/menuData'
 import HandBadge from '../components/HandBadge'
 
 export default function ItemDetailScreen({ item, type, addToCart, nav }) {
   const [qty, setQty]           = useState(1)
   const [exclusion, setExclusion] = useState(item?.exclusions?.[0] ?? '없음')
-  const [side, setSide]         = useState(SET_SIDES[0])
-  const [drink, setDrink]       = useState(SET_DRINKS[0])
+  const [side, setSide]         = useState(item?.setSides?.[0] ?? null)
+  const [drink, setDrink]       = useState(item?.setDrinks?.[0] ?? null)
 
   if (!item) return null
 
   const isSet = type === 'set'
-  const basePrice = item.price + (isSet ? SET_SURCHARGE : 0)
-  const extraPrice = isSet ? (side.extra + drink.extra) : 0
+  const basePrice = item.price + (isSet ? item.setSurcharge ?? 0 : 0)
+  const extraPrice = isSet ? (side?.extra ?? 0) + (drink?.extra ?? 0) : 0
   const unitPrice = basePrice + extraPrice
 
   const handleAdd = () => {
@@ -154,7 +153,7 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
         {isSet && (
           <OptionSection label="사이드">
             <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
-              {SET_SIDES.map((s, idx) => (
+              {(item.setSides ?? []).map((s, idx) => (
                 <Chip
                   key={s.name}
                   number={idx + 1}
@@ -172,7 +171,7 @@ export default function ItemDetailScreen({ item, type, addToCart, nav }) {
         {isSet && (
           <OptionSection label="음료">
             <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
-              {SET_DRINKS.map((d, idx) => (
+              {(item.setDrinks ?? []).map((d, idx) => (
                 <Chip
                   key={d.name}
                   number={idx + 1}

@@ -15,8 +15,12 @@ import numpy as np
 try:
     import tflite_runtime.interpreter as _tflite
 except ImportError:
-    import tensorflow as tf  # type: ignore
-    _tflite = tf.lite  # type: ignore
+    try:
+        # Windows/최신 Python에서는 tflite_runtime 휠이 없어 후속 패키지(ai-edge-litert)를 쓴다.
+        from ai_edge_litert import interpreter as _tflite  # type: ignore
+    except ImportError:
+        import tensorflow as tf  # type: ignore
+        _tflite = tf.lite  # type: ignore
 
 PERSON_CLASS_ID = 0
 WHITE_CANE_CLASS_ID = 1

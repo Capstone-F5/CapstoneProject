@@ -5,6 +5,13 @@ class SelectedOption(BaseModel):
     option_id: str
     name: str
 
+class SelectedOptionOut(BaseModel):
+    option_id: str
+    name: str
+    option_group: str | None = None
+    name_en: str | None = None
+    additional_price: Decimal | None = None
+
 class CartItemIn(BaseModel):
     menu_item_id: str
     quantity: int = 1
@@ -22,7 +29,7 @@ class CartItemOut(BaseModel):
     final_price: Decimal | None = None
     applied_discounts: list[dict] = []
     category_id: str | None = None
-    selected_options: list[SelectedOption]
+    selected_options: list[SelectedOptionOut]
     special_note: str | None
 
 class CartItemUpdateIn(BaseModel):

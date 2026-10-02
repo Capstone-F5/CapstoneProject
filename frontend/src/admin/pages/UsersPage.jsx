@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { listUsers, getUserDetail, adjustPoints, updateUserTier } from '../api/adminApi.js'
 import StatusBadge from '../components/StatusBadge.jsx'
+import OrderNumber from '../components/OrderNumber.jsx'
 
 const TIER_COLORS = {
   BASIC:  { bg:'#e8f5e9', color:'#2e7d32' },
@@ -172,7 +173,7 @@ function UserDetail({ user, onPointsAdjust, onTierChange }) {
             <tbody>
               {user.recent_orders.map(order => (
                 <tr key={order.order_id}>
-                  <td className="order-number">#{order.order_number}</td>
+                  <td><OrderNumber value={order.order_number} /></td>
                   <td>{order.order_type === 'EAT_IN' ? '매장' : '포장'}</td>
                   <td><StatusBadge value={order.status} /></td>
                   <td>

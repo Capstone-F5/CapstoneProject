@@ -3,17 +3,93 @@ import { useEffect, useRef } from 'react'
 // ── 카메라 설정 ──────────────────────────────────────────────────────────────
 const CAM_W   = 640
 const CAM_H   = 480
-const MAX_FPS = 20
+const MAX_FPS = 15
 // 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
 const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
-
-const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
 
 const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
 
+// ── 손 인식 엔진 (Web Worker + MediaPipe Tasks HandLandmarker) ───────────────
+// 추론을 메인 스레드 밖으로 빼는 실험용 엔진. 기본은 기존 @mediapipe/hands(메인 스레드)다.
+// Pi 4 실측: 기존 132ms/7.2fps, 워커 GPU 162ms/5.8fps, 워커 CPU 250ms/3.8fps — 모델 연산 자체가
+// 병목이라 워커로 옮겨도 빨라지지 않아 기본값으로 쓰지 않는다. ?mpengine=worker 로만 켠다.
+// 워커 초기화가 실패하면 기존 엔진으로 되돌아간다.
+const USE_WORKER_ENGINE = new URLSearchParams(window.location.search).get('mpengine') === 'worker'
+const HAND_WASM_BASE   = '/mediapipe-tasks/wasm'
+const HAND_MODEL_PATH  = '/mediapipe-tasks/hand_landmarker.task'
+// 'GPU'는 워커의 OffscreenCanvas WebGL2를 쓴다. 비교 측정용으로 ?mpdelegate=GPU|CPU 로 바꿀 수 있다.
+const HAND_DELEGATE    = new URLSearchParams(window.location.search).get('mpdelegate') === 'GPU' ? 'GPU' : 'CPU'
+const WORKER_INIT_TIMEOUT_MS = 120000
+
+// send({image})를 가진 엔진을 돌려준다(@mediapipe/hands와 같은 인터페이스).
+// send()는 결과가 onResults로 전달된 뒤 resolve된다.
+// 반환: { promise, cancel } — 초기화 중 언마운트되면(StrictMode 이중 마운트 등) cancel()로
+// 워커를 바로 끊어, wasm 컴파일이 두 번 겹쳐 초기화가 늘어지는 것을 막는다.
+function createWorkerEngine(onResults) {
+  let cancel
+  const promise = new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/handLandmarker.worker.js', import.meta.url), { type: 'module' })
+    let pending = null
+    let ready   = false
+
+    const fail = (err) => {
+      if (!ready) { worker.terminate(); reject(err) }
+    }
+    cancel = () => { clearTimeout(timer); fail(new Error('cancelled')) }
+    const timer = setTimeout(() => fail(new Error('워커 초기화 시간 초과')), WORKER_INIT_TIMEOUT_MS)
+
+    worker.onerror = (e) => fail(new Error(e.message || '워커 로드 실패'))
+    worker.onmessage = (e) => {
+      const m = e.data
+      if (m.type === 'ready') {
+        ready = true
+        clearTimeout(timer)
+        resolve({
+          async send({ image }) {
+            const bitmap = await createImageBitmap(image)
+            return new Promise((res, rej) => {
+              pending = { res, rej }
+              worker.postMessage({ type: 'frame', bitmap, ts: performance.now() }, [bitmap])
+            })
+          },
+          close() {
+            pending?.rej(new Error('closed'))
+            pending = null
+            worker.postMessage({ type: 'close' })
+          },
+        })
+      } else if (m.type === 'error') {
+        clearTimeout(timer)
+        fail(new Error(m.message))
+      } else if (m.type === 'result') {
+        const p = pending
+        pending = null
+        onResults({ multiHandLandmarks: m.landmarks, multiHandedness: m.handedness, inferMs: m.inferMs })
+        p?.res()
+      } else if (m.type === 'frameError') {
+        const p = pending
+        pending = null
+        p?.rej(new Error(m.message))
+      }
+    }
+
+    worker.postMessage({
+      type: 'init',
+      wasmBase: HAND_WASM_BASE,
+      modelPath: HAND_MODEL_PATH,
+      delegate: HAND_DELEGATE,
+      numHands: 1,
+      minDetectionConfidence: 0.7,
+      minPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    })
+  })
+  return { promise, cancel: () => cancel() }
+}
+
 // ── 포인터 스무딩 파라미터 ────────────────────────────────────────────────────
-const POINTER_MIN_CUTOFF = 0.15
+const POINTER_MIN_CUTOFF = 0.4
 const POINTER_BETA       = 50.0
 const POINTER_D_CUTOFF   = 1.0
 const POINTER_DEADZONE   = 0.0018
@@ -23,11 +99,17 @@ const POINTER_MIRROR_X   = false
 const EXTENSION_MARGIN_STRICT = 1.15
 const EXTENSION_MARGIN_THUMB  = 1.05
 const EXTENSION_MARGIN_LOOSE  = 1.05  // 스와이프 open-hand 판정
-// 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식
-const EXTENSION_MARGIN_POINT       = 1.08
+// 가리키는 동작용 — 자연스럽게 살짝 굽은 검지도 인식.
+// 화면을 가리키면 검지가 카메라 쪽을 향해 2D 투영에서 짧아 보인다(단축). 손목 기준
+// 거리 비율로 재는 방식이라 이때 값이 크게 떨어지므로, 진입 문턱을 낮게 잡는다.
+const EXTENSION_MARGIN_POINT       = 1.06
+// 다른 손가락 "안 펴짐" 판정 — 느슨하게 쥔 주먹의 중지/약지가 펴진 걸로 읽히면
+// 검지를 아무리 잘 펴도 포인팅으로 인정되지 않는다. 그래서 STRICT보다 관대하게.
+// 단 너무 관대하면 포인팅이 항상 켜져 있고 pinching = !pointing 이라 핀치가 막힌다.
+const EXTENSION_MARGIN_FOLD_ENTER  = 1.15
 // 히스테리시스: 이미 가리키는 중이면 더 관대 (잠깐 굽혀도 유지)
 const EXTENSION_MARGIN_POINT_HOLD  = 1.00
-const EXTENSION_MARGIN_FOLD_HOLD   = 1.18  // 다른 손가락 "안 펴짐" 판정도 완화
+const EXTENSION_MARGIN_FOLD_HOLD   = 1.19  // 다른 손가락 "안 펴짐" 판정도 완화
 
 function _dist2d(a, b) {
   if (!a || !b) return Number.NaN
@@ -58,12 +140,18 @@ function _isValidLandmarks(lm) {
 }
 
 // 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
-// 카메라 비율에 무관하게 비교하려면 x를 보정해야 하지만,
-// 여기선 단순 임계값 비교이므로 2D 그대로 사용
 const MIN_PALM_SIZE = 0.10  // 이 이하면 너무 멀리 있는 손으로 간주
 
-function _palmSize(lm) {
-  return _dist2d(lm[0], lm[9])
+// 정규화 좌표의 x는 화면 비율만큼 압축되어 있다. 보정하지 않으면 손을 옆으로 눕혔을 때
+// 같은 거리에서도 크기가 작게 측정되어, 회전만으로 임계값 아래로 떨어진다.
+function _palmSize(lm, camAR = 1) {
+  const a = lm[0], b = lm[9]
+  if (!a || !b) return Number.NaN
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) ||
+      !Number.isFinite(b.x) || !Number.isFinite(b.y)) return Number.NaN
+  const dx = (a.x - b.x) * camAR
+  const dy = a.y - b.y
+  return Math.sqrt(dx * dx + dy * dy)
 }
 
 function _isFingerExtended(lm, tipIdx, pipIdx, margin = EXTENSION_MARGIN_STRICT) {
@@ -84,21 +172,21 @@ function _isThumbExtended(lm) {
 // 커서 활성 A: 검지만 핀 (엄지 무관)
 function _isPointing(lm) {
   return (
-     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
-    !_isFingerExtended(lm, 12, 10) &&
-    !_isFingerExtended(lm, 16, 14) &&
-    !_isFingerExtended(lm, 20, 18)
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT)      &&
+    !_isFingerExtended(lm, 12, 10, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 16, 14, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 20, 18, EXTENSION_MARGIN_FOLD_ENTER)
   )
 }
 
 // 커서 활성 B: 엄지+검지 동시에 핀 (핀치 전 준비 자세)
 function _isThumbIndexOpen(lm) {
   return (
-    _isThumbExtended(lm)                                  &&
-     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT) &&
-    !_isFingerExtended(lm, 12, 10)                        &&
-    !_isFingerExtended(lm, 16, 14)                        &&
-    !_isFingerExtended(lm, 20, 18)
+    _isThumbExtended(lm)                                        &&
+     _isFingerExtended(lm, 8,  6, EXTENSION_MARGIN_POINT)       &&
+    !_isFingerExtended(lm, 12, 10, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 16, 14, EXTENSION_MARGIN_FOLD_ENTER) &&
+    !_isFingerExtended(lm, 20, 18, EXTENSION_MARGIN_FOLD_ENTER)
   )
 }
 
@@ -122,6 +210,8 @@ const PINCH_RATIO_ENTER = 0.30   // 팜 대비 30% 이내: 핀치 진입
 const PINCH_RATIO_EXIT  = 0.44   // 팜 대비 44% 이내: 핀치 유지 (히스테리시스)
 
 function _isPinching(lm, alreadyPinching = false) {
+  // 분자(d)와 분모(palm) 모두 보정 없는 2D 거리라 비율이 서로 상쇄된다.
+  // 임계값 0.30/0.44는 이 상태로 튜닝된 값이라 palm에만 camAR을 넣으면 핀치가 과민해진다.
   const palm = _palmSize(lm)
   if (!Number.isFinite(palm) || palm < 1e-6) return false
   const d     = _dist2d(lm[4], lm[8])
@@ -140,6 +230,15 @@ const CAM_MARGIN_BOT = 0.10
 const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
 const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
 
+// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 5% 앞에서 커서가 화면 끝에 닿는다.
+// 카메라 가장자리에서는 랜드마크 인식이 불안정해 모서리 도달이 어렵기 때문.
+const CAM_EDGE_PAD = 0.05
+
+// 활성 구역 내 0~1 좌표를 패딩만큼 잘라내고 다시 0~1로 늘린다.
+function _padNorm(v) {
+  return Math.max(0, Math.min(1, (v - CAM_EDGE_PAD) / (1 - 2 * CAM_EDGE_PAD)))
+}
+
 // ── 클라이언트 사이드 제스처 인식 ────────────────────────────────────────────
 
 function _countFingers(lm) {
@@ -156,30 +255,9 @@ function _isOpenForSwipe(lm) {
   return n >= 3
 }
 
-// 핀치 제외 정적 분류 — 루프에서 핀치를 별도 체크한 뒤 나머지 분류에 사용
-function _classifyStaticNoPinch(lm) {
-  const t = _isThumbExtended(lm)
-  const i = _isFingerExtended(lm, 8,  6)
-  const m = _isFingerExtended(lm, 12, 10)
-  const r = _isFingerExtended(lm, 16, 14)
-  const p = _isFingerExtended(lm, 20, 18)
-  const n = [t, i, m, r, p].filter(Boolean).length
-  if (n === 1 && i)                return 'finger_1'
-  if (n === 2 && i && m)           return 'finger_2'
-  if (n === 3 && i && m && r)      return 'finger_3'
-  if (n === 4 && i && m && r && p) return 'finger_4'
-  if (n === 5)                     return 'finger_5'
-  return null
-}
-
-function _classifyStatic(lm) {
-  if (_isPinching(lm)) return 'ok'
-  return _classifyStaticNoPinch(lm)
-}
-
 // FSM debounce
-const G_CONFIRM     = 3
-const G_CONFIRM_OK  = 4
+const G_CONFIRM     = 2
+const G_CONFIRM_OK  = 3
 const G_COOLDOWN    = 800
 const G_COOLDOWN_OK = 600
 
@@ -311,7 +389,6 @@ function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm, camAR) {
 const _GESTURE_PRIORITY = {
   ok: 3,
   swipe_left: 2, swipe_right: 2, swipe_up: 2, swipe_down: 2,
-  finger_1: 1, finger_2: 1, finger_3: 1, finger_4: 1, finger_5: 1,
 }
 
 // ── One Euro Filter (Casiez et al. 2012) ────────────────────────────────────
@@ -438,7 +515,11 @@ async function openCamera() {
   for (let attempt = 1; attempt <= CAM_RETRY_COUNT; attempt++) {
     try {
       return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: CAM_W }, height: { ideal: CAM_H }, frameRate: { ideal: 30 } },
+        video: {
+          width:     { ideal: CAM_W, max: CAM_W },
+          height:    { ideal: CAM_H, max: CAM_H },
+          frameRate: { ideal: MAX_FPS, max: MAX_FPS },
+        },
       })
     } catch (err) {
       const retryable = err.name === 'NotReadableError' || err.name === 'AbortError'
@@ -470,19 +551,66 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let stream   = null
     let video    = null
     let hands    = null
+    let cancelEngine = null
     let rafId    = null
     let active   = true
     let inflight = false
     let lastSent = 0
+    let cameraSettings = null
+    const perf = {
+      windowStarted: performance.now(), sent: 0, results: 0,
+      latencyTotal: 0, latencyMax: 0, sendStarted: 0, workerTotal: 0,
+      handFrames: 0, handLosses: 0, prevHand: false, pointerFrames: 0,
+    }
+
+    const logPerformance = (now = performance.now()) => {
+      const elapsed = now - perf.windowStarted
+      if (elapsed < 5000) return
+      const seconds = elapsed / 1000
+      const avgLatency = perf.results ? perf.latencyTotal / perf.results : 0
+      const metrics = {
+        targetFps: MAX_FPS,
+        camera: cameraSettings,
+        sentFps: +(perf.sent / seconds).toFixed(1),
+        resultFps: +(perf.results / seconds).toFixed(1),
+        avgInferenceMs: +avgLatency.toFixed(1),
+        maxInferenceMs: +perf.latencyMax.toFixed(1),
+        inflight,
+        engineInferMs: +(perf.workerTotal / Math.max(perf.results, 1)).toFixed(1),
+        handRate: +(perf.handFrames / Math.max(perf.results, 1)).toFixed(3),
+        pointerRate: +(perf.pointerFrames / Math.max(perf.results, 1)).toFixed(3),
+        handLosses: perf.handLosses,
+      }
+      console.info('[useGesture:perf]', JSON.stringify(metrics))
+      fetch('/api/diagnostics/gesture-performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metrics),
+        keepalive: true,
+      }).catch(err => console.warn('[useGesture:perf] server log failed:', err))
+      perf.windowStarted = now
+      perf.sent = 0
+      perf.results = 0
+      perf.latencyTotal = 0
+      perf.latencyMax = 0
+      perf.workerTotal = 0
+      perf.handFrames = 0
+      perf.handLosses = 0
+      perf.pointerFrames = 0
+    }
     let camAR    = AR_REF   // 카메라 실제 비율 (열린 후 갱신)
 
     // ── 포인터 상태 ──────────────────────────────────────────────────────────
-    const pointerStates = { Left: makePointerState(), Right: makePointerState() }
-    const wasActive     = { Left: false, Right: false }
+    // 화면 커서는 하나뿐이므로 손별로 나누지 않는다. 손별(Left/Right)로 키잉하면
+    // MediaPipe가 좌우 판별을 뒤집을 때마다 히스테리시스가 초기화되어,
+    // 손 추적은 멀쩡한데 커서만 꺼지는 현상이 생긴다 (lite 모델에서 특히 자주 뒤집힘).
+    const pointerState = makePointerState()
     // 한 번 가리키기 시작했으면 잠깐 흔들려도 끊기지 않게 — 히스테리시스
-    const wasPointing   = { Left: false, Right: false }
+    let wasActive   = false
+    let wasPointing = false
+    let pointerWasPinching = false
     const CURSOR_HIDE_DELAY_MS = 350
-    const hideTimers    = { Left: null, Right: null }
+    let hideTimer = null
 
     // ── 제스처 상태 ──────────────────────────────────────────────────────────
     const gestureStates = { Left: makeGestureState(), Right: makeGestureState() }
@@ -494,13 +622,26 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     // 핀치 히스테리시스 — 진입/유지 임계를 구분해 각도 변화에서 끊기지 않게 함
     const wasPinching   = { Left: false, Right: false }
 
+    let inflightWatchdog = null
+
     const handleResults = (results) => {
       if (!active) return
       clearTimeout(inflightWatchdog)
       inflight = false
+      const resultNow = performance.now()
+      const latency = perf.sendStarted ? resultNow - perf.sendStarted : 0
+      perf.results++
+      perf.workerTotal += results.inferMs ?? 0
+      perf.latencyTotal += latency
+      perf.latencyMax = Math.max(perf.latencyMax, latency)
+      logPerformance(resultNow)
 
       const lms    = results.multiHandLandmarks || []
       const handed = results.multiHandedness     || []
+      const hasHand = lms.length > 0
+      if (hasHand) perf.handFrames++
+      if (perf.prevHand && !hasHand) perf.handLosses++
+      perf.prevHand = hasHand
 
       // 사용자의 오른손(MediaPipe "Left") 우선
       let activeIdx   = -1
@@ -512,31 +653,32 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
 
       // ── 포인터 ────────────────────────────────────────────────────────────
+      // 모든 숨김 경로에 동일한 유예를 준다. 임계값 근처에서 한 프레임만 조건을 벗어나도
+      // 즉시 끄면 커서가 깜빡인다.
+      const hidePointerSoon = () => {
+        if (hideTimer) return
+        hideTimer = setTimeout(() => {
+          hideTimer = null
+          wasActive = false
+          pointerRef.current?.(null)
+        }, CURSOR_HIDE_DELAY_MS)
+      }
+
       try {
         if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
-            _palmSize(lms[activeIdx]) >= MIN_PALM_SIZE) {
+            _palmSize(lms[activeIdx], camAR) >= MIN_PALM_SIZE) {
           const lm       = lms[activeIdx]
           // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
-          const pointing = wasPointing[activeLabel]
+          const pointing = wasPointing
             ? (_isPointingHold(lm) || _isPointing(lm) || _isThumbIndexOpen(lm))
             : (_isPointing(lm)     || _isThumbIndexOpen(lm))
-          // 핀치도 히스테리시스 — 포인터 섹션에서는 wasPinching을 미리 읽고, 제스처 섹션에서 갱신
-          const pinching = !pointing && _isPinching(lm, wasPinching[activeLabel])
-          wasPointing[activeLabel] = pointing
+          const pinching = !pointing && _isPinching(lm, pointerWasPinching)
+          wasPointing        = pointing
+          pointerWasPinching = pinching
 
-          // 신뢰도 낮은 감지 무시 (화면 가장자리, 손 일부 잘림 등)
-          const handScore = handed[activeIdx]?.score ?? 1
-          if (handScore < 0.7) {
-            if (!hideTimers[activeLabel]) {
-              hideTimers[activeLabel] = setTimeout(() => {
-                hideTimers[activeLabel] = null
-                wasActive[activeLabel]  = false
-                pointerRef.current?.(null)
-              }, CURSOR_HIDE_DELAY_MS)
-            }
-          } else if (pointing || pinching) {
-            clearTimeout(hideTimers[activeLabel])
-            hideTimers[activeLabel] = null
+          if (pointing || pinching) {
+            clearTimeout(hideTimer)
+            hideTimer = null
 
             // 손목(0)↔중지MCP(9) 중간점 — 손 자세에 가장 안정적
             const px = (lm[0].x + lm[9].x) / 2
@@ -544,55 +686,45 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
             if (Number.isFinite(px) && Number.isFinite(py)) {
               // 재활성화 시 OneEuro 리셋 — 이전 상태가 남아 있으면 커서 점프 발생
-              if (!wasActive[activeLabel]) resetPointerState(pointerStates[activeLabel])
-              wasActive[activeLabel] = true
+              if (!wasActive) resetPointerState(pointerState)
+              wasActive = true
 
               // 절대 선형 매핑 — 방향별 마진 개별 적용
-              const normX = Math.max(0, Math.min(1, (px - CAM_MARGIN_L)   / CAM_ACTIVE_X))
-              const normY = Math.max(0, Math.min(1, (py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y))
-              const [sx, sy] = smoothPointer(
-                pointerStates[activeLabel], normX, normY, performance.now() / 1000
-              )
+              const normX = _padNorm((px - CAM_MARGIN_L)   / CAM_ACTIVE_X)
+              const normY = _padNorm((py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y)
+              const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
+              perf.pointerFrames++
               pointerRef.current?.({ x: sx, y: sy })
             } else {
-              clearTimeout(hideTimers[activeLabel])
-              hideTimers[activeLabel] = null
-              wasActive[activeLabel]  = false
-              pointerRef.current?.(null)
+              hidePointerSoon()
             }
           } else {
-            if (!hideTimers[activeLabel]) {
-              hideTimers[activeLabel] = setTimeout(() => {
-                hideTimers[activeLabel] = null
-                wasActive[activeLabel]  = false
-                pointerRef.current?.(null)
-              }, CURSOR_HIDE_DELAY_MS)
-            }
+            hidePointerSoon()
           }
         } else {
-          if (activeLabel) { clearTimeout(hideTimers[activeLabel]); hideTimers[activeLabel] = null }
-          pointerRef.current?.(null)
+          hidePointerSoon()
         }
       } catch (e) {
         console.warn('[useGesture] 포인터 계산 오류:', e)
-        pointerRef.current?.(null)
+        hidePointerSoon()
       }
 
-      // 안 보이는 손 리셋
+      // 안 보이는 손 리셋 — 제스처 상태는 손별로 유지되므로 라벨 기준이 맞다
       const seen = new Set(handed.map(h => h?.label).filter(Boolean))
       for (const lbl of ['Left', 'Right']) {
         if (!seen.has(lbl)) {
-          clearTimeout(hideTimers[lbl])
-          hideTimers[lbl]       = null
-          resetPointerState(pointerStates[lbl])
-          wasActive[lbl]        = false
-          wasPointing[lbl]      = false
           wasPinching[lbl]      = false
           gestureStates[lbl]    = makeGestureState()
           palmBufs[lbl].length  = 0
           lastSwipeDirs[lbl]    = null
           okNeedsOpen[lbl]      = false
         }
+      }
+      // 커서 히스테리시스는 손이 하나도 없을 때만 리셋한다. 좌우 라벨이 뒤집혔다는
+      // 이유로 끊으면 손을 계속 추적 중인데도 커서가 사라진다.
+      if (lms.length === 0) {
+        wasPointing        = false
+        pointerWasPinching = false
       }
 
       // ── 랜드마크 페이로드 (수집 도구용) ───────────────────────────────────
@@ -615,7 +747,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
-        if (_palmSize(lm) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
+        if (_palmSize(lm, camAR) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
@@ -644,8 +776,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           gestureStates[mpLabel].count     = 0
           gesture = swipe
         } else {
-          // _classifyStatic 내부의 _isPinching도 히스테리시스 적용
-          const raw     = pinching ? 'ok' : _classifyStaticNoPinch(lm)
+          const raw     = pinching ? 'ok' : null
           const blocked = (raw === 'ok' && okNeedsOpen[mpLabel]) ? null : raw
           gesture = _confirmStatic(gestureStates[mpLabel], blocked)
         }
@@ -678,58 +809,118 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       }
     }
 
-    // inflight 워치독
-    let inflightWatchdog = null
+    let sendErrCount = 0
+    let sendCooldownUntil = 0
 
     const loop = () => {
       if (!active) return
       const now   = performance.now()
       const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / MAX_FPS
+                    now - lastSent >= 1000 / MAX_FPS &&
+                    now >= sendCooldownUntil
       if (ready) {
         inflight = true
         lastSent = now
+        perf.sent++
+        perf.sendStarted = now
         inflightWatchdog = setTimeout(() => {
           console.warn('[useGesture] hands.send 타임아웃 — inflight 강제 해제')
           inflight = false
         }, 3000)
-        hands.send({ image: video }).catch(err => {
+        hands.send({ image: video }).then(() => {
+          // 성공하면 에러 카운터 리셋
+          sendErrCount = 0
+        }).catch(err => {
           clearTimeout(inflightWatchdog)
           inflight = false
-          console.warn('[useGesture] hands.send 오류:', err)
+          sendErrCount++
+          // 지수 백오프: 500ms → 1s → 2s → 4s → 최대 15s
+          const delay = Math.min(500 * Math.pow(2, sendErrCount - 1), 15000)
+          sendCooldownUntil = performance.now() + delay
+          console.warn(
+            `[useGesture] hands.send 오류 #${sendErrCount} (${(delay/1000).toFixed(1)}s 후 재시도):`,
+            err?.message ?? String(err)
+          )
         })
       }
+      logPerformance(now)
       rafId = requestAnimationFrame(loop)
     }
 
     const setup = async () => {
+      const t0 = performance.now()
       try {
-        stream = await openCamera()
-        if (!active) { stream.getTracks().forEach(t => t.stop()); return }
+        // 카메라 열기(V4L2 장치 열기)와 MediaPipe 로딩(WASM·모델 다운로드)은 서로
+        // 의존하지 않는다. 직렬로 두면 Pi4B에서 두 지연이 그대로 더해진다.
+        // 각 리소스는 만들어지는 즉시 바깥 변수에 대입해, 한쪽이 실패해도
+        // cleanup이 다른 쪽을 회수할 수 있게 한다.
+        const handsReady = (async () => {
+          try {
+            if (!USE_WORKER_ENGINE) throw new Error('worker engine disabled')
+            const creating = createWorkerEngine(handleResults)
+            cancelEngine = creating.cancel
+            const engine = await creating.promise
+            if (!active) { engine.close(); return }
+            hands = engine
+            console.info(`[useGesture] 손 인식 엔진: Worker HandLandmarker (${HAND_DELEGATE})`)
+            return
+          } catch (err) {
+            if (!active) return
+            if (USE_WORKER_ENGINE) console.warn('[useGesture] 워커 엔진 실패 — 메인 스레드 @mediapipe/hands로 대체:', err?.message ?? err)
+          }
+          if (!active) return
+          const { Hands } = await import('@mediapipe/hands')
+          // StrictMode 이중 마운트에서 이미 정리된 실행이 여기까지 오면 Hands 인스턴스가
+          // 둘이 되고, Emscripten 전역 Module을 동시에 초기화하다
+          // "Module.arguments has been replaced" 어설션으로 죽는다.
+          if (!active) return
+          // CDN 의존성 제거: public/mediapipe-hands/ 에 복사된 로컬 바이너리 사용.
+          // Pi4B 환경에서 CDN 지연/차단 시 WASM 로딩 실패 문제 해결.
+          const MP_BASE = '/mediapipe-hands/'
+          hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
+          hands.setOptions({
+            maxNumHands:            1,
+            modelComplexity:        0,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence:  0.5,
+          })
+          hands.onResults(handleResults)
+          // 생략하면 첫 send()가 WASM·모델 로딩까지 떠안아 수 초간 멈춘다.
+          // 여기서 미리 끝내면 그 시간이 카메라 열기와 겹쳐 사라진다.
+          await hands.initialize()
+        })()
 
-        video = document.createElement('video')
-        video.srcObject = stream
-        video.muted = true
-        video.setAttribute('playsinline', '')
-        await video.play()
-        if (!active) return
+        const cameraReady = (async () => {
+          const s = await openCamera()
+          // 정리된 실행이 카메라를 계속 쥐고 있으면 살아있는 실행이 NotReadableError를 맞는다.
+          if (!active) { s.getTracks().forEach(t => t.stop()); return }
+          stream = s
+          const v = document.createElement('video')
+          v.srcObject = stream
+          v.muted = true
+          v.setAttribute('playsinline', '')
+          await v.play()
+          video = v
+        })()
+
+        await Promise.all([handsReady, cameraReady])
+
+        if (!active) {
+          stream?.getTracks().forEach(t => t.stop())
+          try { hands?.close?.() } catch {}
+          return
+        }
+
+        cameraSettings = stream.getVideoTracks()[0]?.getSettings?.() ?? null
+        console.info('[useGesture] camera settings', cameraSettings)
         if (videoRef) videoRef.current = video
 
-        // 실제 카메라 비율 측정 — 이후 모든 제스처 계산에 적용
         if (video.videoWidth && video.videoHeight) {
           camAR = video.videoWidth / video.videoHeight
           console.log(`[useGesture] 카메라 비율: ${video.videoWidth}×${video.videoHeight} (AR=${camAR.toFixed(3)})`)
         }
 
-        const { Hands } = await import('@mediapipe/hands')
-        hands = new Hands({ locateFile: (f) => `${MP_BASE}${f}` })
-        hands.setOptions({
-          maxNumHands:            2,
-          modelComplexity:        0,
-          minDetectionConfidence: 0.6,
-          minTrackingConfidence:  0.5,
-        })
-        hands.onResults(handleResults)
+        console.info(`[useGesture] 초기화 완료 ${Math.round(performance.now() - t0)}ms`)
         loop()
 
       } catch (err) {
@@ -742,9 +933,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
+      cancelEngine?.()
       clearTimeout(inflightWatchdog)
-      clearTimeout(hideTimers.Left)
-      clearTimeout(hideTimers.Right)
+      clearTimeout(hideTimer)
       if (rafId) cancelAnimationFrame(rafId)
       try { hands?.close?.() } catch {}
       stream?.getTracks().forEach(t => t.stop())
