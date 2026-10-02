@@ -913,6 +913,29 @@ def cart_expect_fail(cart: list[dict], exp: dict) -> str | None:
     return f"장바구니에 {exp} 없음 (실제: {[(c['name'], c['qty'], 'set' if c['set'] else 'single', c['opts']) for c in cart]})"
 
 
+def cart_exact_fail(cart: list[dict], expected: list[dict]) -> str | None:
+    """장바구니가 기대 목록과 정확히 같은지 본다. (메뉴, 옵션 이름 집합)이 같은 줄은 수량을 합산해 비교하므로
+    같은 구성이 한 줄로 합쳐지든 여러 줄이든 상관없다. 빠진 줄·남는 줄·수량·옵션이 다르면 알려 준다."""
+    def key(name, opts):
+        return (norm(name), tuple(sorted(norm(o) for o in opts)))
+    got: dict = {}
+    for c in cart:
+        k = key(c["name"], c["opts"])
+        got[k] = got.get(k, 0) + c["qty"]
+    want: dict = {}
+    for e in expected:
+        k = key(e["name"], e["opts"])
+        want[k] = want.get(k, 0) + e["qty"]
+    if got == want:
+        return None
+    def fmt(k, n):
+        name, opts = k
+        return f"{name}{'(' + '/'.join(opts) + ')' if opts else ''}×{n}"
+    missing = [fmt(k, n) for k, n in want.items() if got.get(k) != n]
+    extra = [fmt(k, n) for k, n in got.items() if want.get(k) != n]
+    return f"장바구니 불일치 — 기대: {missing or '-'} / 실제: {extra or '-'}"
+
+
 def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
     res = Result(sc)
     sid = f"vt-{sc.id.lower()}-{uuid.uuid4().hex[:6]}"
@@ -963,7 +986,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 t0 = time.time()
                 r = httpx.post(f"{base}/ai_modules/llm", json=body, timeout=120)
                 ms = int((time.time() - t0) * 1000)
-                turn = {"text": step["text"], "ms": ms, "fails": [], "output": "", "actions": []}
+                turn = {"text": step["text"], "ms": ms, "fails": [], "output": "", "actions": [], "op": step.get("op")}
                 res.turns.append(turn)
                 if r.status_code != 200:
                     turn["fails"].append(f"HTTP {r.status_code}: {r.text[:120]}")
@@ -992,6 +1015,10 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 for t in c.get("no_actions", []):
                     if t in types:
                         turn["fails"].append(f"금지 액션 {t} 발생")
+                if c.get("cart_exact") is not None:
+                    f = cart_exact_fail(after, c["cart_exact"])
+                    if f:
+                        turn["fails"].append(f)
                 for exp in c.get("cart", []):
                     f = cart_expect_fail(after, exp)
                     if f:
@@ -1060,10 +1087,32 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--report", default=None)
     ap.add_argument("--json", default=None)
+    ap.add_argument("--random", type=int, default=0, help="랜덤 전체 흐름 시나리오 N개를 만들어 실행")
+    ap.add_argument("--seed", type=int, default=1, help="--random의 시드(같은 시드는 같은 시나리오)")
+    ap.add_argument("--dry-run", action="store_true", help="LLM을 부르지 않고 발화와 기대 장바구니만 출력")
+    ap.add_argument("--save-failed", default=None, help="실패한 랜덤 시나리오를 이 JSON 파일에 저장(고정 세트에 추가용)")
     args = ap.parse_args()
 
-    scs = [s for s in SCENARIOS if (not args.only or s.id in args.only)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools 패키지를 스크립트로 실행할 때도 찾게
+    from tools import flow_scenarios_gen as gen
+    generated: dict[str, dict] = {}
+    pool = list(SCENARIOS)
+    if args.random:
+        for d in gen.generate_random(gen.fetch_menu(args.url), args.random, args.seed):
+            generated[d["id"]] = d
+        pool = [Scenario(d["id"], d["category"], d["title"], d["steps"]) for d in generated.values()]
+    else:
+        # 고정 100개(W001~W100)는 비용이 크므로 기본 실행에는 넣지 않고, 카테고리·ID로 고를 때만 포함한다.
+        wants_flow = (args.category and "대량" in args.category) or any(i.startswith("W") for i in (args.only or []))
+        if wants_flow:
+            pool += [Scenario(d["id"], d["category"], d["title"], d["steps"]) for d in gen.load_fixed()]
+    scs = [s for s in pool if (not args.only or s.id in args.only)
            and (not args.category or args.category in s.category)]
+    if args.dry_run:
+        for s in scs:
+            print(gen.describe({"id": s.id, "title": s.title, "steps": s.steps}), "\n")
+        print(f"시나리오 {len(scs)}개 (dry-run, LLM 호출 없음)")
+        return 0
     menu = Menu(args.url)
     print(f"시나리오 {len(scs)}개 실행 (workers={args.workers})")
     t0 = time.time()
@@ -1079,6 +1128,22 @@ def main() -> int:
                     print(f"   - 「{t['text'][:40]}」 {f}")
     ok = sum(r.ok for r in results)
     print(f"\n통과 {ok}/{len(results)}  ({time.time() - t0:.0f}s)")
+    # 전체 흐름 시나리오는 어떤 조작에서 자주 틀리는지 보여 준다
+    per_op: dict[str, list[int]] = {}
+    for r in results:
+        for t in r.turns:
+            if t.get("op"):
+                row = per_op.setdefault(t["op"], [0, 0])
+                row[0] += 1
+                row[1] += bool(t["fails"])
+    if per_op:
+        print("\n조작별 실패 (턴 기준)")
+        for op, (n, f) in sorted(per_op.items(), key=lambda kv: (-kv[1][1] / kv[1][0], -kv[1][0])):
+            print(f"  {op:<18} {f:>3}/{n:<3} ({100 * f / n:.0f}%)")
+    if args.save_failed and generated:
+        failed = [generated[r.scenario.id] for r in results if not r.ok and r.scenario.id in generated]
+        Path(args.save_failed).write_text(json.dumps(failed, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"실패한 랜덤 시나리오 {len(failed)}개를 {args.save_failed} 에 저장 (시드 {args.seed})")
     if args.report:
         write_report(results, Path(args.report), args.url)
     if args.json:
