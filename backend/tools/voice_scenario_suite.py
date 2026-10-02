@@ -796,6 +796,16 @@ FLOW_SCENARIOS: list[Scenario] = [
         say("감자튀김은 빼줘", cart=[line("치즈 버거", 1)], lines=1),
         *_pay("카드로 할게요"),
     ]),
+    Scenario("Z21", "전체흐름", "[까다로움] 단품을 담은 뒤 다른 버거 세트를 연달아 주문(직전 메뉴 id 재사용 방지)", [
+        *_begin(),
+        say("더블 불고기 버거로 줘", no_actions=["add_item"]),
+        say("단품으로 줘", cart=[line("더블 불고기 버거", 1, set=False)]),
+        say("비건버거 하나 세트로 줘. 콜라에다가 치즈스틱.",
+            cart=[line("더블 불고기 버거", 1, set=False), line("비건 버거", 1, set=True, has=["콜라", "치즈스틱"])]),
+        say("F버거도 세트로 하나 줘. 제로사이다에다가 양념감자튀김.",
+            cart=[line("더블 불고기 버거", 1, set=False), line("비건 버거", 1, set=True),
+                  line("F 버거", 1, set=True, has=["제로사이다", "양념감자튀김"])], lines=3),
+    ]),
 ]
 SCENARIOS += FLOW_SCENARIOS
 

@@ -111,6 +111,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   const scrollRef       = useRef(null)
   const activeRef       = useRef(true)
+  const greetedRef      = useRef(false)   // 이 세션에서 인사말을 이미 했는지
   const isTypingRef     = useRef(false)
   const sessionIdRef    = useRef(getSessionId())
   const sessionGenerationRef = useRef(0)
@@ -681,10 +682,18 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       activeRef.current = false
       vadRef.current?.pause()
       setListening(false)
+      clearTimeout(vadResumeTimerRef.current)
       if (audioRef.current) {
-        try { audioRef.current.pause() } catch {}
+        const a = audioRef.current
         audioRef.current = null
+        try { a.pause() } catch {}
+        // pause()만 하면 'ended'가 오지 않아 재생을 기다리던 playTts/drainTtsQueue가 영원히 멈춰 있다.
+        // 그 상태로 ttsBusyRef가 true로 남으면 다시 켰을 때 마이크가 켜지지 않으므로 대기를 풀어 준다.
+        try { a.onended?.() } catch {}
       }
+      ttsQueueRef.current = []
+      ttsBusyRef.current  = false
+      ttsBufRef.current   = ''
     }
   }, [isOpen, vad.loading])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -692,6 +701,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   useEffect(() => {
     if (!isOpen) return
+    // 인사말은 세션당 한 번만. 주문 도중에 껐다 켠 경우에는 처음 안내를 다시 하지 않는다.
+    if (greetedRef.current) return
+    greetedRef.current = true
     const timer = setTimeout(() => {
       if (!activeRef.current) return
       // 인사말이 끝난 뒤에 마이크를 다시 켠다(재생 중 마이크가 소리를 되받아 끊기는 것을 막음)
@@ -717,6 +729,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       clearTtsQueue()
       // 새 ID를 먼저 저장해 이후 장바구니 요청과 즉시 같은 세션을 바라보게 한다.
       sessionIdRef.current = newSessionId()
+      greetedRef.current = false   // 새 세션이므로 다음에 열 때 인사말을 다시 한다
       cartRef.current = []
       detectedLangRef.current = null
       setMessages(INIT_MESSAGES)

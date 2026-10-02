@@ -23,6 +23,7 @@ _cart: ContextVar[list] = ContextVar("kiosk_cart", default=[])
 _actions: ContextVar[list] = ContextVar("kiosk_actions", default=[])
 _user_input: ContextVar[str] = ContextVar("kiosk_user_input", default="")
 _checkout_snapshot: ContextVar[frozenset] = ContextVar("kiosk_checkout_snapshot", default=frozenset())
+_last_bot_text: ContextVar[str] = ContextVar("kiosk_last_bot_text", default="")
 
 
 def set_cart(cart: list) -> None:
@@ -39,6 +40,15 @@ def set_user_input(text: str) -> None:
 
 def get_user_input() -> str:
     return _user_input.get()
+
+
+def set_last_bot_text(text: str) -> None:
+    """직전 턴에 키오스크가 한 말. "맞아요" 같은 이름 없는 확인 답변이 어느 메뉴를 가리키는지 규칙으로 따질 때 쓴다."""
+    _last_bot_text.set(text or "")
+
+
+def get_last_bot_text() -> str:
+    return _last_bot_text.get()
 
 
 def set_checkout_snapshot(steps: frozenset) -> None:

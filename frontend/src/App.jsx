@@ -33,9 +33,10 @@ const GESTURE_LABELS = {
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
 
-// 접근 감지 서버 추론에 TFLite 런타임(ai-edge-litert 또는 tensorflow)이 필요한데
-// 현재 환경에 없어 /ws/approach가 "모델 로드 실패"로 즉시 닫힌다. 런타임을 설치하면 true로.
-const APPROACH_DETECTION = false
+// 접근 감지(지팡이·휠체어): 시작 화면에서 카메라 프레임을 2fps로 서버(/ws/approach)에 보내고, 추론은 서버 PC에서
+// 한다(ai_modules/cv/approach_detector.py, TFLite 런타임은 ai-edge-litert). 서버에 런타임이 없으면
+// /ws/approach가 "모델 로드 실패"로 닫히므로, 배포 환경에 ai-edge-litert가 설치돼 있어야 한다.
+const APPROACH_DETECTION = true
 
 // 손가락 숫자를 동작에 쓰는 화면 — orderType(매장/포장), menu(단품/세트)
 const FINGER_SCREENS = new Set(['orderType', 'menu'])

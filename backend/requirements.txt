@@ -6,7 +6,8 @@ python-dotenv>=1.0.0
 # CV / Gesture
 mediapipe==0.10.35
 opencv-python>=4.8.0
-numpy>=1.24.0
+numpy>=1.24.0,<2   # langchain-community(py<3.12)가 numpy<2를 요구. ai-edge-litert 설치 때 numpy 2로 올라가지 않게 고정
+ai-edge-litert>=1.0.0   # 지팡이·휠체어 접근 감지 TFLite 추론(Windows에는 tflite_runtime 휠이 없음)
 # scikit-learn>=1.3.0   # 제스처 MLP 분류기 비활성 (ai_modules/cv/gesture_classifier.py 주석 처리)
 # joblib>=1.3.0
 

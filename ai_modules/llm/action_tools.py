@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
 import re
-from .action_context import push_action, get_actions, get_user_input, get_checkout_snapshot
+from .action_context import push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text
 from .session_context import get_session_id
 from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
@@ -194,21 +194,56 @@ def _menu_key(name: str) -> str:
     return re.sub(r"\s+", "", (name or "").split("(")[0])
 
 
-def _mentions_other_menu(text: str, item: dict) -> str | None:
-    """발화에 다른 메뉴 이름은 있고 `item` 이름은 없으면 그 다른 메뉴의 이름을 돌려준다(아니면 None)."""
+def _named_menus(compact: str, names: list[str]) -> list[str]:
+    """붙여 쓴 문장에서 언급된 메뉴 이름을 돌려준다. 긴 이름부터 찾아 지워서
+    "더블 치즈 버거"를 말했을 때 "치즈 버거"까지 같이 걸리는 일을 막는다."""
+    found: list[str] = []
+    rest = compact
+    for n in sorted(names, key=lambda x: -len(_menu_key(x))):
+        key = _menu_key(n)
+        if len(key) >= 2 and key in rest:
+            found.append(n)
+            rest = rest.replace(key, " ")
+    return found
+
+
+def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_set: bool = False) -> str | None:
+    """LLM이 넘긴 메뉴(`item`)가 손님이 말한 메뉴와 다르면 손님이 말한 쪽 이름을 돌려준다(맞거나 모르면 None).
+
+    - 버거: 이번 발화에 버거 이름이 있으면 그 버거여야 한다. 발화에 이름이 없는 "맞아요" 같은 확인
+      답변이면 직전에 키오스크가 말한 버거여야 한다. (직전 턴의 id를 재사용해 비건 버거 세트가
+      더블 불고기 버거로 담기던 문제를 막는다)
+    - 그 외(사이드·음료 등): 발화에 다른 메뉴 이름은 있고 이 메뉴 이름은 없으면 어긋난 것으로 본다.
+    """
     compact = re.sub(r"\s+", "", text or "")
     mine = _menu_key(item.get("name_ko", ""))
-    if not compact or not mine or mine in compact:
+    if not mine:
         return None
     try:
         menu = _run(api_client.fetch_menu_items())
     except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
         return None
-    # 긴 이름부터 비교해 "제로콜라"가 "콜라"로 잘못 걸리는 일을 줄인다
-    names = sorted({i["name_ko"] for i in menu}, key=lambda n: -len(_menu_key(n)))
-    for n in names:
+    is_burger = any(o.get("option_group") == "SET_UPGRADE" for o in item.get("options") or [])
+    if is_burger:
+        burgers = [i["name_ko"] for i in menu
+                   if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+        expected = _named_menus(compact, burgers)
+        if not expected and not upgrade_to_set:
+            # 버거 이름 없이 다른 메뉴(콜라 등)만 말했는데 단품 버거를 담으려는 경우 — 직전 안내의 버거를
+            # 재사용한 것이다. (세트 주문에서는 사이드·음료 이름이 정상적으로 나오므로 제외)
+            others = [n for n in _named_menus(compact, list({i["name_ko"] for i in menu})) if n not in burgers]
+            if others and not any(_menu_key(n) in mine or mine in _menu_key(n) for n in others):
+                return others[0]
+        if not expected:
+            expected = _named_menus(re.sub(r"\s+", "", last_bot or ""), burgers)
+        if expected and not any(_menu_key(n) == mine for n in expected):
+            return expected[0]
+        return None
+    if not compact or mine in compact:
+        return None
+    for n in _named_menus(compact, list({i["name_ko"] for i in menu})):
         key = _menu_key(n)
-        if len(key) >= 2 and key in compact and key not in mine and mine not in key:
+        if key not in mine and mine not in key:
             return n
     return None
 
@@ -265,17 +300,16 @@ def add_item(
     if not item.get("is_available", True):
         return f"죄송합니다, {item['name_ko']}는 현재 품절입니다."
 
-    # 직전 턴의 menu_item_id를 그대로 재사용해 엉뚱한 메뉴가 담기는 것을 막는다.
-    # ("치즈버거 담은 뒤 '콜라도 추가해줘' → 치즈 버거가 한 개 더 담김") 이번 발화에 다른 메뉴 이름이
-    # 있는데 이 메뉴 이름은 없으면 되돌려 보내 search_menu로 올바른 id를 찾게 한다. 세트의 사이드·음료
-    # 답변처럼 다른 이름이 정상적으로 나오는 경우(upgrade_to_set)와 외국어 발화(한국어 이름 없음)는 건너뛴다.
-    if not upgrade_to_set:
-        wrong = _mentions_other_menu(get_user_input(), item)
-        if wrong:
-            return (
-                f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{item['name_ko']}'입니다. "
-                f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요."
-            )
+    # 규칙 기반 검사: 직전 턴의 menu_item_id를 모델이 그대로 재사용해 엉뚱한 메뉴가 담기는 것을 막는다.
+    # ("치즈버거 담은 뒤 '콜라도 추가해줘' → 치즈 버거 추가", "비건버거 세트 → 더블 불고기 버거 세트")
+    # 손님이 말한 메뉴(또는 이름 없는 확인 답변이면 직전 안내에서 말한 메뉴)와 다르면 되돌려 보낸다.
+    # 한국어 메뉴 이름이 없는 외국어 발화는 비교할 이름이 없어 자연히 통과한다.
+    wrong = _mentions_other_menu(get_user_input(), item, get_last_bot_text(), upgrade_to_set)
+    if wrong:
+        return (
+            f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{item['name_ko']}'입니다. "
+            f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요."
+        )
 
     # 옵션 구성 로직
     selected_options = []

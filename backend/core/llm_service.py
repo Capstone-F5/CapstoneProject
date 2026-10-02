@@ -18,7 +18,7 @@ from core.cart_context import (
     is_cart_status_query,
 )
 from ai_modules.llm.action_context import (
-    get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot,
+    get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
 )
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
@@ -261,6 +261,7 @@ async def run_agent_stream(
         chat_history = _prepend_language(
             mem_vars.get("chat_history", []), language
         )
+        set_last_bot_text(next((str(getattr(m, "content", "")) for m in reversed(mem_vars.get("chat_history", [])) if getattr(m, "type", "") == "ai"), ""))
 
         # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
         discount_context = await get_active_discount_context()
@@ -371,6 +372,7 @@ async def run_agent(
     chat_history = _prepend_language(
         mem_vars.get("chat_history", []), language
     )
+    set_last_bot_text(next((str(getattr(m, "content", "")) for m in reversed(mem_vars.get("chat_history", [])) if getattr(m, "type", "") == "ai"), ""))
 
     discount_context = await get_active_discount_context()
     context = _context_message(cart, screen, order_type, modal_state)
