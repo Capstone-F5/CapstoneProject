@@ -142,6 +142,10 @@ _CART_RECOMMENDATION_RE = re.compile(
     r"\bwhat should I (?:add|order)\b|\brecommend\b)",
     re.IGNORECASE,
 )
+# "장바구니 보여줘/열어줘/가자"는 담긴 내용을 묻는 게 아니라 장바구니 화면을 열어 달라는 명령이다.
+# 내용을 묻는 말(뭐/뭘/어떤/담겨…)이 함께 있으면 해당하지 않는다.
+_CART_OPEN_RE = re.compile(r"(?:장바구니|카트).{0,6}(?:보여|보자|열어|이동|가줘|가자|갈래)")
+_CART_CONTENT_Q_RE = re.compile(r"뭐|뭘|무엇|어떤|뭔|담겨|담겼|담긴|담았|넣은|넣었|비었|비어|\?")
 
 
 def is_cart_status_query(text: str) -> bool:
@@ -153,6 +157,8 @@ def is_cart_status_query(text: str) -> bool:
         or _CART_RECOMMENDATION_RE.search(normalized)
     ):
         return False
+    if _CART_OPEN_RE.search(normalized) and not _CART_CONTENT_Q_RE.search(normalized):
+        return False   # 화면 이동 요청 → 에이전트가 navigate 처리
 
     has_question = bool(re.search(
         r"(?:\?|현재|지금|뭐|뭘|무엇|어떤|뭔|있어|있나요|있습니까|알려|확인|보여|뭐야|"

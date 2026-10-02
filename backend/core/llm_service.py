@@ -72,8 +72,24 @@ _LANG_REMINDERS: dict[str, str] = {
 }
 
 
-def _agent_input(user_input: str, language: str | None) -> str:
-    return user_input + _LANG_REMINDERS.get(language or "", "")
+def _modal_reminder(modal_state: dict | None) -> str:
+    """팝업이 열려 있으면 질문 바로 뒤에 처리 방법을 한 번 더 알린다.
+
+    시스템 쪽 컨텍스트만으로는 "두 개로 해줘"처럼 대상이 생략된 발화를 장바구니 질문으로 오해하는 경우가
+    있어서, 모델 입력에만 붙인다(메모리에는 원문만 저장).
+    """
+    if not modal_state:
+        return ""
+    return (
+        f"\n\n[화면에 '{modal_state.get('name', '')}' 옵션 팝업이 열려 있음. 대상이 생략된 수량·사이드·음료·제외 "
+        "요청은 이 팝업에 대한 것이다 — 장바구니가 비어 있어도 팝업 기준으로 update_modal을 호출하고, "
+        "손님이 '담아줘/이대로' 등으로 담기를 분명히 말하기 전에는 add_item을 호출하지 않는다. "
+        "단품→세트 전환은 open_item(item_type=set)으로 처리한다.]"
+    )
+
+
+def _agent_input(user_input: str, language: str | None, modal_state: dict | None = None) -> str:
+    return user_input + _LANG_REMINDERS.get(language or "", "") + _modal_reminder(modal_state)
 
 
 def _resolve_language(declared: str | None, text: str) -> str | None:
@@ -252,7 +268,7 @@ async def run_agent_stream(
         chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
         async for event in executor.astream_events(
-            {"input": _agent_input(user_input, language), "chat_history": chat_history},
+            {"input": _agent_input(user_input, language, modal_state), "chat_history": chat_history},
             version="v1",
         ):
             kind = event["event"]
@@ -361,7 +377,7 @@ async def run_agent(
     chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
     result = await executor.ainvoke(
-        {"input": _agent_input(user_input, language), "chat_history": chat_history}
+        {"input": _agent_input(user_input, language, modal_state), "chat_history": chat_history}
     )
     output = result.get("output", "")
     if output.startswith("Agent stopped"):   # 반복 한도 초과 — 내부 메시지를 손님에게 노출하지 않는다

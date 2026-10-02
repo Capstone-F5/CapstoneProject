@@ -142,7 +142,7 @@ SCENARIOS: list[Scenario] = [
     ]),
     Scenario("A10", "복합음성주문", "연속 추가 후 일부만 삭제", [
         state(M, D),
-        say("데리버거 하나 코울슬로 하나 생수 하나", actions=["add_item"],
+        say("데리버거 단품 하나 코울슬로 하나 생수 하나", actions=["add_item"],
             cart=[line("데리버거", 1), line("코울슬로", 1), line("생수", 1)]),
         say("코울슬로는 빼줘", cart=[line("데리버거", 1), line("생수", 1)], lines=2),
     ]),
@@ -222,7 +222,8 @@ SCENARIOS: list[Scenario] = [
     Scenario("B12", "터치후음성", "터치 팝업에서 음성으로 세트 선택", [
         state(M, D),
         modal("F 버거", item_type="single"),
-        say("세트로 할게", actions=["update_modal"]),
+        # update_modal의 field에는 단품→세트 전환이 없다(qty/exclusion/side/drink). 세트 전환은 open_item(set).
+        say("세트로 할게", actions_any=["update_modal", "open_item"]),
     ]),
     Scenario("B13", "터치후음성", "터치 팝업의 사이드·음료를 음성으로 지정", [
         state(M, D),
@@ -431,8 +432,9 @@ SCENARIOS: list[Scenario] = [
     ]),
     Scenario("G03", "옵션세부", "세트 + 재료 제외 + 사이드·음료", [
         state(M, D),
-        say("불고기버거 세트, 피클 빼고, 사이드는 양념감자튀김, 음료는 사이다로 줘", actions=["add_item"],
-            cart=[line("불고기 버거", 1, set=True, has=["피클", "양념감자튀김", "사이다"])]),
+        # 불고기 버거의 제외 옵션은 양상추·양파뿐이다(피클 제외 옵션은 메뉴에 없음).
+        say("불고기버거 세트, 양파 빼고, 사이드는 양념감자튀김, 음료는 사이다로 줘", actions=["add_item"],
+            cart=[line("불고기 버거", 1, set=True, has=["양파", "양념감자튀김", "사이다"])]),
     ]),
     Scenario("G04", "옵션세부", "터치 단품을 세트로 바꾸며 옵션 지정", [
         state(M, D),

@@ -17,6 +17,7 @@ import re
 
 from ai_modules.llm import checkout_progress
 from ai_modules.llm.action_context import get_actions, push_action
+from core.cart_context import _CART_CONTENT_Q_RE, _CART_OPEN_RE
 
 _TAKEOUT = re.compile(
     r"포장|테이크\s*아웃|가져\s*갈|싸\s*가|take\s*-?\s*out|to\s*-?\s*go|持ち帰り|テイクアウト|外带|打包|带走",
@@ -104,6 +105,11 @@ def ensure_actions(
         method = _method_from(text)
         if method:
             added.append({"type": "payment_method", "value": method})
+
+    # 4) 장바구니 열기 — "장바구니 보여줘"에 모델이 화면 설명만 하고 navigate를 빼먹는 경우
+    if (screen not in ("cart", "payment") and cart and not _has(actions, "navigate")
+            and _CART_OPEN_RE.search(text) and not _CART_CONTENT_Q_RE.search(text)):
+        added.append({"type": "navigate", "screen": "cart"})
 
     for action in added:
         push_action(action)

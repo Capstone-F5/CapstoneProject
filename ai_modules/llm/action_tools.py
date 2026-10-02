@@ -190,6 +190,19 @@ def search_menu(query: str, k: int = 5) -> str:
         lines.append(line)
     return "\n".join(lines)
 
+def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
+    """발화에서 "양파 빼고"처럼 이 메뉴의 EXCLUDE 옵션 재료 뒤에 빼/제외/없이가 붙은 것만 골라낸다."""
+    found: list[str] = []
+    compact = (text or "").replace(" ", "")
+    for o in options:
+        if o.get("option_group") != "EXCLUDE" or not o.get("is_available", True):
+            continue
+        ingredient = o["name_ko"].replace("제외", "").replace("다진", "").strip().replace(" ", "")
+        if ingredient and re.search(re.escape(ingredient) + r"(은|는|를|을|만)?(빼|제외|없이|넣지)", compact):
+            found.append(o["name_ko"])
+    return found
+
+
 @tool
 def add_item(
     menu_item_id: str,
@@ -251,6 +264,9 @@ def add_item(
         selected_options.append({"option_id": set_opt["id"], "name": set_opt["name_ko"]})
         selected_options.append({"option_id": side_opt["id"], "name": side_opt["name_ko"]})
         selected_options.append({"option_id": drink_opt["id"], "name": drink_opt["name_ko"]})
+
+    if not exclusions:
+        exclusions = _spoken_exclusions(get_user_input(), options)   # 모델이 제외를 빼먹은 경우 발화에서 보완
 
     for excl in (exclusions or []):
         opt = _find_option_by_name(options, "EXCLUDE", excl, available_only=True)
@@ -439,6 +455,22 @@ _CLEAR_CART_RE = re.compile(
 )
 
 
+_KO_DIGITS = {"공": "0", "영": "0", "일": "1", "이": "2", "삼": "3", "사": "4",
+              "오": "5", "육": "6", "륙": "6", "칠": "7", "팔": "8", "구": "9"}
+
+
+def _spoken_digits(text: str) -> str:
+    """발화에서 숫자(아라비아 숫자와 '공일공' 같은 한국어 숫자 읽기)만 이어 붙여 돌려준다.
+
+    전화번호를 말한 턴인지 판단하는 용도라, 숫자가 거의 없는 발화는 빈 문자열을 돌려 검사를 건너뛴다.
+    """
+    # 일반 단어에도 '일·이·오·구'가 들어 있으므로, 숫자 글자가 (공백·하이픈만 사이에 두고) 이어진 구간만 센다.
+    runs = re.findall(r"[0-9공영일이삼사오육륙칠팔구](?:[\s\-]*[0-9공영일이삼사오육륙칠팔구])+", text or "")
+    best = max(("".join(c if c.isdigit() else _KO_DIGITS[c] for c in r if c.isdigit() or c in _KO_DIGITS)
+                for r in runs), key=len, default="")
+    return best if len(best) >= 3 else ""
+
+
 def _explicit_clear_request(text: str) -> bool:
     return bool(_CLEAR_CART_RE.search(text or ""))
 
@@ -605,6 +637,20 @@ def ui_action(
             return f"오류: action '{action}' 의 value 는 {sorted(allowed)} 중 하나여야 합니다."
     elif action in ("open_item", "points_phone") and not value:
         return f"오류: action '{action}' 은 value 가 필요합니다."
+
+    if action == "points_phone":
+        # 전화번호는 10~11자리여야 한다. 모자란 번호를 그대로 화면에 보내면 잘못된 번호로 조회·적립된다.
+        phone_digits = "".join(ch for ch in (value or "") if ch.isdigit())
+        # 모델이 들은 자릿수가 모자랄 때 번호를 지어내 채우는 일이 재현되므로, 손님 발화에서 읽힌 숫자와도 맞춰 본다.
+        heard = _spoken_digits(get_user_input())
+        if heard and heard != phone_digits:
+            phone_digits = heard
+        if len(phone_digits) not in (10, 11):
+            return (
+                f"오류: 손님이 말한 전화번호가 {len(phone_digits)}자리뿐입니다(10~11자리여야 함). 액션을 보내지 말고 "
+                "번호를 임의로 채우지도 말고, 번호를 처음부터 다시 말씀해 달라고 안내하세요."
+            )
+        value = phone_digits
 
     if action == "start_checkout":
         # ★ 결제 시작은 한 번이면 된다. 포인트 단계까지 이미 끝났거나(이전 턴), 이번 턴에 결제 수단을 이미
