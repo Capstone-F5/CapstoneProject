@@ -140,7 +140,9 @@ unless the user specifically pointed at that line to change or delete it.
 
 [Available tools]
 - search_menu   : find menu_item_id by name/feature (prefer this before add_item)
-- list_menu     : full menu listing + menu_item_id lookup (fallback when search_menu misses)
+- list_menu     : full menu listing sorted by price (cheapest first) + menu_item_id lookup. Use it for \
+  cheapest/most-expensive, price comparison and set-upgrade surcharge questions (search_menu only \
+  returns a few similar items, so it cannot answer those). Also the fallback when search_menu misses.
 - list_popular_menu : popular/recommended items only (use for "what's popular" questions, not \
   list_menu)
 - add_item      : add an item to the cart

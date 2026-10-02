@@ -99,7 +99,9 @@ def _find_option_by_name(
 
 @tool
 def list_menu() -> str:
-    """판매 중인 메뉴 목록을 menu_item_id와 함께 조회한다. add_item 호출 전 menu_item_id 확인용으로 사용."""
+    """판매 중인 전체 메뉴를 가격 낮은 순으로 조회한다. add_item 호출 전 menu_item_id 확인용이며,
+    "가장 싼/비싼 메뉴", "세트로 바꾸면 얼마 더", 전체 목록·가격 비교 질문에는 반드시 이 도구를 쓴다
+    (결과 맨 위에 버거 최저가·최고가와 세트 추가 요금이 적혀 있다)."""
     try:
         items = _run(api_client.fetch_menu_items())
     except Exception as e:
@@ -108,15 +110,25 @@ def list_menu() -> str:
     if not items:
         return "조회된 메뉴가 없습니다."
 
-    lines = ["[메뉴 목록]"]
+    # 가격 오름차순으로 보여 "가장 저렴한/비싼" 질문을 모델이 직접 비교하다 틀리지 않게 한다.
+    items = sorted(items, key=lambda i: float(i["base_price"]))
+    burgers = [i for i in items if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    lines = ["[메뉴 목록 — 가격 낮은 순]"]
+    if burgers:
+        lines.append(
+            f"(버거 중 가장 저렴: {burgers[0]['name_ko']} {int(float(burgers[0]['base_price']))}원, "
+            f"가장 비쌈: {burgers[-1]['name_ko']} {int(float(burgers[-1]['base_price']))}원)"
+        )
     for item in items:
         status = " [품절]" if not item.get("is_available", True) else ""
         popular = " [추천메뉴]" if item.get("is_popular") else ""
         allergens = item.get("allergens") or []
         allergen_tag = f" [알레르기: {', '.join(a['name_ko'] for a in allergens)}]" if allergens else ""
+        upgrade = next((o for o in item.get("options") or [] if o.get("option_group") == "SET_UPGRADE"), None)
+        set_tag = f" [세트로 바꾸면 +{int(float(upgrade['additional_price']))}원]" if upgrade else ""
         lines.append(
             f"- {item['name_ko']} {int(float(item['base_price']))}원 "
-            f"(menu_item_id: {item['id']}){status}{popular}{allergen_tag}"
+            f"(menu_item_id: {item['id']}){status}{popular}{set_tag}{allergen_tag}"
         )
     return "\n".join(lines)
 
@@ -147,7 +159,8 @@ def list_popular_menu() -> str:
 
 @tool
 def search_menu(query: str, k: int = 5) -> str:
-    """메뉴 이름·특징으로 검색해 실제 menu_item_id를 찾는다. list_menu보다 이걸 우선 쓴다.
+    """메뉴 이름·특징으로 검색해 실제 menu_item_id를 찾는다. 특정 메뉴를 담을 때 쓴다.
+    결과는 유사도 순 상위 몇 개뿐이라 "가장 싼/비싼" 같은 가격 비교·전체 목록 질문에는 쓰지 말고 list_menu를 쓴다.
 
     발화에 나온 이름이 DB 표기와 살짝 다르거나(예: "F버거" vs DB의 "F 버거"), "비건 버거"처럼
     특징으로만 말했을 때도 임베딩 기반 유사도 검색(rag.py)으로 정확한 항목을 찾아준다.

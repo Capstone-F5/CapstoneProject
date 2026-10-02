@@ -281,6 +281,8 @@ async def run_agent_stream(
         stream_error = e
 
     output = "".join(output_parts)
+    if output.startswith("Agent stopped"):   # 반복 한도 초과 — 내부 메시지를 손님에게 노출하지 않는다
+        output = _fallback_message(language)
 
     if stream_error is not None:
         if not output:
@@ -362,6 +364,8 @@ async def run_agent(
         {"input": _agent_input(user_input, language), "chat_history": chat_history}
     )
     output = result.get("output", "")
+    if output.startswith("Agent stopped"):   # 반복 한도 초과 — 내부 메시지를 손님에게 노출하지 않는다
+        output = _fallback_message(language)
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작을 규칙으로 보완
     ensure_actions(session_id, user_input, screen, cart, snapshot_before)
