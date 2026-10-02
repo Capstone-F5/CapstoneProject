@@ -243,7 +243,7 @@ SCENARIOS: list[Scenario] = [
     Scenario("B16", "터치후음성", "터치로 담고 음성으로 삭제·추가 번갈아", [
         state(M, D),
         touch_add("데리버거", 1),
-        say("데리버거 빼고 치킨 가슴살 버거로 줘", cart=[line("치킨 가슴살 버거", 1)], lines=1),
+        say("데리버거 빼고 치킨 가슴살 버거 단품으로 줘", cart=[line("치킨 가슴살 버거", 1)], lines=1),
         touch_add("생수", 1),
         say("생수 하나 더", cart=[line("생수", total=2)]),
     ]),
@@ -986,7 +986,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 t0 = time.time()
                 r = httpx.post(f"{base}/ai_modules/llm", json=body, timeout=120)
                 ms = int((time.time() - t0) * 1000)
-                turn = {"text": step["text"], "ms": ms, "fails": [], "output": "", "actions": [], "op": step.get("op")}
+                turn = {"text": step["text"], "ms": ms, "fails": [], "output": "", "actions": [], "op": step.get("op"), "guards": []}
                 res.turns.append(turn)
                 if r.status_code != 200:
                     turn["fails"].append(f"HTTP {r.status_code}: {r.text[:120]}")
@@ -996,6 +996,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 acts = data.get("actions") or []
                 types = [a.get("type") for a in acts]
                 turn["output"], turn["actions"] = out, types
+                turn["guards"] = data.get("guards") or []
                 # 프론트처럼 화면/주문유형 상태 갱신
                 for a in acts:
                     if a.get("type") == "order_type":
@@ -1136,6 +1137,24 @@ def main() -> int:
                 row = per_op.setdefault(t["op"], [0, 0])
                 row[0] += 1
                 row[1] += bool(t["fails"])
+    # 규칙 가드(ai_modules/llm/guards.py)가 개입한 기록: 어떤 규칙이 몇 번, 그 턴이 통과했는지
+    per_guard: dict[str, list[int]] = {}
+    for r in results:
+        for t in r.turns:
+            for g in t.get("guards", []):
+                row = per_guard.setdefault(g["rule"], [0, 0, 0])
+                row[0] += 1
+                row[1] += bool(g.get("blocked"))
+                row[2] += bool(t["fails"])
+    if per_guard:
+        print("\n가드 개입 (규칙별)  — 개입 횟수 / 실제로 막음 / 그 턴이 실패로 끝난 횟수")
+        for rule, (n, blocked, failed) in sorted(per_guard.items(), key=lambda kv: -kv[1][0]):
+            print(f"  {rule:<24} {n:>3} / {blocked:>3} / {failed:>3}")
+        for r in results:
+            for t in r.turns:
+                for g in t.get("guards", []):
+                    mark = "막음" if g.get("blocked") else "기록만"
+                    print(f"    [{r.scenario.id}] {mark} {g['rule']}: {g['detail']}")
     if per_op:
         print("\n조작별 실패 (턴 기준)")
         for op, (n, f) in sorted(per_op.items(), key=lambda kv: (-kv[1][1] / kv[1][0], -kv[1][0])):

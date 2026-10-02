@@ -19,9 +19,9 @@ from core.cart_context import (
 )
 from ai_modules.llm.action_context import (
     get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
-    set_stt_original,
+    set_stt_original, set_recent_user_text, reset_guards, record_guard, get_guard_hits,
 )
-from ai_modules.llm.guards import fix_stt
+from ai_modules.llm.guards import NOISE_REPLY, correct_reply, fix_stt, guard_mode, is_noise
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
 from .intent_fallback import ensure_actions
@@ -57,6 +57,29 @@ _FALLBACK_MESSAGES: dict[str, str] = {
     "zh": "抱歉，现在无法生成回复。请再说一次。",
     "ja": "申し訳ございません、只今応答を生成できませんでした。もう一度お話しください。",
 }
+
+
+def _remember_history(mem_vars: dict) -> None:
+    """가드가 쓰는 대화 맥락을 저장한다: 직전 키오스크 안내, 직전 손님 말 몇 턴.
+    ("맞아요" 같은 이름 없는 확인 답변이나 여러 턴에 걸쳐 말한 사이드·음료를 규칙으로 따질 때 필요)"""
+    history = mem_vars.get("chat_history", []) or []
+    last_bot = next((str(getattr(m, "content", "")) for m in reversed(history) if getattr(m, "type", "") == "ai"), "")
+    humans = [str(getattr(m, "content", "")) for m in history if getattr(m, "type", "") == "human"]
+    set_last_bot_text(last_bot)
+    set_recent_user_text(" ".join(humans[-3:]))
+
+
+def _align_reply_with_actions(output: str) -> str:
+    """"담았습니다/삭제했습니다/변경했습니다"라고 하는데 이번 턴에 그에 맞는 액션이 없으면 안전한 문구로 바꾼다.
+    (스트리밍에서는 이미 읽힌 음성은 되돌릴 수 없고, 화면 텍스트와 대화 기록이 바로잡힌다)"""
+    if guard_mode() == "off":
+        return output
+    fixed = correct_reply(output, [a.get("type") for a in get_actions()])
+    if not fixed:
+        return output
+    enforcing = guard_mode() == "enforce"
+    record_guard("reply_without_action", f"응답 「{output[:40]}」에 맞는 액션 없음", blocked=enforcing)
+    return fixed if enforcing else output
 
 
 def _fallback_message(language: str | None) -> str:
@@ -232,7 +255,23 @@ async def run_agent_stream(
     snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
     set_checkout_snapshot(snapshot_before)
     reset_actions()
+    reset_guards()
+    set_last_bot_text("")
+    set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
+
+    # 배경 소리·음악이 말로 인식된 것으로 보이면 LLM을 부르지 않고 다시 말해 달라고 한다(비용도 절약)
+    if guard_mode() != "off" and is_noise(user_input):
+        enforcing = guard_mode() == "enforce"
+        record_guard("noise", f"「{user_input[:30]}」 도메인 어휘 없음", blocked=enforcing)
+        if enforcing:
+            output = NOISE_REPLY.get(language if language in NOISE_REPLY else "ko", NOISE_REPLY["ko"])
+            log_turn(
+                session_id=session_id, user_input=user_input, output=output, actions=[],
+                language=language, screen=screen, order_type=order_type,
+            )
+            yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+            return
 
     if is_cart_status_query(user_input):
         output = format_cart_status_reply(cart, language, user_input)
@@ -245,7 +284,7 @@ async def run_agent_stream(
             session_id=session_id, user_input=user_input, output=output, actions=[],
             language=language, screen=screen, order_type=order_type,
         )
-        yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
         return
 
     output_parts: list[str] = []
@@ -266,7 +305,7 @@ async def run_agent_stream(
         chat_history = _prepend_language(
             mem_vars.get("chat_history", []), language
         )
-        set_last_bot_text(next((str(getattr(m, "content", "")) for m in reversed(mem_vars.get("chat_history", [])) if getattr(m, "type", "") == "ai"), ""))
+        _remember_history(mem_vars)
 
         # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
         discount_context = await get_active_discount_context()
@@ -314,13 +353,13 @@ async def run_agent_stream(
             language=language, screen=screen, order_type=order_type, error=str(stream_error),
         )
         # 이번 턴 저장은 건너뛴다 — 부분 응답을 히스토리에 남기면 다음 턴이 더 헷갈릴 수 있다.
-        yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
         return
-
-    await save_and_prune(memory, user_input, output)
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작(주문 유형·결제 시작·결제 수단)을 규칙으로 보완
     ensure_actions(session_id, user_input, screen, cart, snapshot_before)
+    output = _align_reply_with_actions(output)
+    await save_and_prune(memory, user_input, output)
 
     # 인라인으로 아직 전송되지 않은 나머지 액션 전송 (안전장치)
     remaining = get_actions()[emitted_count:]
@@ -331,7 +370,7 @@ async def run_agent_stream(
         session_id=session_id, user_input=user_input, output=output, actions=get_actions(),
         language=language, screen=screen, order_type=order_type,
     )
-    yield f"data: {json.dumps({'done': True, 'output': output}, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
 
 
 async def run_agent(
@@ -353,7 +392,23 @@ async def run_agent(
     snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
     set_checkout_snapshot(snapshot_before)
     reset_actions()
+    reset_guards()
+    set_last_bot_text("")
+    set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
+
+    # 배경 소리·음악이 말로 인식된 것으로 보이면 LLM을 부르지 않고 다시 말해 달라고 한다(비용도 절약)
+    if guard_mode() != "off" and is_noise(user_input):
+        enforcing = guard_mode() == "enforce"
+        record_guard("noise", f"「{user_input[:30]}」 도메인 어휘 없음", blocked=enforcing)
+        if enforcing:
+            output = NOISE_REPLY.get(language if language in NOISE_REPLY else "ko", NOISE_REPLY["ko"])
+            log_turn(
+                session_id=session_id, user_input=user_input, output=output, actions=[],
+                language=language, screen=screen, order_type=order_type,
+            )
+            return {"session_id": session_id, "output": output, "actions": [], "intermediate_steps": [],
+                    "guards": get_guard_hits()}
 
     if is_cart_status_query(user_input):
         output = format_cart_status_reply(cart, language, user_input)
@@ -380,7 +435,7 @@ async def run_agent(
     chat_history = _prepend_language(
         mem_vars.get("chat_history", []), language
     )
-    set_last_bot_text(next((str(getattr(m, "content", "")) for m in reversed(mem_vars.get("chat_history", [])) if getattr(m, "type", "") == "ai"), ""))
+    _remember_history(mem_vars)
 
     discount_context = await get_active_discount_context()
     context = _context_message(cart, screen, order_type, modal_state)
@@ -395,6 +450,7 @@ async def run_agent(
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작을 규칙으로 보완
     ensure_actions(session_id, user_input, screen, cart, snapshot_before)
+    output = _align_reply_with_actions(output)
 
     await save_and_prune(memory, user_input, output)
     log_turn(
@@ -406,6 +462,7 @@ async def run_agent(
         "session_id": session_id,
         "output": output,
         "actions": get_actions(),
+        "guards": get_guard_hits(),
         "intermediate_steps": [
             {
                 "tool": getattr(step[0], "tool", str(step[0])),

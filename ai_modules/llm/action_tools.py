@@ -13,7 +13,10 @@ from langchain_core.tools import tool
 #   session_id 가 뒤섞이는 버그가 있어 제거했다 — 손님 A의 발화 처리 중 손님 B의 요청이 들어오면
 #   전역값이 덮어써져서 A가 담은 메뉴가 B의 장바구니에 들어갈 수 있었다.
 import re
-from .action_context import push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text
+from .action_context import (
+    push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text, get_recent_user_text,
+)
+from . import guards
 from .session_context import get_session_id
 from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
@@ -207,7 +210,8 @@ def _named_menus(compact: str, names: list[str]) -> list[str]:
     return found
 
 
-def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_set: bool = False) -> str | None:
+def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_set: bool = False,
+                         menu: list | None = None) -> str | None:
     """LLM이 넘긴 메뉴(`item`)가 손님이 말한 메뉴와 다르면 손님이 말한 쪽 이름을 돌려준다(맞거나 모르면 None).
 
     - 버거: 이번 발화에 버거 이름이 있으면 그 버거여야 한다. 발화에 이름이 없는 "맞아요" 같은 확인
@@ -219,10 +223,11 @@ def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_s
     mine = _menu_key(item.get("name_ko", ""))
     if not mine:
         return None
-    try:
-        menu = _run(api_client.fetch_menu_items())
-    except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
-        return None
+    if menu is None:
+        try:
+            menu = _run(api_client.fetch_menu_items())
+        except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
+            return None
     is_burger = any(o.get("option_group") == "SET_UPGRADE" for o in item.get("options") or [])
     if is_burger:
         burgers = [i["name_ko"] for i in menu
@@ -259,6 +264,108 @@ def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
         if ingredient and re.search(re.escape(ingredient) + r"(은|는|를|을|만)?(빼|제외|없이|넣지)", compact):
             found.append(o["name_ko"])
     return found
+
+
+def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str | None, drink: str | None) -> str | None:
+    """add_item 호출이 손님이 한 말과 맞는지 규칙으로 검사한다. 어긋나면 거절 메시지(문자열), 통과면 None.
+    모든 개입은 guards.block이 기록한다. 한국어 발화에서만 동작하고, 근거가 없으면 막지 않는다."""
+    user, recent, last_bot = get_user_input(), get_recent_user_text(), get_last_bot_text()
+    name = item["name_ko"]
+    try:
+        menu = _run(api_client.fetch_menu_items())
+    except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
+        menu = None
+
+    # 1) 메뉴 일치 — 직전 턴의 menu_item_id 재사용
+    wrong = _mentions_other_menu(user, item, last_bot, upgrade_to_set, menu)
+    if wrong:
+        msg = guards.block(
+            "menu_mismatch", f"「{user[:30]}」 말한 메뉴={wrong} / 전달된 메뉴={name}",
+            f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{name}'입니다. "
+            f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요.")
+        if msg:
+            return msg
+    if not (guards.has_hangul(user) or guards.has_hangul(recent)):
+        return None   # 외국어 발화는 아래 한국어 규칙을 적용하지 않는다
+
+    # 2) 질문형 발화에서는 담지 않는다 ("콜라는 얼마예요?")
+    if guards.is_question_only(user):
+        msg = guards.block(
+            "question_add", f"「{user[:30]}」 질문형인데 {name} 담기 시도",
+            "오류: 손님이 가격·정보를 물었을 뿐 담아 달라고 하지 않았습니다. 장바구니에 담지 말고 질문에 답하세요.")
+        if msg:
+            return msg
+
+    is_burger = any(o.get("option_group") == "SET_UPGRADE" for o in item.get("options") or [])
+
+    # 3) 세트로 담으려면 손님이 세트를 말했어야 한다(이전 턴·직전 안내에 대한 긍정 포함)
+    if upgrade_to_set and not (guards.mentions_set(user) or guards.mentions_set(recent)
+                               or (guards.is_confirmation(user) and guards.mentions_set(last_bot))):
+        msg = guards.block(
+            "set_ungrounded", f"「{user[:30]}」 세트라고 말하지 않았는데 {name} 세트 담기 시도",
+            f"오류: 손님이 '{name}'을(를) 세트로 달라고 말하지 않았습니다. 단품/세트를 먼저 물어보세요.")
+        if msg:
+            return msg
+
+    # 4) 세트의 사이드·음료는 손님이 실제로 말한 것이어야 한다(지어내서 채우기 금지)
+    if upgrade_to_set:
+        ctx = f"{recent} {user}"
+        for label, value in (("사이드", side), ("음료", drink)):
+            if value and not guards.spoken_in(ctx, value) and not (
+                    guards.is_confirmation(user) and guards.spoken_in(last_bot, value)):
+                msg = guards.block(
+                    "set_option_ungrounded", f"{label} '{value}'를 손님이 말하지 않음 ({name} 세트)",
+                    f"오류: 손님이 {label}를 '{value}'(으)로 말하지 않았습니다. 임의로 고르지 말고 {label}를 먼저 "
+                    f"물어본 뒤 손님이 고른 것으로 다시 호출하세요.")
+                if msg:
+                    return msg
+
+    # 5) 버거는 단품/세트를 말하지 않았으면 먼저 물어야 한다(같은 단품을 더 담는 경우는 예외)
+    if is_burger and not upgrade_to_set and not (
+            guards.mentions_single(user)
+            or guards.mentions_set(user) or (guards.is_confirmation(user) and guards.mentions_single(last_bot))):
+        already = False
+        try:
+            cart = _run(api_client.get_cart(get_session_id()))
+            already = any(i.get("menu_item_id") == item.get("id") and not any(
+                o.get("option_group") == "SET_UPGRADE" for o in i.get("selected_options", []))
+                for i in cart.get("items", []))
+        except Exception:  # noqa: BLE001
+            already = True   # 확인할 수 없으면 막지 않는다
+        if not already:
+            msg = guards.block(
+                "single_set_unasked", f"「{user[:30]}」 단품/세트를 말하지 않았는데 {name} 단품 담기 시도",
+                f"오류: 손님이 '{name}'을(를) 단품으로 달라고 말하지 않았습니다. 담지 말고 "
+                f"'단품으로 드릴까요, 세트로 드릴까요?'라고 먼저 물어보세요.")
+            if msg:
+                return msg
+
+    # 6) 수량 — 발화에 수량 표현이 하나뿐이고 메뉴도 하나뿐이면 둘이 같아야 한다
+    spoken_qty = guards.quantity_in(user)
+    if spoken_qty is not None and menu:
+        named = _named_menus(re.sub(r"\s+", "", user), list({i["name_ko"] for i in menu}))
+        if len(named) == 1 and spoken_qty != quantity:
+            msg = guards.block(
+                "quantity_mismatch", f"「{user[:30]}」 말한 수량={spoken_qty} / 전달된 수량={quantity}",
+                f"오류: 손님이 말한 수량은 {spoken_qty}개인데 quantity={quantity}로 호출했습니다. "
+                f"quantity={spoken_qty}로 다시 호출하세요.")
+            if msg:
+                return msg
+    return None
+
+
+def _target_mismatch(user: str, target_name: str, menu: list | None) -> str | None:
+    """수량 변경 대상으로 넘어온 장바구니 줄이 손님이 말한 메뉴와 다르면 손님이 말한 메뉴 이름을 돌려준다."""
+    if not menu or not guards.has_hangul(user):
+        return None
+    compact = re.sub(r"\s+", "", user)
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    others = [i["name_ko"] for i in menu if i["name_ko"] not in burgers]
+    named = _named_menus(compact, burgers) or _named_menus(compact, others)
+    if len(named) != 1:
+        return None
+    mine, want = _menu_key(target_name), _menu_key(named[0])
+    return None if (want in mine or mine in want) else named[0]
 
 
 @tool
@@ -300,16 +407,10 @@ def add_item(
     if not item.get("is_available", True):
         return f"죄송합니다, {item['name_ko']}는 현재 품절입니다."
 
-    # 규칙 기반 검사: 직전 턴의 menu_item_id를 모델이 그대로 재사용해 엉뚱한 메뉴가 담기는 것을 막는다.
-    # ("치즈버거 담은 뒤 '콜라도 추가해줘' → 치즈 버거 추가", "비건버거 세트 → 더블 불고기 버거 세트")
-    # 손님이 말한 메뉴(또는 이름 없는 확인 답변이면 직전 안내에서 말한 메뉴)와 다르면 되돌려 보낸다.
-    # 한국어 메뉴 이름이 없는 외국어 발화는 비교할 이름이 없어 자연히 통과한다.
-    wrong = _mentions_other_menu(get_user_input(), item, get_last_bot_text(), upgrade_to_set)
-    if wrong:
-        return (
-            f"오류: 손님이 말한 메뉴는 '{wrong}'인데 전달된 menu_item_id는 '{item['name_ko']}'입니다. "
-            f"search_menu로 '{wrong}'의 menu_item_id를 찾아 다시 호출하세요."
-        )
+    # 규칙 기반 검사(ai_modules/llm/guards.py): 손님이 한 말과 어긋난 호출은 되돌려 보낸다.
+    blocked = _check_add_item(item, quantity, upgrade_to_set, side, drink)
+    if blocked:
+        return blocked
 
     # 옵션 구성 로직
     selected_options = []
@@ -394,6 +495,22 @@ def remove_item(cart_item_id: str | None = None) -> str:
         if error:
             return error
         cart_item_id = cart_item["cart_item_id"]
+        user = get_user_input()
+        if guards.has_hangul(user):
+            if not guards.has_remove_intent(user):
+                msg = guards.block(
+                    "remove_no_intent", f"「{user[:30]}」 삭제 의사 없이 {cart_item.get('name_ko')} 삭제 시도",
+                    "오류: 손님이 삭제·취소를 말하지 않았습니다. 장바구니에서 지우지 말고 손님이 원하는 것을 다시 확인하세요.")
+                if msg:
+                    return msg
+            elif cart_item.get("quantity", 1) > 1 and guards.wants_reduce_one(user):
+                n = cart_item["quantity"]
+                msg = guards.block(
+                    "remove_should_reduce", f"「{user[:30]}」 {cart_item.get('name_ko')} {n}개 중 하나만 빼려는데 전체 삭제 시도",
+                    f"오류: 손님은 {cart_item.get('name_ko')} {n}개 중 하나만 빼 달라고 했습니다. 줄 전체를 지우지 말고 "
+                    f"update_item_options(cart_item_id=..., quantity={n - 1})로 수량만 줄이세요.")
+                if msg:
+                    return msg
         _run(api_client.remove_cart_item(session_id, cart_item_id))
     except Exception as e:
         return _friendly_error("삭제 실패", e)
@@ -424,8 +541,8 @@ def update_item_options(
     session_id = get_session_id()
     if item_type not in (None, "single", "set"):
         return "오류: item_type은 single 또는 set이어야 합니다."
-    if item_type == "single" and (side is not None or drink is not None):
-        return "단품에는 사이드나 음료 옵션을 지정할 수 없습니다."
+    if item_type == "single":
+        side = drink = None   # 단품에는 사이드·음료가 없다. 세트→단품 전환 때 모델이 넘겨도 오류 대신 무시한다.
     if not any(value is not None for value in (quantity, item_type, side, drink, exclusions, special_note)):
         return "변경할 내용을 알려주세요."
 
@@ -435,6 +552,19 @@ def update_item_options(
         if error:
             return error
         cart_item_id = cart_item["cart_item_id"]
+        if quantity is not None and exclusions is None and side is None and drink is None and item_type is None:
+            try:
+                menu = _run(api_client.fetch_menu_items())
+            except Exception:  # noqa: BLE001
+                menu = None
+            wrong = _target_mismatch(get_user_input(), cart_item.get("name_ko", ""), menu)
+            if wrong:
+                msg = guards.block(
+                    "update_wrong_target", f"「{get_user_input()[:30]}」 말한 메뉴={wrong} / 변경 대상={cart_item.get('name_ko')}",
+                    f"오류: 손님이 말한 메뉴는 '{wrong}'인데 변경하려는 줄은 '{cart_item.get('name_ko')}'입니다. "
+                    f"장바구니에서 '{wrong}'의 cart_item_id를 찾아 다시 호출하세요.")
+                if msg:
+                    return msg
     except Exception as e:
         return _friendly_error("장바구니 조회 실패", e)
 
