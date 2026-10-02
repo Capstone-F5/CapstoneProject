@@ -19,7 +19,9 @@ from core.cart_context import (
 )
 from ai_modules.llm.action_context import (
     get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
+    set_stt_original,
 )
+from ai_modules.llm.guards import fix_stt
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
 from .intent_fallback import ensure_actions
@@ -223,6 +225,9 @@ async def run_agent_stream(
     cart = cart or []
     set_session_id(session_id)
     set_cart(cart)
+    fixed_input = fix_stt(user_input)   # 알려진 STT 오인식(예: "내장에서" → "매장에서") 교정
+    set_stt_original(user_input if fixed_input != user_input else "")
+    user_input = fixed_input
     set_user_input(user_input)
     snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
     set_checkout_snapshot(snapshot_before)
@@ -341,6 +346,9 @@ async def run_agent(
     cart = cart or []
     set_session_id(session_id)
     set_cart(cart)
+    fixed_input = fix_stt(user_input)   # 알려진 STT 오인식(예: "내장에서" → "매장에서") 교정
+    set_stt_original(user_input if fixed_input != user_input else "")
+    user_input = fixed_input
     set_user_input(user_input)
     snapshot_before = checkout_snapshot(session_id)   # 이 턴이 시작되기 전 결제 진행 상태
     set_checkout_snapshot(snapshot_before)

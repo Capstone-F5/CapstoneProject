@@ -24,6 +24,7 @@ _actions: ContextVar[list] = ContextVar("kiosk_actions", default=[])
 _user_input: ContextVar[str] = ContextVar("kiosk_user_input", default="")
 _checkout_snapshot: ContextVar[frozenset] = ContextVar("kiosk_checkout_snapshot", default=frozenset())
 _last_bot_text: ContextVar[str] = ContextVar("kiosk_last_bot_text", default="")
+_stt_original: ContextVar[str] = ContextVar("kiosk_stt_original", default="")
 
 
 def set_cart(cart: list) -> None:
@@ -40,6 +41,15 @@ def set_user_input(text: str) -> None:
 
 def get_user_input() -> str:
     return _user_input.get()
+
+
+def set_stt_original(text: str) -> None:
+    """STT 교정(fix_stt)이 문장을 바꿨을 때 교정 전 원문. 안 바꿨으면 빈 문자열."""
+    _stt_original.set(text or "")
+
+
+def get_stt_original() -> str:
+    return _stt_original.get()
 
 
 def set_last_bot_text(text: str) -> None:
