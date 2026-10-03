@@ -20,13 +20,16 @@ from core.cart_context import (
 )
 from ai_modules.llm.action_context import (
     get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
-    set_stt_original, set_recent_user_text, reset_guards, record_guard, get_guard_hits,
+    set_stt_original, set_recent_user_text, get_checkout_snapshot, reset_guards, record_guard, get_guard_hits,
 )
 from ai_modules.llm import guards, order_parser
 from ai_modules.llm.guards import NOISE_REPLY, correct_reply, fix_stt, guard_mode, is_noise
 from ai_modules.llm.agent import get_agent_executor
+from ai_modules.llm import cart_history
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
-from .intent_fallback import ensure_actions
+from . import order_hints
+from .cart_commands import complete_set_followup, try_command
+from .intent_fallback import _CHECKOUT_INTENT, ensure_actions
 from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id
 from ai_modules.llm.rag import get_active_discount_context
@@ -71,6 +74,37 @@ def _remember_history(mem_vars: dict) -> None:
     set_recent_user_text(" ¦ ".join(humans[-3:]))   # ¦로 턴을 구분(가드가 가장 최근 턴부터 찾는다)
 
 
+async def _ensure_single_set_question(user_input: str, output: str, order_type: str | None = None) -> str:
+    """"치킨가슴살버거 하나 줘"처럼 버거 이름만 말했으면 단품/세트를 물어야 한다. 모델이 "이미 담겨 있습니다"라며 묻지도
+    담지도 않으면(장바구니에 같은 버거가 있을 때) 질문으로 바꿔 준다. 매장/포장을 아직 안 골랐으면 그것이 먼저라 건드리지 않는다."""
+    if (guard_mode() != "enforce" or not order_type or "버거" not in user_input or not guards.has_hangul(user_input)
+            or any(a.get("type") not in ("open_item",) for a in get_actions())
+            or ("단품" in output and "세트" in output)):
+        return output
+    from ai_modules.llm import api_client
+    try:
+        menu = await api_client.fetch_menu_items()
+    except Exception:  # noqa: BLE001
+        return output
+    name = order_parser.burger_only_order(user_input, menu)
+    if not name:
+        return output
+    record_guard("single_set_question_missing", f"「{user_input[:30]}」 버거만 말했는데 응답이 단품/세트를 묻지 않음", blocked=False, fixed=True)
+    return f"{name}는 단품으로 드릴까요, 세트로 드릴까요?"
+
+
+async def _complete_set_followup(session_id: str, user_input: str, output: str) -> str | None:
+    """사이드·음료를 묻던 중 손님이 마지막 조각을 말했는데 모델이 담지 않았으면 코드가 세트를 담는다."""
+    from ai_modules.llm.action_context import get_last_bot_text, get_recent_user_text
+    if guard_mode() != "enforce" or any(a.get("type") in ("add_item", "update_item") for a in get_actions()):
+        return None
+    last_bot = get_last_bot_text()
+    # 직전 턴에 모델이 담지 못해 사과문("아직 장바구니에 담지 못했어요")으로 바뀐 경우도 이어 말하는 중이다
+    if not (order_parser.awaiting_set_option(last_bot) or last_bot in guards.UNFULFILLED_REPLIES):
+        return None
+    return await complete_set_followup(session_id, user_input, get_recent_user_text())
+
+
 async def _complete_missing_order(user_input: str, output: str) -> str | None:
     """모델이 손님의 단순 주문("메뉴 이름 + 수량 + 단품")을 일부 또는 전부 처리하지 않았을 때, 빠진 품목만 코드가
     직접 담고 맞는 확인 문구를 돌려준다. 처리 안 했다는 신호는 응답에서 읽는다: 담았다고 말만 함 / 있는 메뉴를
@@ -80,15 +114,25 @@ async def _complete_missing_order(user_input: str, output: str) -> str | None:
     if guard_mode() != "enforce" or not guards.has_hangul(user_input):
         return None
     actions = get_actions()
-    if any(a.get("type") == "update_item" or (a.get("type") == "add_item" and a.get("upgrade_to_set")) for a in actions):
+    from ai_modules.llm import api_client
+    from ai_modules.llm.action_context import get_last_bot_text, get_recent_user_text
+    # "단품/세트?"라는 질문에 "단품으로 줘"라고만 답했는데 담기 액션이 없는 경우(모델이 기존 줄을 "단품으로 변경"했다며
+    # 수정만 하는 사고 포함)는 응답 문구와 상관없이 담지 못한 것이다
+    prev = [t for t in get_recent_user_text().split("¦") if t.strip()][-1:]
+    pending_order = bool(prev) and not guards.mentions_single(prev[0]) and not guards.mentions_set(prev[0])
+    bare_single = (guards.mentions_single(user_input) and not guards.mentions_set(user_input)
+                   and not guards.has_change_verb(user_input)
+                   and (bool(order_parser._ASKS_SINGLE_SET.search(get_last_bot_text())) or pending_order)
+                   and not any(a.get("type") == "add_item" for a in actions))
+    if not bare_single and any(a.get("type") == "update_item" or (a.get("type") == "add_item" and a.get("upgrade_to_set")) for a in actions):
         return None   # 옵션·수량을 바꾸거나 세트를 담는 중이면 건드리지 않는다
     signal = order_parser.reply_failed_to_act(output)
-    if not signal:
+    if not signal and not bare_single:
         return None
-    from ai_modules.llm import api_client
-    from ai_modules.llm.action_context import get_last_bot_text
     if order_parser.awaiting_set_option(get_last_bot_text()):
         return None   # 세트의 사이드·음료를 고르는 중이다("콜라로 주세요"는 단품 주문이 아니다)
+    if bare_single and not signal:
+        signal = "bare_single_answer"
     from ai_modules.llm.action_tools import add_item as add_item_tool
     try:
         menu = await api_client.fetch_menu_items()
@@ -101,10 +145,16 @@ async def _complete_missing_order(user_input: str, output: str) -> str | None:
         compact_user = "".join(user_input.split())
         if (not order_parser.named_menus(compact_user, names) and guards.mentions_single(user_input)
                 and not guards.mentions_set(user_input)):
+            # 어느 버거인지는 직전 안내에서, 안내에 이름이 없으면("단품으로 드릴까요, 세트로 드릴까요?") 직전 손님 발화에서 찾는다
             from_bot = order_parser.named_menus("".join(get_last_bot_text().split()), burgers)
-            target = next((i for i in menu if i["name_ko"] == from_bot[0]), None) if len(from_bot) == 1 else None
+            prev_turn = [t for t in get_recent_user_text().split("¦") if t.strip()][-1:]
+            from_user = order_parser.named_menus("".join(prev_turn[0].split()), burgers) if prev_turn else []
+            picked = from_bot if len(from_bot) == 1 else from_user
+            target = next((i for i in menu if i["name_ko"] == picked[0]), None) if len(picked) == 1 else None
             if target:
-                parsed = [(target, guards.quantity_in(user_input) or 1)]
+                # 수량은 이번 발화 → 버거를 말한 직전 발화("치킨가슴살버거 두 개 줘" → "단품으로 줘") → 1개 순서
+                qty = guards.quantity_in(user_input) or (guards.quantity_in(prev_turn[0]) if prev_turn else None) or 1
+                parsed = [(target, qty)]
     if not parsed:
         return None
     already = {a.get("menu_item_id") for a in actions if a.get("type") == "add_item"}
@@ -139,6 +189,58 @@ def _align_reply_with_actions(output: str) -> str:
     return fixed if enforcing else output
 
 
+async def _server_cart_has_items(session_id: str, user_input: str) -> bool:
+    """결제 의사를 말한 턴에만 서버 장바구니에 품목이 있는지 본다(요청의 cart는 비어 올 수 있다)."""
+    if not _CHECKOUT_INTENT.search(user_input or ""):
+        return False
+    from ai_modules.llm import api_client
+    try:
+        return bool((await api_client.get_cart(session_id)).get("items"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+_POINTS_WORDS = ("포인트", "적립", "point", "ポイント", "积分", "積分")
+_POINTS_ASK = {
+    "ko": "결제를 시작할게요. 포인트 적립하시겠어요?",
+    "en": "Starting checkout. Would you like to earn points?",
+    "ja": "お会計を始めます。ポイントを貯めますか？",
+    "zh": "开始结账。要累积积分吗？",
+}
+
+
+def _ensure_points_question(output: str, language: str | None) -> str:
+    """결제를 시작한 턴의 안내에는 포인트 적립 질문이 있어야 한다(결제 단계 순서). 모델이 이를 건너뛰고 곧바로 결제 수단을
+    묻는 말을 했으면 — 화면은 포인트 팝업을 띄웠는데 말이 다르다 — 질문으로 바꿔 준다."""
+    if (guard_mode() != "enforce" or not any(a.get("type") == "start_checkout" for a in get_actions())
+            or "start_checkout" in get_checkout_snapshot()):   # 이번 턴에 처음 시작한 결제에만(이미 시작했으면 다음 단계 안내다)
+        return output
+    if any(w in output.lower() for w in _POINTS_WORDS):
+        return output
+    record_guard("points_question_missing", f"결제 시작 안내 「{output[:40]}」에 포인트 질문 없음", blocked=False, fixed=True)
+    return _POINTS_ASK.get(language if language in _POINTS_ASK else "en", _POINTS_ASK["en"])
+
+
+async def _direct_command(session_id: str, user_input: str, language: str | None, screen: str | None,
+                          order_type: str | None) -> str | None:
+    """문법이 정해진 장바구니 명령(되돌리기·세트 한 번에 담기·옵션 변경 등)은 LLM 없이 코드가 처리한다."""
+    if guard_mode() != "enforce" or language not in (None, "ko"):
+        return None
+    output = await try_command(session_id, user_input)
+    if not output:
+        return None
+    try:
+        memory = await get_memory(session_id)
+        await save_and_prune(memory, user_input, output)
+    except Exception:  # noqa: BLE001 - 직접 처리가 메모리 상태에 의존하지 않게
+        pass
+    log_turn(
+        session_id=session_id, user_input=user_input, output=output, actions=get_actions(),
+        language=language, screen=screen, order_type=order_type,
+    )
+    return output
+
+
 def _fallback_message(language: str | None) -> str:
     normalized = language if language in _NATIVE_LANGS else "en"
     return _FALLBACK_MESSAGES.get(normalized, _FALLBACK_MESSAGES["en"])
@@ -170,8 +272,37 @@ def _modal_reminder(modal_state: dict | None) -> str:
     )
 
 
-def _agent_input(user_input: str, language: str | None, modal_state: dict | None = None) -> str:
-    return user_input + _LANG_REMINDERS.get(language or "", "") + _modal_reminder(modal_state)
+def _agent_input(user_input: str, language: str | None, modal_state: dict | None = None, hint: str = "") -> str:
+    return user_input + _LANG_REMINDERS.get(language or "", "") + _modal_reminder(modal_state) + hint
+
+
+async def _hint_for(user_input: str, last_bot: str = "") -> dict | None:
+    """파서가 확신하는 단순 주문이면 도구 호출 힌트(order_hints)를 만든다. 한국어·enforce 모드에서만."""
+    if guard_mode() != "enforce" or not guards.has_hangul(user_input):
+        return None
+    from ai_modules.llm import api_client
+    try:
+        menu = await api_client.fetch_menu_items()
+    except Exception:  # noqa: BLE001 - 힌트가 없어도 평소대로 처리된다
+        return None
+    return order_hints.build_hint(user_input, menu, last_bot)
+
+
+async def _requery_if_missing(executor, hint: dict, user_input: str, language: str | None, modal_state: dict | None,
+                              chat_history: list, output: str) -> str:
+    """힌트가 제안한 품목이 담기지 않았으면(모델이 말만 하거나 도구를 잘못 부름) 빠진 것만 짚어 한 번 더 질의한다."""
+    missing = order_hints.missing_items(hint, get_actions())
+    if not missing:
+        record_guard("hint_followed", f"힌트대로 {len(hint['expected'])}개 품목을 모델이 담음", blocked=False, fixed=False)
+        return output
+    record_guard("hint_requery", "힌트를 줬는데 담지 않은 품목: " + ", ".join(f"{n}×{q}" for _, n, q in missing),
+                 blocked=False, fixed=False)
+    again = await executor.ainvoke({
+        "input": _agent_input(user_input, language, modal_state, order_hints.retry_text(missing, output)),
+        "chat_history": chat_history,
+    })
+    out = again.get("output", "")
+    return out if out and not out.startswith("Agent stopped") else output
 
 
 def _resolve_language(declared: str | None, text: str) -> str | None:
@@ -313,6 +444,7 @@ async def run_agent_stream(
     set_checkout_snapshot(snapshot_before)
     reset_actions()
     reset_guards()
+    cart_history.begin_turn(session_id)
     set_last_bot_text("")
     set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
@@ -342,6 +474,23 @@ async def run_agent_stream(
             language=language, screen=screen, order_type=order_type,
         )
         yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        return
+
+    direct = await _direct_command(session_id, user_input, language, screen, order_type)
+    if direct:
+        for action in get_actions():
+            yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'output': direct, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        return
+
+    # 파서가 확신하는 단순 주문은 힌트를 주고 필요하면 재질의해야 하므로(토큰이 이미 나간 뒤에는 못 한다) 내부적으로 비스트림으로
+    # 실행하고 최종 문장을 한 번에 내보낸다. 이런 턴은 도구 호출 뒤에야 문장이 나오므로 첫 소리 지연 손해가 작다.
+    if await _hint_for(user_input):
+        res = await run_agent(session_id, user_input, language, cart, screen, order_type, modal_state)
+        for action in res["actions"]:
+            yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'token': res['output']}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'output': res['output'], 'guards': res['guards']}, ensure_ascii=False)}\n\n"
         return
 
     output_parts: list[str] = []
@@ -414,11 +563,14 @@ async def run_agent_stream(
         return
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작(주문 유형·결제 시작·결제 수단)을 규칙으로 보완
-    ensure_actions(session_id, user_input, screen, cart, snapshot_before)
-    completed = await _complete_missing_order(user_input, output)
+    ensure_actions(session_id, user_input, screen, cart, snapshot_before,
+                   has_items=await _server_cart_has_items(session_id, user_input))
+    completed = await _complete_set_followup(session_id, user_input, output) or await _complete_missing_order(user_input, output)
     if completed:
         output = completed
     output = _align_reply_with_actions(output)
+    output = _ensure_points_question(output, language)
+    output = await _ensure_single_set_question(user_input, output, order_type)
     await save_and_prune(memory, user_input, output)
 
     # 인라인으로 아직 전송되지 않은 나머지 액션 전송 (안전장치)
@@ -453,6 +605,7 @@ async def run_agent(
     set_checkout_snapshot(snapshot_before)
     reset_actions()
     reset_guards()
+    cart_history.begin_turn(session_id)
     set_last_bot_text("")
     set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
@@ -488,6 +641,11 @@ async def run_agent(
             "intermediate_steps": [],
         }
 
+    direct = await _direct_command(session_id, user_input, language, screen, order_type)
+    if direct:
+        return {"session_id": session_id, "output": direct, "actions": get_actions(),
+                "guards": get_guard_hits(), "intermediate_steps": []}
+
     memory = await get_memory(session_id)
     executor = get_agent_executor()
 
@@ -501,19 +659,27 @@ async def run_agent(
     context = _context_message(cart, screen, order_type, modal_state)
     chat_history = [SystemMessage(content=f"{context}\n\n{discount_context}")] + chat_history
 
+    from ai_modules.llm.action_context import get_last_bot_text
+    hint = await _hint_for(user_input, get_last_bot_text())
     result = await executor.ainvoke(
-        {"input": _agent_input(user_input, language, modal_state), "chat_history": chat_history}
+        {"input": _agent_input(user_input, language, modal_state, hint["text"] if hint else ""),
+         "chat_history": chat_history}
     )
     output = result.get("output", "")
     if output.startswith("Agent stopped"):   # 반복 한도 초과 — 내부 메시지를 손님에게 노출하지 않는다
         output = _fallback_message(language)
+    if hint:
+        output = await _requery_if_missing(executor, hint, user_input, language, modal_state, chat_history, output)
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작을 규칙으로 보완
-    ensure_actions(session_id, user_input, screen, cart, snapshot_before)
-    completed = await _complete_missing_order(user_input, output)
+    ensure_actions(session_id, user_input, screen, cart, snapshot_before,
+                   has_items=await _server_cart_has_items(session_id, user_input))
+    completed = await _complete_set_followup(session_id, user_input, output) or await _complete_missing_order(user_input, output)
     if completed:
         output = completed
     output = _align_reply_with_actions(output)
+    output = _ensure_points_question(output, language)
+    output = await _ensure_single_set_question(user_input, output, order_type)
 
     await save_and_prune(memory, user_input, output)
     log_turn(

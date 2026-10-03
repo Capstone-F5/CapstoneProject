@@ -113,7 +113,7 @@ def quantity_in(text: str) -> int | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
-_REMOVE_INTENT = re.compile(r"빼|삭제|취소|지워|지우|없애|제거|말고|대신|바꿔|바꾸|변경|그만|안\s*할|안할|필요\s*없|됐|아니|다시|수정|줄여|줄이")
+_REMOVE_INTENT = re.compile(r"빼|삭제|취소|지워|지우|없애|제거|말고|대신|바꿔|바꾸|변경|그만|안\s*할|안할|필요\s*없|됐|아니|다시|수정|줄여|줄이|남겨|남기")
 _REDUCE_ONE = re.compile(r"(?:하나|한\s*개|1\s*개)\s*만\s*(?:빼|줄|취소|삭제|지워)|(?:한\s*개|하나|1\s*개)\s*(?:빼|줄여|줄이)|(?:하나|한\s*개)\s*취소")
 _QUESTION = re.compile(r"얼마|뭐예요|뭔가요|뭐야|뭐가|있어요\s*\?|있나요|알려|추천|어떤|\?")
 _ORDER_VERB = re.compile(r"줘|주세요|주라|주실|담아|담을|추가|할게|할래|주문|먹을게|부탁|바꿔|변경")
@@ -167,6 +167,9 @@ def spoken_in(text: str, *names: str) -> bool:
         key = re.sub(r"\s+", "", re.sub(r"\(.*?\)", "", n or ""))
         if len(key) >= 2 and key in compact:
             return True
+        # DB 이름이 말한 것보다 한 글자 길 수 있다("뽀로로 음료수" ← "뽀로로음료로 줘")
+        if len(key) >= 5 and key[:-1] in compact:
+            return True
     return False
 
 
@@ -185,6 +188,9 @@ _UNFULFILLED = {
     "remove": "죄송합니다, 아직 장바구니에서 빼지 못했어요. 어떤 메뉴인지 한 번 더 말씀해 주세요.",
     "change": "죄송합니다, 아직 변경하지 못했어요. 어떻게 바꿀지 한 번 더 말씀해 주세요.",
 }
+
+
+UNFULFILLED_REPLIES = frozenset(_UNFULFILLED.values())
 
 
 def claims_add(output: str) -> bool:

@@ -83,6 +83,7 @@ def ensure_actions(
     screen: str | None,
     cart: list | None,
     snapshot_before: frozenset[str],
+    has_items: bool = False,
 ) -> list[dict]:
     """빠진 핵심 액션을 push_action으로 추가하고, 추가한 액션 목록을 돌려준다."""
     text = (user_input or "").strip()
@@ -97,9 +98,12 @@ def ensure_actions(
         if value:
             added.append({"type": "order_type", "value": value})
 
-    # 2) 결제 시작
-    if (screen == "cart" and cart and not _has(actions, "start_checkout")
+    # 2) 결제 시작 — 메뉴 화면에서 "결제할게요"라고 해도 모델이 "결제를 진행할게요"라고 말만 하는 일이 잦다(고정 시나리오
+    # 실측 6건). 요청 cart는 비어 올 수 있어서 서버 장바구니 기준(has_items)으로 본다.
+    if (screen in ("cart", "menu") and (cart or has_items) and not _has(actions, "start_checkout")
             and "start_checkout" not in snapshot_before and _CHECKOUT_INTENT.search(text)):
+        if screen != "cart" and not _has(actions, "navigate"):
+            added.append({"type": "navigate", "screen": "cart"})
         added.append({"type": "start_checkout"})
         checkout_progress.mark_done(session_id, "start_checkout")
 

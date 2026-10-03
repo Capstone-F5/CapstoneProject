@@ -112,18 +112,20 @@ SCENARIOS: list[Scenario] = [
     ]),
     Scenario("A04", "복합음성주문", "말 중간에 정정 (A 아니 B)", [
         state(M, D),
+        # 정정된 쪽(비건)의 단품/세트를 묻는다. 담지 않는다(버거는 단품/세트를 말하기 전에 담지 않는 것이 설계).
         say("새우버거 하나 줘... 아니 비건버거로 줘",
-            actions=["add_item"],
-            cart=[line("비건 버거", 1)]),
+            no_actions=["add_item"], unchanged=True, out_any=["비건"], out_none=["새우"]),
     ]),
     Scenario("A05", "복합음성주문", "담은 뒤 바로 취소", [
         state(M, D),
         say("치즈버거 단품으로 하나", actions=["add_item"], cart=[line("치즈 버거", 1)]),
         say("아 방금 거 취소해줘", cart_empty=True),
     ]),
-    Scenario("A06", "복합음성주문", "모호한 메뉴명(불고기)은 되묻기", [
+    # 정확한 메뉴명이라 모호하지 않다 — 단품/세트를 말하지 않았으니 담지 않고 되묻는다.
+    # (이전에는 "불고기 vs 더블 불고기"를 되묻기를 기대했으나 입력이 모호하지 않아 통과·실패가 뒤집혔다)
+    Scenario("A06", "복합음성주문", "메뉴명만 말하면(불고기 버거 하나) 단품/세트를 되묻기", [
         state(M, D),
-        say("불고기 버거 하나 줘", out_any=["불고기"]),
+        say("불고기 버거 하나 줘", no_actions=["add_item"], unchanged=True, out_any=["단품", "세트"]),
     ]),
     Scenario("A07", "복합음성주문", "메뉴에 없는 품목 요청", [
         state(M, D),
@@ -138,7 +140,7 @@ SCENARIOS: list[Scenario] = [
     Scenario("A09", "복합음성주문", "추천 요청 후 선택", [
         state(M, D),
         say("제일 인기 있는 거 뭐야?", no_actions=["add_item"]),
-        say("그럼 첫 번째 걸로 하나 줘", actions=["add_item"]),
+        say("그럼 첫 번째 걸로 하나 줘", no_actions=["add_item"], unchanged=True, out_any=["단품", "세트"]),
     ]),
     Scenario("A10", "복합음성주문", "연속 추가 후 일부만 삭제", [
         state(M, D),
@@ -335,8 +337,8 @@ SCENARIOS: list[Scenario] = [
     ]),
     Scenario("D08", "다국어모호", "부정 표현(~빼고)이 섞인 주문", [
         state(M, D),
-        say("치즈버거 하나, 콜라는 말고 사이다로", actions=["add_item"],
-            cart=[line("치즈 버거", 1)]),
+        # 치즈버거는 단품/세트를 먼저 묻는다(담지 않음). "콜라 말고 사이다"의 콜라가 담기지는 않아야 한다.
+        say("치즈버거 하나, 콜라는 말고 사이다로", no_actions=["add_item"], unchanged=True, out_any=["단품", "세트"]),
     ]),
 
     # ── E. 엣지·안전·설정 ───────────────────────────────────────────────────

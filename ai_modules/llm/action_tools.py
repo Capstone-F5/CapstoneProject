@@ -23,6 +23,7 @@ from .session_context import get_session_id
 from core.cart_context import cart_status_text, resolve_cart_item
 from . import api_client
 from . import checkout_progress
+from . import cart_history
 from .rag import search_menu as _rag_search_menu
 
 def _run(coro):
@@ -237,10 +238,13 @@ def _mentions_other_menu(text: str, item: dict, last_bot: str = "", upgrade_to_s
         if expected and not any(_menu_key(n) == mine for n in expected):
             return expected[0], len(expected) == 1
         return None
-    if not compact or mine in compact:
+    if not compact:
         return None
-    others = [n for n in _named_menus(compact, list({i["name_ko"] for i in menu}))
-              if _menu_key(n) not in mine and mine not in _menu_key(n)]
+    # 발화에서 읽히는 메뉴 이름(긴 이름 먼저). "감자튀김"이 "양념감자튀김"의 일부라는 이유로 맞다고 보지 않는다.
+    spoken = _named_menus(compact, list({i["name_ko"] for i in menu}))
+    if any(_menu_key(n) == mine for n in spoken) or (not spoken and mine in compact):
+        return None
+    others = [n for n in spoken if _menu_key(n) != mine]
     return (others[0], len(others) == 1) if others else None
 
 
@@ -255,6 +259,31 @@ def _spoken_exclusions(text: str, options: list[dict]) -> list[str]:
         if ingredient and re.search(re.escape(ingredient) + r"(은|는|를|을|만)?(빼|제외|없이|넣지)", compact):
             found.append(o["name_ko"])
     return found
+
+
+_ADD_MORE = re.compile(r"더\s*(?:줘|주세요|담|추가|해)|더\s*$|추가|또\s")
+
+
+def _option_context(user: str, recent: str, item_name: str, menu: list | None) -> str:
+    """세트의 사이드·음료를 손님이 말했는지 찾아볼 발화 범위. 이번 발화에 버거 이름이 있으면 이번 발화만 본다.
+    없으면 최근 발화를 거슬러 올라가다가 버거 이름이 나온 발화에서 멈춘다(그 버거가 이 항목이 아니면 그 발화는 제외).
+    이전에 다른 세트를 주문하며 말한 사이드·음료가 이번 세트의 근거로 인정돼 되묻지 않고 담기던 문제를 막는다."""
+    if not menu:
+        return f"{recent} {user}"
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    if _named_menus(re.sub(r"\s+", "", user), burgers):
+        return user
+    kept: list[str] = []
+    for turn in reversed([t for t in (recent or "").split("¦") if t.strip()]):
+        named = _named_menus(re.sub(r"\s+", "", turn), burgers)
+        if named:
+            if any(_menu_key(n) == _menu_key(item_name) for n in named):
+                kept.append(turn)
+            else:
+                kept = []   # 그 뒤에 나온 사이드·음료 발화는 다른 버거의 세트에 대한 말이다
+            break
+        kept.append(turn)
+    return " ".join(reversed(kept)) + " " + user
 
 
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -294,7 +323,10 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
     found = _mentions_other_menu(user, item, last_bot, upgrade_to_set, menu, recent)
     if found:
         wrong, unique = found
-        target = _resolve_menu_by_name(wrong, menu) if unique else None
+        # 여러 메뉴를 한꺼번에 말한 발화에서는 모델이 다른 품목의 id를 넣은 것일 수 있어 자동으로 바꾸면 한 메뉴가 중복으로
+        # 담긴다(2개+1개). 한 가지 메뉴만 말했을 때만 바로잡고 아니면 모델이 다시 호출하게 한다.
+        many = bool(menu) and len(_named_menus(re.sub(r"\s+", "", user), list({i["name_ko"] for i in menu}))) > 1
+        target = _resolve_menu_by_name(wrong, menu) if unique and not many else None
         if target and (not upgrade_to_set or any(o.get("option_group") == "SET_UPGRADE" for o in target.get("options") or [])):
             if guards.fix("menu_mismatch", f"「{user[:30]}」 {name} → {target['name_ko']}(손님이 말한 메뉴)로 바로잡음"):
                 try:
@@ -335,7 +367,7 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
 
     # 4) 세트의 사이드·음료는 손님이 실제로 말한 것이어야 한다(지어내서 채우기 금지)
     if upgrade_to_set:
-        ctx = f"{recent} {user}"
+        ctx = _option_context(user, recent, name, menu)
         for label, value in (("사이드", side), ("음료", drink)):
             if value and not guards.spoken_in(ctx, value) and not (
                     guards.is_confirmation(user) and guards.spoken_in(last_bot, value)):
@@ -350,10 +382,12 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
     if is_burger and not upgrade_to_set and not (
             guards.mentions_single(user)
             or guards.mentions_set(user) or (guards.is_confirmation(user) and guards.mentions_single(last_bot))):
+        # 예외는 "하나 더 줘/추가"처럼 이미 담은 것을 더하겠다고 분명히 말한 경우뿐이다. "치킨가슴살버거 하나 줘"는
+        # 이미 장바구니에 있어도 단품/세트를 새로 묻는 것이 설계다(같은 버거의 세트를 담을 수도 있다).
         already = False
         try:
             cart = _run(api_client.get_cart(get_session_id()))
-            already = any(i.get("menu_item_id") == item.get("id") and not any(
+            already = bool(_ADD_MORE.search(user)) and any(i.get("menu_item_id") == item.get("id") and not any(
                 o.get("option_group") == "SET_UPGRADE" for o in i.get("selected_options", []))
                 for i in cart.get("items", []))
         except Exception:  # noqa: BLE001
@@ -456,10 +490,16 @@ def add_item(
 
     # 같은 턴에 같은 추가를 또 하려는 호출은 무시한다. 모델이 틀린 id로 add_item을 여러 번 부르고 가드가 그것들을
     # 같은 메뉴로 바로잡으면 같은 메뉴가 중복으로 담긴다(실제로 데리버거가 6개가 됨).
-    dup_key = (item.get("id"), bool(upgrade_to_set), side, drink, int(quantity))
+    dup_key = (item.get("id"), bool(upgrade_to_set), side, drink)   # 수량이 달라도 같은 발화의 같은 메뉴는 한 번만(2개+1개로 쪼개 3개가 되던 사고)
     if add_seen_this_turn(dup_key):
         guards.fix("duplicate_add", f"이번 턴에 이미 담은 {item['name_ko']} {quantity}개 중복 호출 무시")
         return f"{item['name_ko']} {quantity}개는 이번 요청에서 이미 담았습니다. 다시 담지 말고 손님에게 결과를 안내하세요."
+
+    # 같은 턴에 수량을 이미 늘린 메뉴(update_item)를 add_item으로 또 담으면 두 번 더해진다(3개+2개 요청이 7개가 됨)
+    if not upgrade_to_set and any(e["via"] == "update" and e["name"] == item["name_ko"] for e in
+                                   cart_history.peek_added(session_id, this_turn_only=True)):
+        guards.fix("add_after_update", f"이번 턴에 수량을 이미 늘린 {item['name_ko']}를 다시 담으려는 호출 무시")
+        return f"{item['name_ko']}은(는) 이번 요청에서 이미 수량을 늘렸습니다. 다시 담지 말고 손님에게 결과를 안내하세요."
 
     # 옵션 구성 로직
     selected_options = []
@@ -520,6 +560,7 @@ def add_item(
         "exclusions": exclusions or [],
         "cart_item_id": cart_item_id,
     })
+    cart_history.record_added(session_id, cart_item_id, item["name_ko"], quantity)
 
     type_label = "세트" if upgrade_to_set else "단품"
     msg = f"{item['name_ko']}({type_label}) {quantity}개 담음"
@@ -565,6 +606,7 @@ def remove_item(cart_item_id: str | None = None) -> str:
         return _friendly_error("삭제 실패", e)
 
     push_action({"type": "remove_item", "cart_item_id": cart_item_id})
+    cart_history.record_removed(session_id, cart_item)
     return "항목을 장바구니에서 삭제했습니다."
 
 @tool
@@ -595,13 +637,30 @@ def update_item_options(
     if not any(value is not None for value in (quantity, item_type, side, drink, exclusions, special_note)):
         return "변경할 내용을 알려주세요."
 
+    user_now = get_user_input()
+    if ((side is not None or drink is not None) and item_type is None and guards.has_hangul(user_now)
+            and guards.quantity_in(user_now) is not None and not guards.mentions_set(user_now)
+            and not guards.has_change_verb(user_now)):
+        # "양념감자튀김 세 개 그리고 제로콜라 세 잔 줘"는 사이드·음료를 따로 주문한 것이다(세트가 장바구니에 있어도 세트 옵션 변경이 아니다)
+        msg = guards.block(
+            "option_update_instead_of_item", f"「{user_now[:30]}」 수량을 말한 사이드·음료 주문을 세트 옵션 변경으로 처리하려 함",
+            "오류: 손님은 사이드·음료를 수량과 함께 따로 주문했습니다. 세트 옵션을 바꾸지 말고 각 메뉴를 add_item으로 담으세요.")
+        if msg:
+            return msg
     try:
         cart = _run(api_client.get_cart(session_id))
         cart_item, error = resolve_cart_item(cart, cart_item_id)
         if error:
             return error
         cart_item_id = cart_item["cart_item_id"]
-        if quantity is not None and exclusions is None and side is None and drink is None and item_type is None:
+        if any(e["cart_item_id"] == cart_item_id for e in cart_history.peek_added(session_id, this_turn_only=True)):
+            # 방금 이 요청에서 담은 줄을 또 수정하려는 호출 — 담은 직후의 "확인용" 수정이 "하나 더"로 해석돼 수량이 두 배가 됐다
+            guards.fix("update_after_add", f"이번 턴에 담은 {cart_item.get('name_ko')} 줄을 같은 턴에 다시 수정하려는 호출 무시")
+            return f"{cart_item.get('name_ko')}은(는) 이번 요청에서 이미 담았습니다. 다시 수정하지 말고 손님에게 결과를 안내하세요."
+        is_set_line = any(s.get("option_group") == "SET_UPGRADE" for s in cart_item.get("selected_options", []))
+        # item_type="single"을 함께 넘겨도 이미 단품인 줄이면 수량만 바꾸는 호출이다(이걸 놓쳐 "두 개 줘"가 2개로 줄던 사고)
+        if (quantity is not None and exclusions is None and side is None and drink is None
+                and (item_type is None or (item_type == "single" and not is_set_line))):
             try:
                 menu = _run(api_client.fetch_menu_items())
             except Exception:  # noqa: BLE001
@@ -615,6 +674,20 @@ def update_item_options(
                 if guards.fix("update_should_add",
                               f"「{user_text[:30]}」 {cart_item.get('name_ko')} 기존 {current}개 + {spoken}개 = {current + spoken}개"):
                     quantity = current + spoken
+            is_burger_line = bool(menu) and any(
+                i["id"] == cart_item.get("menu_item_id") and any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])
+                for i in menu)
+            # 세트 줄에 "세트로 하나 줘"를, 버거 줄에 단품/세트 말 없이 "X 하나 줘"를 수량 변경으로 처리하려는 경우 — 새 주문이다
+            new_order = (guards.mentions_set(user_text) if is_set_line else
+                         (is_burger_line and not guards.mentions_single(user_text) and not guards.mentions_set(user_text)
+                          and guards.has_add_verb(user_text)))
+            if new_order and not _ADD_MORE.search(user_text) and not guards.has_change_verb(user_text):
+                msg = guards.block(
+                    "set_update_instead_of_add", f"「{user_text[:30]}」 세트 새 주문을 기존 세트 줄 수량 변경으로 처리하려 함",
+                    "오류: 손님은 이 메뉴를 새로 주문했습니다. 기존 줄의 수량을 바꾸지 말고, 단품/세트를 말하지 않았으면 "
+                    "단품으로 드릴지 세트로 드릴지 먼저 묻고, 세트면 사이드와 음료를 물어본 뒤 add_item으로 담으세요.")
+                if msg:
+                    return msg
             wrong = _target_mismatch(get_user_input(), cart_item.get("name_ko", ""), menu)
             if wrong:
                 msg = guards.block(
@@ -691,6 +764,9 @@ def update_item_options(
         return _friendly_error("수정 실패", e)
 
     push_action({"type": "update_item", "cart_item_id": cart_item_id, **payload})
+    if quantity is not None and quantity > int(cart_item.get("quantity", 1)):
+        cart_history.record_added(session_id, cart_item_id, cart_item.get("name_ko", ""),
+                                  quantity - int(cart_item.get("quantity", 1)), via="update")
     return "장바구니 항목을 수정했습니다."
 
 @tool
@@ -750,6 +826,7 @@ def clear_cart() -> str:
     except Exception as e:
         return _friendly_error("초기화 실패", e)
     checkout_progress.reset(session_id)  # 새 주문을 시작하므로 이전 결제 진행 상태도 초기화
+    cart_history.reset(session_id)
     push_action({"type": "clear_cart"})
     return "장바구니를 비웠습니다."
 

@@ -87,9 +87,31 @@ def parse_simple_order(text: str, menu: list[dict]) -> list[tuple[dict, int]] | 
     return out or None
 
 
+def burger_only_order(text: str, menu: list[dict]) -> str | None:
+    """문장이 "버거 하나 줘"처럼 버거 이름 하나(+수량·군더더기)뿐이고 단품/세트·"더"·추가·질문이 없으면 그 버거 이름.
+    (이 경우 키오스크는 단품/세트를 물어야 한다)"""
+    if (not text or guards.mentions_single(text) or guards.mentions_set(text) or guards.is_question_only(text)
+            or guards.has_remove_intent(text) or not guards.has_hangul(text)):
+        return None
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    compact = re.sub(r"\s+", "", text)
+    found = named_menus(compact, [i["name_ko"] for i in menu])
+    if len(found) != 1 or found[0] not in burgers:
+        return None
+    rest = _FILLER.sub("", _QTY_STRIP.sub("", compact.replace(menu_key(found[0]), "")))
+    if rest or not guards.has_add_verb(text) or re.search(r"더\s*(?:줘|주세요|담|추가)|더\s*$|추가|또\s", text):
+        return None
+    return found[0]
+
+
 # ── 모델이 하지 못한 일을 알아보는 응답 패턴 ───────────────────────────────────
-_CLAIM_UNAVAILABLE = re.compile(r"메뉴에\s*없|찾을\s*수\s*없|품절|판매하지\s*않|제공하지\s*않|취급하지\s*않")
-_ASKS_SINGLE_SET = re.compile(r"단품으로\s*(?:드릴까요|담을까요|담아드릴까요)|세트로\s*(?:드릴까요|담을까요|담아드릴까요)")
+_CLAIM_UNAVAILABLE = re.compile(
+    r"메뉴에\s*없|찾을\s*수\s*없|품절|판매하지\s*않|제공하지\s*않|취급하지\s*않|주문할\s*수\s*없|"
+    r"문제가\s*발생|계속\s*문제|찾는\s*데|추가하는\s*데|담는\s*데")
+# 손님이 이미 분명히 주문했는데 되묻거나("담아드릴까요?") 하겠다고만("담겠습니다") 하고 도구를 부르지 않은 경우도 포함한다
+_ASKS_SINGLE_SET = re.compile(
+    r"단품으로\s*(?:드릴까요|담을까요|담아\s*드릴까요)|세트로\s*(?:드릴까요|담을까요|담아\s*드릴까요)|"
+    r"담아\s*드릴까요|담을까요|담겠습니다|추가하겠습니다|추가로\s*담")
 
 
 def reply_failed_to_act(output: str) -> str | None:
@@ -109,7 +131,9 @@ _AWAITING_SET_OPTION = re.compile(r"사이드|음료|뭘로|뭐로|어떤\s*걸�
 def awaiting_set_option(last_bot: str) -> bool:
     """직전 안내가 세트의 사이드·음료를 고르라고 묻는 중인가. 그렇다면 손님이 "콜라로 주세요"라고 해도 그것은
     단품 주문이 아니라 세트 옵션 선택이다."""
-    return bool(_AWAITING_SET_OPTION.search(last_bot or ""))
+    # 사이드·음료를 묻는 질문 문장이 있어야 한다("사이드 …, 음료 … 담았습니다"라는 확인 문구는 아니다)
+    sentences = re.split(r"(?<=[.!?])\s+", (last_bot or "").strip())
+    return any("?" in s and _AWAITING_SET_OPTION.search(s) for s in sentences)
 
 
 def confirmation_text(added: list[tuple[dict, int]]) -> str:

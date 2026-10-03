@@ -33,7 +33,7 @@ while (-not (Test-PortFree $backendPort)) {
 
 # 자식 프로세스가 상속받는 환경변수: Vite 프록시 대상, AI 모듈의 백엔드 호출 주소
 $env:BACKEND_PORT = "$backendPort"
-$env:API_BASE_URL = "http://localhost:$backendPort"
+$env:API_BASE_URL = "http://127.0.0.1:$backendPort"
 
 # Backend - WorkingDirectory 로 한글 경로를 명령 문자열 밖으로 분리
 $conda = Get-Command conda -ErrorAction SilentlyContinue
