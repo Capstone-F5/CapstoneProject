@@ -1,10 +1,9 @@
-import { SET_SURCHARGE } from '../data/menuData'
 import HandBadge from '../components/HandBadge'
 
 export default function SingleSetScreen({ item, nav, setSelectedType }) {
   if (!item) return null
 
-  const setPrice = item.price + SET_SURCHARGE
+  const setPrice = item.price + (item.setSurcharge ?? 0)
   const setKcal = item.kcal ? item.kcal + 350 : null
 
   const select = (type) => {

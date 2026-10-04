@@ -26,6 +26,16 @@ export const COMMON_PHRASES = {
   '다른 도움이 필요하신가요':                'anything_else.mp3',
   '메뉴를 선택해 주세요':                   'select_menu.mp3',
   '수량을 말씀해 주세요':                   'say_quantity.mp3',
+  // 잘 못 알아들었을 때의 고정 응답(서버가 LLM 없이 돌려주는 NOISE_REPLY 한국어 문장)
+  '잘 못 들었어요 다시 한번 말씀해 주세요':   'not_heard.mp3',
+  // 접근 감지(휠체어) 안내
+  '손동작으로도 메뉴를 선택하실 수 있습니다':   'approach_wheelchair.mp3',
+  // 터치 플로우 내레이션
+  '식사하실 장소를 선택해 주세요':           'select_order_type.mp3',
+  '주문하실 메뉴를 선택해 주세요':           'select_menu_order.mp3',
+  '식사 장소를 확인해 주세요':               'confirm_order_type.mp3',
+  '포인트를 적립하시겠습니까':               'ask_points.mp3',
+  '결제 수단을 선택해 주세요':               'select_payment.mp3',
 }
 
 // 런타임 캐시 — URL을 한 번 생성하면 재사용 (탭 닫힐 때까지 유지)
@@ -45,11 +55,14 @@ export async function getCachedAudio(text) {
     return audio
   }
 
-  // 파일 존재 여부 확인 (HEAD 요청)
+  // 파일 존재 여부 확인 (HEAD 요청).
+  // 상태 코드만 보면 안 된다 — SPA fallback이 없는 경로에도 index.html을 200으로
+  // 돌려주므로, HTML을 가리키는 Audio가 만들어져 NotSupportedError로 무음이 된다.
   try {
     const url = `${AUDIO_BASE}${filename}`
     const res = await fetch(url, { method: 'HEAD' })
     if (!res.ok) return null
+    if (!(res.headers.get('content-type') ?? '').startsWith('audio/')) return null
     _urlCache.set(filename, url)
     return new Audio(url)
   } catch {

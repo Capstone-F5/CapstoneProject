@@ -15,13 +15,19 @@ import numpy as np
 try:
     import tflite_runtime.interpreter as _tflite
 except ImportError:
-    import tensorflow as tf  # type: ignore
-    _tflite = tf.lite  # type: ignore
+    try:
+        # Windows/최신 Python에서는 tflite_runtime 휠이 없어 후속 패키지(ai-edge-litert)를 쓴다.
+        from ai_edge_litert import interpreter as _tflite  # type: ignore
+    except ImportError:
+        import tensorflow as tf  # type: ignore
+        _tflite = tf.lite  # type: ignore
 
 PERSON_CLASS_ID = 0
 WHITE_CANE_CLASS_ID = 1
 WHEELCHAIR_CLASS_ID = 2
 CONFIDENCE_THRESHOLD = 0.5
+# 박스 높이가 화면의 이 비율 미만이면 너무 멀다고 보고 무시. 데이터 없이 정한 가정치 — approach.log를 보고 조정한다.
+MIN_BOX_H = 0.15
 MODEL_PATH = Path(__file__).parent / "models" / "best_int8.tflite"
 
 
@@ -69,25 +75,32 @@ class ApproachDetector:
         scores = out[:, 4:]
         if scores.size == 0:
             return {
-                "white_cane_detected": False, "white_cane_confidence": 0.0,
-                "wheelchair_detected": False, "wheelchair_confidence": 0.0,
+                "white_cane_detected": False, "white_cane_confidence": 0.0, "white_cane_box_h": 0.0,
+                "wheelchair_detected": False, "wheelchair_confidence": 0.0, "wheelchair_box_h": 0.0,
             }
 
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
 
-        def best_for(class_id: int) -> float:
+        def best_for(class_id: int) -> tuple[float, float]:
+            """클래스의 최고 신뢰도와 그 박스의 높이(화면 대비 0~1)."""
             mask = class_ids == class_id
-            return float(confidences[mask].max()) if np.any(mask) else 0.0
+            if not np.any(mask):
+                return 0.0, 0.0
+            i = int(np.flatnonzero(mask)[np.argmax(confidences[mask])])
+            return float(confidences[i]), float(out[i, 3])
 
-        white_cane_conf = best_for(WHITE_CANE_CLASS_ID)
-        wheelchair_conf = best_for(WHEELCHAIR_CLASS_ID)
+        white_cane_conf, white_cane_h = best_for(WHITE_CANE_CLASS_ID)
+        wheelchair_conf, wheelchair_h = best_for(WHEELCHAIR_CLASS_ID)
 
+        # 멀리 있는 대상(박스가 작음)은 감지로 보지 않는다 — 키오스크 앞에 선 사람만 대상.
         return {
-            "white_cane_detected": white_cane_conf > CONFIDENCE_THRESHOLD,
+            "white_cane_detected": white_cane_conf > CONFIDENCE_THRESHOLD and white_cane_h >= MIN_BOX_H,
             "white_cane_confidence": white_cane_conf,
-            "wheelchair_detected": wheelchair_conf > CONFIDENCE_THRESHOLD,
+            "white_cane_box_h": white_cane_h,
+            "wheelchair_detected": wheelchair_conf > CONFIDENCE_THRESHOLD and wheelchair_h >= MIN_BOX_H,
             "wheelchair_confidence": wheelchair_conf,
+            "wheelchair_box_h": wheelchair_h,
         }
 
     def detect_sync(self, jpeg_bytes: bytes) -> dict:

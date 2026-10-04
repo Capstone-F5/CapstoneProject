@@ -20,7 +20,7 @@ def build_agent_executor() -> AgentExecutor:
     model = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
     llm = ChatOpenAI(
         model=model,
-        temperature=0.2,
+        temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 

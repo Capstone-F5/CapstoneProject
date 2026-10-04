@@ -1,11 +1,18 @@
+import { useEffect } from 'react'
 import Logo from '../components/Logo'
 import HandBadge from '../components/HandBadge'
 import useT from '../i18n/useT'
+import { playTTS } from '../utils/tts'
 
 const ORDER_TYPE_CARD_RATIO = '1 / 1'
 
-export default function OrderTypeScreen({ nav, setOrderType }) {
+export default function OrderTypeScreen({ nav, setOrderType, narrate }) {
   const t = useT()
+
+  useEffect(() => {
+    if (narrate) playTTS('식사하실 장소를 선택해 주세요')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const select = (type) => {
     setOrderType(type)
     nav('menu')

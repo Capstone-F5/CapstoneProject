@@ -5,7 +5,16 @@ import { getSessionId } from './session'
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 async function req(path, opts) {
-  const res = await fetch(`${API_BASE}${path}`, opts)
+  const url = `${API_BASE}${path}`
+  let res
+  try {
+    res = await fetch(url, opts)
+  } catch (cause) {
+    console.error('[cart-api] network error', {
+      method: opts?.method ?? 'GET', url, cause,
+    })
+    throw new Error(`장바구니 서버에 연결할 수 없습니다 (${url})`, { cause })
+  }
   if (!res.ok) {
     let detail
     try { detail = (await res.json()).detail } catch { /* ignore */ }

@@ -16,7 +16,13 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
+import { playTTS } from './utils/tts'
+// import { useFingerCount } from './hooks/useFingerCount'   // 숫자인식 비활성
+import { useSerial } from './hooks/useSerial'
+import { useExitKioskTaps } from './hooks/useExitKioskTaps'
 import { GestureUIProvider } from './contexts/GestureUIContext'
+// import NumberSpeechTest from './components/NumberSpeechTest'   // [테스트용] 주문번호 낭독 테스트 — 다시 쓰려면 이 줄과 아래 <NumberSpeechTest />의 주석을 푼다
+import { findMenuOption } from './services/menuOptions'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -25,27 +31,60 @@ const GESTURE_LABELS = {
   swipe_up:    '↑ 위로',
   swipe_down:  '↓ 아래로',
   ok:          '✓ 확인',
-  finger_1:    '☝ 1',
-  finger_2:    '✌ 2',
-  finger_3:    '3',
-  finger_4:    '4',
-  finger_5:    '✋ 5',
 }
 
 const _isCollect = new URLSearchParams(window.location.search).has('collect')
+
+// 접근 감지(지팡이·휠체어): 시작 화면에서 카메라 프레임을 2fps로 서버(/ws/approach)에 보내고, 추론은 서버 PC에서
+// 한다(ai_modules/cv/approach_detector.py, TFLite 런타임은 ai-edge-litert). 서버에 런타임이 없으면
+// /ws/approach가 "모델 로드 실패"로 닫히므로, 배포 환경에 ai-edge-litert가 설치돼 있어야 한다.
+const APPROACH_DETECTION = true
+
+// 손가락 숫자를 동작에 쓰는 화면 — orderType(매장/포장), menu(단품/세트)
+const FINGER_SCREENS = new Set(['orderType', 'menu'])
 
 // orderType 화면 진입 직후, 직전 화면의 OK 핀치 해제 과도기 동작을 매장/포장 선택으로
 // 오인식하지 않도록 무시하는 유예 구간(ms)
 const ORDER_TYPE_GESTURE_GRACE_MS = 900
 
+// 커서 보간: 시간상수(작을수록 빨리 따라감)와 속도 기반 예측 상한
+const CURSOR_TAU_MS         = 45
+const CURSOR_PREDICT_MAX_MS = 100
+
+// 가로 스크롤 영역(메뉴 세부 옵션 등): 커서가 영역의 좌/우 끝 구간에 들어가면 그 방향으로 자동 스크롤.
+// 끝 구간 폭 = max(HSCROLL_EDGE_MIN_PX, 영역 폭 × HSCROLL_EDGE_RATIO), 끝에 가까울수록 빠르게(최대 HSCROLL_MAX_SPEED px/s).
+const HSCROLL_EDGE_RATIO  = 0.18
+const HSCROLL_EDGE_MIN_PX = 56
+const HSCROLL_MAX_SPEED   = 700
+
+function autoScrollHorizontal(x, y, dtMs) {
+  let el = document.elementFromPoint(x, y)
+  while (el && el !== document.documentElement) {
+    const cs = window.getComputedStyle(el)
+    if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && el.scrollWidth > el.clientWidth + 1) {
+      const r    = el.getBoundingClientRect()
+      const zone = Math.max(HSCROLL_EDGE_MIN_PX, r.width * HSCROLL_EDGE_RATIO)
+      const fromLeft  = x - r.left
+      const fromRight = r.right - x
+      let dir = 0, depth = 0
+      if (fromLeft < zone)       { dir = -1; depth = (zone - fromLeft)  / zone }
+      else if (fromRight < zone) { dir =  1; depth = (zone - fromRight) / zone }
+      if (dir) el.scrollLeft += dir * Math.min(depth, 1) * HSCROLL_MAX_SPEED * dtMs / 1000
+      return
+    }
+    el = el.parentElement
+  }
+}
+
+// 왼쪽 아래에 제스처 인식내역("제스처: …") HUD를 보일지. true로 바꾸면 다시 나온다(개발·점검용).
+const SHOW_GESTURE_HUD = false
+
+// 대기 화면 무입력 자동 OFF (음성인식/제스처/카메라)
+const START_IDLE_OFF_MS  = 30000
+const START_IDLE_EVENTS  = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'gesture-activity']
+
 // 접근성 컨트롤 바(음성인식/제스처/카메라) 고정 높이
 const CONTROL_BAR_HEIGHT = 58
-
-// 메뉴 원본(options 포함)에서 특정 그룹의 옵션을 이름으로 찾는다.
-// name이 없으면(SET_UPGRADE처럼 단일 옵션인 경우) 그룹만으로 찾는다.
-function findOption(menu, group, name) {
-  return menu?.options?.find(o => o.option_group === group && (name == null || o.name_ko === name))
-}
 
 // 백엔드 CartItemOut → 화면(CartItem 등)이 기대하는 로컬 카트 항목 형태로 역매핑.
 function adaptCartItem(ci, menuById) {
@@ -53,13 +92,33 @@ function adaptCartItem(ci, menuById) {
   const opts = ci.selected_options || []
   const matchGroup = (group) => {
     for (const sel of opts) {
-      const opt = menu?.options?.find(o => o.id === sel.option_id)
+      const opt = menu?.options?.find(o => o.id === sel.option_id) ?? (
+        sel.option_group === group ? {
+          id: sel.option_id,
+          option_group: sel.option_group,
+          name_ko: sel.name,
+          name_en: sel.name_en,
+          additional_price: sel.additional_price,
+        } : null
+      )
       if (opt && opt.option_group === group) return opt
     }
     return null
   }
+  const matchGroups = (group) => opts.flatMap(sel => {
+    const option = menu?.options?.find(o => o.id === sel.option_id) ?? (
+      sel.option_group === group ? {
+        id: sel.option_id,
+        option_group: sel.option_group,
+        name_ko: sel.name,
+        name_en: sel.name_en,
+        additional_price: sel.additional_price,
+      } : null
+    )
+    return option?.option_group === group ? [option] : []
+  })
   const isSet    = !!matchGroup('SET_UPGRADE')
-  const exclOpt  = matchGroup('EXCLUDE')
+  const exclusionOptions = matchGroups('EXCLUDE')
   const sideOpt  = matchGroup('SET_SIDE')
   const drinkOpt = matchGroup('SET_DRINK')
   return {
@@ -75,10 +134,13 @@ function adaptCartItem(ci, menuById) {
     finalPrice: Number(ci.final_price ?? ci.unit_price),
     discountAmount: Number(ci.discount_amount ?? 0),
     appliedDiscounts: ci.applied_discounts ?? [],
-    exclusion: exclOpt?.name_ko ?? '없음',
+    exclusion: exclusionOptions.map(option => option.name_ko).join(', ') || '없음',
+    exclusions: exclusionOptions.map(option => ({ name: option.name_ko, nameEn: option.name_en })),
     side: sideOpt?.name_ko ?? null,
+    sideEn: sideOpt?.name_en ?? null,
     sideExtra: Number(sideOpt?.additional_price ?? 0),
     drink: drinkOpt?.name_ko ?? null,
+    drinkEn: drinkOpt?.name_en ?? null,
     drinkExtra: Number(drinkOpt?.additional_price ?? 0),
     special_note: ci.special_note,
     key: ci.cart_item_id,
@@ -92,7 +154,10 @@ function AppContent() {
   const { menuData, isLoading: isMenuLoading, error: menuError, retry: retryMenu } = useMenuData()
   const activeDiscounts = menuData?.activeDiscounts ?? []
   const [screen,    setScreen]    = useState('start')
+  // 전체화면 해제(좌상단 10회 터치)는 시작 화면과 매장/포장 선택 화면에서만 허용
+  useExitKioskTaps(screen === 'start' || screen === 'orderType')
   const [cart,      setCart]      = useState([])
+  const cartRequestIdRef = useRef(0)
   const [orderType, setOrderType] = useState(null)
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
@@ -104,23 +169,80 @@ function AppContent() {
     const v = localStorage.getItem('gestureEnabled')
     return v === null ? true : v === 'true'
   })
+  // 카메라 PiP 미리보기는 기본 OFF (프레임마다 캔버스를 그려 Pi 메인 스레드를 쓴다)
   const [pipEnabled, setPipEnabled] = useState(() => {
-    return localStorage.getItem('pipEnabled') === 'true'
+    const v = localStorage.getItem('pipEnabled')
+    return v === null ? false : v === 'true'
   })
+  // 숫자인식 기능은 사용하지 않는다 — 관련 코드는 삭제하지 않고 주석 처리해 두었다.
+  // 아래 상수는 fingerEnabled를 읽는 UI(HUD, HandBadge, GestureUIProvider)가 항상 OFF로 동작하게 한다.
+  // const [fingerEnabled, setFingerEnabled] = useState(() => {
+  //   const v = localStorage.getItem('fingerEnabled')
+  //   return v === null ? true : v === 'true'
+  // })
+  const fingerEnabled = false
   useEffect(() => { localStorage.setItem('gestureEnabled', String(gestureEnabled)) }, [gestureEnabled])
   useEffect(() => { localStorage.setItem('pipEnabled',     String(pipEnabled))     }, [pipEnabled])
+  // useEffect(() => { localStorage.setItem('fingerEnabled',  String(fingerEnabled))  }, [fingerEnabled])
 
-  // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
-  // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
-  // — 서버는 안내 음성만 재생하고 프론트 모드 전환은 아직 없음.
+  // 대기 화면에서 30초간 입력이 없으면 음성인식/제스처/카메라(PiP)를 모두 끈다.
+  // 입력 = 터치·키보드·휠, 제스처 활동, 음성 발화(useIdleTimer와 같은 이벤트).
+  // OFF 상태는 컨트롤 바 버튼으로 다시 켤 때까지 유지된다.
+  useEffect(() => {
+    if (screen !== 'start') return
+    let timer = null
+    const turnOff = () => {
+      setChatOpen(false)
+      setGestureEnabled(false)
+      setPipEnabled(false)
+      setApproachSuspended(false)   // 떠난 손님 — 다음 손님을 위해 접근 감지 재개
+      // setFingerEnabled(false)   // 숫자인식 비활성
+    }
+    const rearm = () => {
+      clearTimeout(timer)
+      timer = setTimeout(turnOff, START_IDLE_OFF_MS)
+    }
+    rearm()
+    START_IDLE_EVENTS.forEach(ev => window.addEventListener(ev, rearm, true))
+    return () => {
+      clearTimeout(timer)
+      START_IDLE_EVENTS.forEach(ev => window.removeEventListener(ev, rearm, true))
+    }
+  }, [screen])
+
+  // 취약계층 자동 감지 (Issue #66): 휠체어 감지 → 제스처 ON + 안내 음성, 흰 지팡이 감지 → 음성 주문(채팅) 자동 ON.
+  //   - 휠체어: 카메라를 제스처 엔진에 넘기려고 접근 감지를 중단(approachSuspended)한다.
+  //   - 흰 지팡이: 채팅이 열리면 ChatPanel이 시작 화면 인사말을 재생하므로 별도 안내 음성은 없다.
   // 콜백은 반드시 안정적인 참조여야 함 — 훅의 useEffect 의존성이라, 매 렌더 새 함수를 넘기면
   // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
+  const [approachSuspended,   setApproachSuspended]   = useState(false)
+  const [approachUnavailable, setApproachUnavailable] = useState(false)
   const handleApproachModeAction = useCallback((action) => {
-    if (action === 'gesture') setGestureEnabled(true)
+    if (action === 'gesture') {
+      setGestureEnabled(true)
+      setApproachSuspended(true)
+      playTTS('손동작으로도 메뉴를 선택하실 수 있습니다.').catch(() => {})
+    } else if (action === 'voice') {
+      setChatOpen(true)
+    }
   }, [])
+  // 서버 감지 불가(모델 로드 실패·연결 끊김) → 접근 감지를 멈춰 카메라를 제스처에 돌려준다. 30초 뒤 다시 시도.
+  const handleApproachUnavailable = useCallback(() => setApproachUnavailable(true), [])
+  useEffect(() => {
+    if (!approachUnavailable) return
+    const t = setTimeout(() => setApproachUnavailable(false), 30000)
+    return () => clearTimeout(t)
+  }, [approachUnavailable])
+  // 주문 화면으로 넘어가면 중단을 풀어, 시작 화면으로 돌아왔을 때 다시 감지한다.
+  useEffect(() => { if (screen !== 'start') setApproachSuspended(false) }, [screen])
+  // 물리 카메라가 1대뿐이라 접근 감지와 제스처 인식이 동시에 getUserMedia를 열면
+  // 나중에 연 쪽이 NotReadableError로 실패한다. 대기 화면에서는 접근 감지만,
+  // 주문에 들어가면 제스처 인식만 카메라를 잡도록 단계를 나눈다.
+  const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen && !approachSuspended && !approachUnavailable
   const { notifyUserInput } = useApproachDetector({
-    enabled: !chatOpen,
+    enabled: approachActive,
     onModeAction: handleApproachModeAction,
+    onUnavailable: handleApproachUnavailable,
   })
   // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
   useEffect(() => {
@@ -136,8 +258,16 @@ function AppContent() {
   const pipCanvasRef = useRef(null)
 
   // 포인터 — DOM 직접 조작으로 React 리렌더 없이 30fps 업데이트
-  const pointerRef    = useRef(null)   // 최신 위치 { x, y }
-  const pointerDivRef = useRef(null)   // 커서 DOM 노드
+  const pointerRef      = useRef(null)   // 최신 위치 { x, y }
+  const cursorRef       = useRef({ target: null, shown: null, raf: null, last: 0 })   // 커서 보간 상태
+  const pointerDivRef   = useRef(null)   // 커서 DOM 노드
+  // 커서가 켜져 있는 동안(검지 펴서 포인팅 중) YOLO 숫자 확정을 막는다.
+  // 검지 1개 = 포인팅 자세 = digit 1 과 구분할 방법이 없어 의도치 않게 매장/포장이 선택됨.
+  const isPointingRef      = useRef(false)
+  const lastPointingOffRef = useRef(-Infinity)
+  // 커서가 꺼진 뒤 이 시간이 지나야 숫자 확정 허용.
+  // 포인팅 → 주먹 → 숫자 자세 전환 중에 잔여 vote가 확정되는 것을 막는다.
+  const POINTING_COOLDOWN_MS = 400
 
   // OK 로딩 링 — DOM 직접 조작
   const okRingRef = useRef(null)
@@ -157,6 +287,19 @@ function AppContent() {
   // MenuScreen 스와이프 / 모달 imperative 핸들러
   const menuSwipeRef = useRef(null)
   const menuModalRef = useRef(null)
+
+  // 시리얼 브릿지 — CartScreen이 등록, 시리얼 이벤트를 직접 처리
+  const serialRef = useRef(null)
+
+  const {
+    connected: serialConnected,
+    portCount: serialPortCount,
+    requestPermission: serialRequestPermission,
+  } = useSerial({
+    onCard:  () => serialRef.current?.({ type: 'card' }),
+    onCash:  (amount) => serialRef.current?.({ type: 'cash', amount }),
+    onSignal: (line) => serialRef.current?.({ type: 'signal', line }),
+  })
 
   // 음성 화면 제어: 현재 화면이 등록하는 액션 핸들러 + 대기 액션 큐
   const screenVoiceRef    = useRef(null)
@@ -239,20 +382,76 @@ function AppContent() {
   }, [])
 
   // 포인터: useGesture 의 onPointer 콜백 — React state 없이 DOM 직접 업데이트
+  // 커서 표시 보간: 손 인식 결과는 Pi에서 5~7fps로만 들어와 커서가 뚝뚝 끊긴다.
+  // 결과 사이를 화면 주사율(rAF)로 이어 그리고, 직전 이동 속도로 최대 CURSOR_PREDICT_MAX_MS만큼
+  // 앞을 예측해 체감 지연을 줄인다. 클릭·엣지 스크롤이 쓰는 pointerRef도 화면에 보이는 위치를 따른다.
+  const stepCursor = useCallback((t) => {
+    const c = cursorRef.current
+    c.raf = null
+    if (!c.target) return
+    const dt  = c.last ? Math.min(t - c.last, 50) : 16
+    c.last = t
+    const age = Math.min(performance.now() - c.target.t, CURSOR_PREDICT_MAX_MS)
+    const px  = c.target.x + c.target.vx * age
+    const py  = c.target.y + c.target.vy * age
+    const k   = 1 - Math.exp(-dt / CURSOR_TAU_MS)
+    c.shown = c.shown
+      ? { x: c.shown.x + (px - c.shown.x) * k, y: c.shown.y + (py - c.shown.y) * k }
+      : { x: px, y: py }
+    pointerRef.current = c.shown
+    const d = pointerDivRef.current
+    if (d) {
+      d.style.left = `${c.shown.x - 14}px`
+      d.style.top  = `${c.shown.y - 14}px`
+    }
+    autoScrollHorizontal(c.shown.x, c.shown.y, dt)
+    c.raf = requestAnimationFrame(stepCursor)
+  }, [])
+
+  const stopCursor = useCallback(() => {
+    const c = cursorRef.current
+    if (c.raf) cancelAnimationFrame(c.raf)
+    c.raf = null; c.target = null; c.shown = null; c.last = 0
+  }, [])
+
   const handlePointer = useCallback((norm) => {
     if (!norm) {
+      if (isPointingRef.current) lastPointingOffRef.current = performance.now()
+      isPointingRef.current = false
+      stopCursor()
       pointerRef.current = null
-      // opacity 만 끄기 — DOM은 유지해서 재등장 시 위치가 부드럽게 트랜지션됨
+      // opacity 만 끄기 — DOM은 유지해서 재등장 시 부드럽게 나타남
       if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
       clearEdge()
       return
     }
+    isPointingRef.current = true
     const p = normToScreen(norm)
-    pointerRef.current = p
+
+    // 이동 속도(px/ms) 추정 — 직전 측정과의 간격이 너무 짧거나 길면 이전 속도를 유지/감쇠
+    const c   = cursorRef.current
+    const now = performance.now()
+    const prev = c.target
+    let vx = 0, vy = 0
+    if (prev) {
+      const dtm = now - prev.t
+      if (dtm > 20 && dtm < 400) {
+        vx = 0.5 * prev.vx + 0.5 * (p.x - prev.x) / dtm
+        vy = 0.5 * prev.vy + 0.5 * (p.y - prev.y) / dtm
+      } else if (dtm <= 20) {
+        vx = prev.vx; vy = prev.vy
+      }
+    }
+    c.target = { x: p.x, y: p.y, t: now, vx, vy }
+    if (!c.raf) { c.last = 0; c.raf = requestAnimationFrame(stepCursor) }
+
     const d = pointerDivRef.current
     if (d) {
-      d.style.left    = `${p.x - 14}px`
-      d.style.top     = `${p.y - 14}px`
+      if (!c.shown) {   // 첫 등장은 즉시 그 자리에
+        pointerRef.current = p
+        d.style.left = `${p.x - 14}px`
+        d.style.top  = `${p.y - 14}px`
+      }
       d.style.opacity = '1'
     }
 
@@ -311,7 +510,7 @@ function AppContent() {
     }
 
     dispatchActivity()
-  }, [normToScreen, dispatchActivity, clearEdge])
+  }, [normToScreen, dispatchActivity, clearEdge, stepCursor, stopCursor])
 
   // OK 이동 취소 임계값 (screen px) — 이 이상 움직이면 링 취소
   const OK_MOVE_THRESHOLD = 80
@@ -379,12 +578,16 @@ function AppContent() {
   const [gestureHud, setGestureHud] = useState(null)
 
   const handleGesture = useCallback(({ gesture, hands, total_fingers }) => {
-    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신)
-    setGestureHud({
-      left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
-      right: hands?.right ? `${hands.right.finger_count}개` : '-',
-      total: total_fingers ?? 0,
-    })
+    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신).
+    // HUD가 숨겨져 있으면(SHOW_GESTURE_HUD=false) 상태를 갱신하지 않는다 — 이 갱신은 제스처 결과가 올 때마다(5~15fps)
+    // 새 객체를 만들어 App 전체를 다시 렌더링하게 해서, 화면에 안 보이는데도 Pi의 메인 스레드를 쓰고 있었다.
+    if (SHOW_GESTURE_HUD) {
+      setGestureHud({
+        left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
+        right: hands?.right ? `${hands.right.finger_count}개` : '-',
+        total: total_fingers ?? 0,
+      })
+    }
 
     if (!gesture) return
 
@@ -405,8 +608,9 @@ function AppContent() {
       // finger_1/finger_2로 오인식되어 매장/포장이 사용자 의도 없이 자동 선택되는 것을 방지
       const settled = performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS
       if      (gesture === 'ok')                                        { fireOk(); showLabel(GESTURE_LABELS.ok) }
-      else if (settled && gesture === 'finger_1' && fingerCount <= 1)  { dineIn();  showLabel('☝ 매장') }
-      else if (settled && gesture === 'finger_2' && fingerCount >= 2)  { takeout(); showLabel('✌ 포장') }
+      // 숫자인식 비활성 — 손가락 개수로 매장/포장 선택하던 분기
+      // else if (settled && gesture === 'finger_1' && fingerCount <= 1)  { dineIn();  showLabel('☝ 매장') }
+      // else if (settled && gesture === 'finger_2' && fingerCount >= 2)  { takeout(); showLabel('✌ 포장') }
       return
     }
 
@@ -430,10 +634,11 @@ function AppContent() {
     }
 
     // 메뉴 화면 모달 제스처 (단품/세트 선택) — 스와이프/스크롤보다 먼저 처리
-    if (currentScreen === 'menu' && menuModalRef.current) {
-      if (gesture === 'finger_1') { menuModalRef.current('single'); showLabel('☝ 단품'); return }
-      if (gesture === 'finger_2') { menuModalRef.current('set');    showLabel('✌ 세트');  return }
-    }
+    // 숫자인식 비활성 — 손가락 개수로 단품/세트 선택하던 분기
+    // if (currentScreen === 'menu' && menuModalRef.current) {
+    //   if (gesture === 'finger_1') { menuModalRef.current('single'); showLabel('☝ 단품'); return }
+    //   if (gesture === 'finger_2') { menuModalRef.current('set');    showLabel('✌ 세트');  return }
+    // }
 
     // 메뉴 화면 좌우 스와이프 → 페이지/탭 전환
     if (currentScreen === 'menu' && (gesture === 'swipe_left' || gesture === 'swipe_right')) {
@@ -445,16 +650,46 @@ function AppContent() {
     if (gesture.startsWith('swipe_')) showLabel(GESTURE_LABELS[gesture])
   }, [showLabel, fireOk, scrollAtPointer])
 
+  // 서버 YOLO가 숫자를 읽으려면 카메라 프레임이 필요하다. useGesture가 연 video를
+  // 그대로 넘겨받는다 — Pi는 카메라가 1대라 따로 열면 NotReadableError가 난다.
+  const gestureVideoRef = useRef(null)
+
+  // 확정된 숫자는 기존 제스처 경로로 흘려보낸다 — 화면별 동작 로직을 중복하지 않는다.
+  // handleGesture의 orderType 분기가 hands.finger_count를 읽으므로 같은 모양으로 맞춘다.
+  // 숫자인식 비활성 — 삭제하지 않고 주석 처리 (다시 쓰려면 이 블록과 useFingerCount import, fingerEnabled 상태를 복구)
+  // const handleFingerConfirm = useCallback((digit) => {
+  //   const sinceOff = performance.now() - lastPointingOffRef.current
+  //   const cooldownOk = sinceOff >= POINTING_COOLDOWN_MS
+  //   console.log(`[FingerConfirm] digit=${digit} screen=${screenRef.current} pointing=${isPointingRef.current} cooldown=${cooldownOk ? 'ok' : `${(POINTING_COOLDOWN_MS - sinceOff).toFixed(0)}ms 남음`} settled=${performance.now() - screenEnteredAtRef.current >= ORDER_TYPE_GESTURE_GRACE_MS}`)
+  //   if (digit < 1 || digit > 5)              { console.log('[FingerConfirm] 차단: digit 범위 초과'); return }
+  //   if (isPointingRef.current || !cooldownOk) { console.log('[FingerConfirm] 차단: 포인팅/쿨다운'); return }
+  //   handleGesture({
+  //     gesture:       `finger_${digit}`,
+  //     hands:         { right: { finger_count: digit } },
+  //     total_fingers: digit,
+  //   })
+  // }, [handleGesture])
+  //
+  // // 숫자를 실제로 쓰는 화면에서만 켠다. 전 화면에서 돌리면 Pi는 매 프레임 JPEG를
+  // // 인코딩하고 서버는 계속 추론하는데, 결과를 받아 쓸 곳이 없다.
+  // const { pending: fingerPending, connected: fingerConnected } = useFingerCount({
+  //   videoRef:  gestureVideoRef,
+  //   enabled:   gestureEnabled && fingerEnabled && !approachActive && FINGER_SCREENS.has(screen),
+  //   onConfirm: handleFingerConfirm,
+  // })
+
   useGesture({
     onPointer:    handlePointer,
     onGesture:    handleGesture,
-    enabled:      gestureEnabled,
+    videoRef:     gestureVideoRef,
+    enabled:      gestureEnabled && !approachActive,
     pipCanvasRef: gestureEnabled && pipEnabled ? pipCanvasRef : null,
   })
 
   // 손동작 OFF: 잔여 포인터/OK 링 UI 즉시 숨김
   useEffect(() => {
     if (gestureEnabled) return
+    stopCursor()
     pointerRef.current = null
     if (pointerDivRef.current) pointerDivRef.current.style.opacity = '0'
     if (okRingRef.current)     okRingRef.current.style.display     = 'none'
@@ -467,7 +702,9 @@ function AppContent() {
   const nav = (s) => {
     if (s === 'start') {
       // 새 손님 시작 — 채팅 닫기, 언어·세션 초기화
+      cartRequestIdRef.current += 1
       setChatOpen(false)
+      setCart([])
       setLocale('ko')
       sessionStorage.removeItem('kiosk_detected_lang')
       // 세션 ID 재발급은 ChatPanel의 kiosk-session-reset 핸들러(newSessionId())가 전담
@@ -479,12 +716,17 @@ function AppContent() {
 
   // 백엔드 카트(session_id 기준)가 단일 소스 — 서버에서 다시 받아와 로컬 state에 반영한다.
   const refreshCart = useCallback(async () => {
+    const requestId = ++cartRequestIdRef.current
     try {
       const data = await cartService.fetchCart()
-      setCart(data.items.map(ci => adaptCartItem(ci, menuByIdRef.current)))
+      if (requestId === cartRequestIdRef.current) {
+        setCart(data.items.map(ci => adaptCartItem(ci, menuByIdRef.current)))
+      }
     } catch (e) {
-      console.error('[cart] refresh 실패:', e)
-      showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
+      if (requestId === cartRequestIdRef.current) {
+        console.error('[cart] refresh 실패:', e)
+        showVoiceToast('오류: 장바구니를 불러오지 못했습니다')
+      }
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -495,13 +737,13 @@ function AppContent() {
 
     const selected_options = []
     if (draft.type === 'set') {
-      const su = findOption(menu, 'SET_UPGRADE')
+      const su = findMenuOption(menu, 'SET_UPGRADE')
       if (su) selected_options.push({ option_id: su.id, name: su.name_ko })
-      if (draft.side)  { const s = findOption(menu, 'SET_SIDE',  draft.side);  if (s) selected_options.push({ option_id: s.id, name: s.name_ko }) }
-      if (draft.drink) { const d = findOption(menu, 'SET_DRINK', draft.drink); if (d) selected_options.push({ option_id: d.id, name: d.name_ko }) }
+      if (draft.side)  { const s = findMenuOption(menu, 'SET_SIDE',  draft.side);  if (s) selected_options.push({ option_id: s.id, name: s.name_ko }) }
+      if (draft.drink) { const d = findMenuOption(menu, 'SET_DRINK', draft.drink); if (d) selected_options.push({ option_id: d.id, name: d.name_ko }) }
     }
     if (draft.exclusion && draft.exclusion !== '없음') {
-      const ex = findOption(menu, 'EXCLUDE', draft.exclusion)
+      const ex = findMenuOption(menu, 'EXCLUDE', draft.exclusion)
       if (ex) selected_options.push({ option_id: ex.id, name: ex.name_ko })
     }
 
@@ -521,6 +763,7 @@ function AppContent() {
 
   // 낙관적 업데이트(즉각 반응) 후 서버에 반영, 실패하면 refreshCart로 서버 진실을 되돌림
   const updateQty = async (cartId, qty) => {
+    cartRequestIdRef.current += 1
     setCart(prev => qty <= 0 ? prev.filter(c => c.cartId !== cartId)
                               : prev.map(c => c.cartId === cartId ? { ...c, qty } : c))
     try {
@@ -534,6 +777,7 @@ function AppContent() {
   }
 
   const clearCart = async () => {
+    cartRequestIdRef.current += 1
     setCart([])
     try {
       await cartService.clearCartApi()
@@ -545,15 +789,17 @@ function AppContent() {
   // ── 음성 주문: LLM 친화 장바구니 변환 ────────────────────────────────────
   const cartForLLM = useMemo(() =>
     cart.map(c => ({
-      cart_id:   c.cartId,
+      cart_item_id: c.cartId,
       menu_id:   c.id,
       name:      c.name,
       item_type: c.type,
       quantity:  c.qty,
-      unit_price: c.unitPrice,
+      unit_price: c.finalPrice ?? c.unitPrice,
       exclusion: c.exclusion,
+      exclusions: c.exclusions?.map(option => option.name) ?? [],
       side:      c.side,
       drink:     c.drink,
+      special_note: c.special_note,
     }))
   , [cart])
 
@@ -724,22 +970,25 @@ function AppContent() {
   }, [screen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = cart.reduce((sum, c) => sum + (c.finalPrice ?? c.unitPrice) * c.qty, 0)
+  // 접근성 컨트롤 바는 모든 화면에서 상시 표시한다 (화면 하단 CONTROL_BAR_HEIGHT만큼 예약).
+  const showControlBar = true
   const props = { cart, total, addToCart, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, menuData, activeDiscounts, isLoading: isMenuLoading, error: menuError, retry: retryMenu }
 
   const screens = {
     start:       <StartScreen {...props} />,
-    orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} />,
+    orderType:   <OrderTypeScreen nav={nav} setOrderType={setOrderType} narrate={!chatOpen} />,
     menu:        <MenuScreen {...props} swipeRef={menuSwipeRef} modalRef={menuModalRef} voiceRef={screenVoiceRef} modalStateRef={modalStateRef} />,
-    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} />,
+    cart:        <CartScreen {...props} voiceRef={screenVoiceRef} serialRef={serialRef} serialConnected={serialConnected} />,
     payment:     <PaymentScreen {...props} />,
-    complete:    <CompletionScreen orderNum={orderNum} nav={nav} />,
+    complete:    <CompletionScreen orderNum={orderNum} nav={nav} narrate={!chatOpen} />,
     cardPayment: <CardPaymentScreen {...props} />,
     payPayment:  <PayPaymentScreen {...props} />,
     cashPayment: <CashPaymentScreen {...props} />,
   }
 
   return (
-    <GestureUIProvider enabled={gestureEnabled}>
+    <GestureUIProvider enabled={gestureEnabled} fingerEnabled={fingerEnabled}>
+        {/* <NumberSpeechTest /> */}   {/* [테스트용] 주문번호 낭독 테스트 패널(꺼짐) — 다시 쓰려면 위 import와 이 줄의 주석을 푼다 */}
         {/* ── AI 동작 토스트 알림 ── */}
         {voiceToast && (
           <div key={voiceToast.key} style={{
@@ -762,23 +1011,54 @@ function AppContent() {
           </div>
         )}
 
-        {/* ── 테스트 HUD (좌측 하단) ── */}
-        {gestureHud && (
+        {/* ── 테스트 HUD (좌측 하단) — 기본 숨김(SHOW_GESTURE_HUD) ── */}
+        {SHOW_GESTURE_HUD && gestureHud && (
           <div style={{
-            position: 'fixed', bottom: 16, left: 16,
+            position: 'fixed', bottom: CONTROL_BAR_HEIGHT + 16, left: 16,
             background: 'rgba(0,0,0,0.75)', color: '#fff',
             padding: '10px 16px', borderRadius: 10,
             fontSize: 13, lineHeight: 1.8,
             fontFamily: 'monospace', pointerEvents: 'none', zIndex: 9002,
           }}>
-            <div>왼손 &nbsp;: {gestureHud.left}</div>
-            <div>오른손: {gestureHud.right}</div>
-            <div>합계 &nbsp;: {gestureHud.total}개</div>
+            {/* 숫자인식 비활성 — 손가락 개수 HUD
+            {fingerEnabled && <div>왼손 &nbsp;: {gestureHud.left}</div>}
+            {fingerEnabled && <div>오른손: {gestureHud.right}</div>}
+            {fingerEnabled && <div>합계 &nbsp;: {gestureHud.total}개</div>}
+            */}
             <div style={{ color: gestureLabel ? '#7fff7f' : '#888' }}>
               제스처: {gestureLabel ?? '-'}
             </div>
           </div>
         )}
+
+        {/* 숫자인식 비활성 — 숫자 인식 확정 팝업 (같은 숫자를 1초 유지해야 실행)
+        {fingerPending && (
+          <div style={{
+            position: 'fixed', left: '50%', bottom: 140, transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.82)', color: '#fff',
+            padding: '20px 30px', borderRadius: 20,
+            display: 'flex', alignItems: 'center', gap: 20,
+            pointerEvents: 'none', zIndex: 9003,
+            boxShadow: '0 6px 28px rgba(0,0,0,0.4)',
+          }}>
+            <span style={{ fontSize: 60, fontWeight: 900, lineHeight: 1, minWidth: 56, textAlign: 'center' }}>
+              {fingerPending.digit}
+            </span>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>
+                그대로 유지하세요
+              </div>
+              <div style={{ width: 170, height: 9, background: 'rgba(255,255,255,0.22)', borderRadius: 5 }}>
+                <div style={{
+                  width: `${Math.round(fingerPending.progress * 100)}%`,
+                  height: '100%', background: '#F5B800', borderRadius: 5,
+                  transition: 'width 120ms linear',
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
+        */}
 
         {/* ── 제스처 포인터 — DOM 직접 조작, React 리렌더 없음 ── */}
         <div ref={pointerDivRef} style={{
@@ -862,7 +1142,7 @@ function AppContent() {
           display: 'flex', flexDirection: 'column',
           height: '100dvh', minHeight: '100vh',
           overflow: 'hidden',
-          paddingBottom: CONTROL_BAR_HEIGHT,
+          paddingBottom: showControlBar ? CONTROL_BAR_HEIGHT : 0,
         }}>
           {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
@@ -886,13 +1166,14 @@ function AppContent() {
               orderType={orderType}
               modalStateRef={modalStateRef}
               onAction={handleVoiceAction}
+              // 짧은 "네/아니요" 응답을 화면이 바로 처리할 수 있으면 true(LLM 왕복 생략)
+              onQuickReply={(value) => screenVoiceRef.current?.({ type: 'quick_reply', value }) || false}
             />
           </div>
         </div>
 
-        {/* ── 접근성 컨트롤 바 — 음성인식/제스처/카메라 On-Off, 항상 화면 맨 아래 고정
-             (음성인식 UI가 열려도 그 아래에 그대로 고정 — 위로 밀려 올라가지 않음) ── */}
-        <div
+        {/* ── 접근성 컨트롤 바 — 모든 화면에서 상시 표시 ── */}
+        {showControlBar && <div
           style={{
             position: 'fixed',
             bottom: 0,
@@ -911,27 +1192,47 @@ function AppContent() {
         >
           <ControlText
             onClick={() => setChatOpen(o => !o)}
+            on={chatOpen}
             ko={`음성인식 ${chatOpen ? 'ON' : 'OFF'}`}
             en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
           />
           <ControlText
             onClick={() => setGestureEnabled(v => !v)}
+            on={gestureEnabled}
             ko={`제스처 ${gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Gesture ${gestureEnabled ? 'ON' : 'OFF'}`}
           />
           <ControlText
             disabled={!gestureEnabled}
             onClick={() => gestureEnabled && setPipEnabled(v => !v)}
+            on={pipEnabled && gestureEnabled}
             ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
-        </div>
+          {/* 숫자인식 비활성 — 컨트롤 바 버튼
+          <ControlText
+            disabled={!gestureEnabled}
+            onClick={() => gestureEnabled && setFingerEnabled(v => !v)}
+            ko={`숫자인식 ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+            en={`Finger ${fingerEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+          />
+          */}
+          {navigator?.serial && serialPortCount !== 2 && (
+            <ControlText
+              onClick={serialRequestPermission}
+              ko={`시리얼 ${serialPortCount}개`}
+              en={`Serial ${serialPortCount}`}
+            />
+          )}
+        </div>}
       </GestureUIProvider>
   )
 }
 
 // 접근성 컨트롤 바의 텍스트 버튼 — 한국어(위, 크게) + 영어(아래, 작게) 동시 표기
-function ControlText({ onClick, disabled = false, ko, en }) {
+// on: 켜진 상태면 초록색으로 보여 준다(음성인식·제스처·카메라). 꺼져 있으면 기존처럼 흰색.
+const CONTROL_ON_COLOR = '#5CFF7A'
+function ControlText({ onClick, disabled = false, on = false, ko, en }) {
   return (
     <button
       onClick={onClick}
@@ -939,7 +1240,7 @@ function ControlText({ onClick, disabled = false, ko, en }) {
       style={{
         background: 'none',
         border: 'none',
-        color: disabled ? 'rgba(255,255,255,0.4)' : '#fff',
+        color: disabled ? 'rgba(255,255,255,0.4)' : on ? CONTROL_ON_COLOR : '#fff',
         cursor: disabled ? 'not-allowed' : 'pointer',
         padding: '4px 0',
         display: 'flex',
@@ -949,8 +1250,8 @@ function ControlText({ onClick, disabled = false, ko, en }) {
         lineHeight: 1.3,
       }}
     >
-      <span style={{ fontSize: 15, fontWeight: 700 }}>{ko}</span>
-      <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.75 }}>{en}</span>
+      <span style={{ fontSize: 15, fontWeight: 700 }}>{on && <span aria-hidden style={{ marginRight: 5 }}>●</span>}{ko}</span>
+      <span style={{ fontSize: 11, fontWeight: 400, opacity: on ? 0.95 : 0.75 }}>{en}</span>
     </button>
   )
 }

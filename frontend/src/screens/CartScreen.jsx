@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import Logo from '../components/Logo'
+import { playTTS } from '../utils/tts'
+import { markCheckoutSteps } from '../services/checkoutService'
 import { lookupCustomer } from '../services/pointsService'
 import { createOrder, validateCoupon, previewDiscount } from '../services/orderService'
 import { processPayment } from '../services/paymentService'
@@ -9,6 +11,9 @@ import CouponScanModal from '../components/CouponScanModal'
 import CameraPreview from '../components/CameraPreview'
 import useT from '../i18n/useT'
 import { useLocale } from '../i18n/LocaleContext'
+import usePhoneVoice from '../hooks/usePhoneVoice'
+import MicIcon from '../components/MicIcon'
+import { useGestureUIEnabled } from '../contexts/GestureUIContext'
 import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
@@ -41,7 +46,7 @@ const COL_QTY   = 130
 const COL_PRICE = 140
 const IMG_SIZE  = 90
 
-export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, voiceRef, activeDiscounts = [] }) {
+export default function CartScreen({ cart, total, updateQty, clearCart, nav, setOrderNum, orderType, setOrderType, chatOpen, voiceRef, serialRef, serialConnected = false, activeDiscounts = [] }) {
   const t = useT()
   const [showOrderTypeConfirm, setShowOrderTypeConfirm] = useState(false)
   const [showPointPrompt,  setShowPointPrompt]  = useState(false)
@@ -51,6 +56,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [showCashPayment,  setShowCashPayment]  = useState(false)
   const [showPayPayment,   setShowPayPayment]   = useState(false)
   const [pointsInput,      setPointsInput]      = useState('')
+  // 제스처(커서) 모드에서는 키패드 입력이 어려워서, 마이크 버튼을 한 번 누르면 전화번호만 듣고 입력창에 채운다(LLM 없음)
+  const gestureUIOn = useGestureUIEnabled()   // 제스처(커서) 모드 ON 여부 — 마이크 버튼 표시 조건
+  const { locale: voiceLocale } = useLocale()
+  const phoneVoice = usePhoneVoice({
+    language: voiceLocale,
+    onDigits: (digits) => { setPointsInput(digits); setPointsError('') },
+    onError: (kind) => setPointsError(t({ mic: 'micErrMic', nospeech: 'micErrNoSpeech', nodigits: 'micErrNoDigits', network: 'micErrNetwork' }[kind])),
+  })
   const [pointsError,      setPointsError]      = useState('')
   const [confirmedPhone,   setConfirmedPhone]   = useState('')
   const [confirmedName,    setConfirmedName]    = useState('')
@@ -63,8 +76,13 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [showCouponScan,   setShowCouponScan]   = useState(false)
   const [discountPreview,  setDiscountPreview]  = useState(null)  // { discountAmount, applicable }
+  const [receivedCash,     setReceivedCash]     = useState(0)     // 아두이노 현금 누적액
 
-  const isCompletingRef = useRef(false)
+  const isCompletingRef    = useRef(false)
+  const handleCompleteRef  = useRef(null)  // serialRef에서 안전하게 참조
+  // 음성 브릿지 핸들러는 [voiceRef, cart, total] 때문에 클로저가 낡을 수 있어 팝업 상태를 ref로 미러링한다
+  const pointPromptOpenRef = useRef(false)
+  const orderTypeConfirmOpenRef = useRef(false)
 
   const handlePayClick = () => {
     if (cart.length === 0) {
@@ -109,6 +127,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   }
 
   const closePointsPopup = () => {
+    phoneVoice.cancel()   // 듣는 중이었다면 녹음을 버리고 마이크를 놓는다
     setShowPointsPopup(false)
     setPointsInput('')
     setPointsError('')
@@ -194,6 +213,24 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           if (a.value === 'yes') setShowPointsPopup(true)
           else openPayment()
           return true
+        // 짧은 예/아니오 응답("네", "응", "아니요")을 LLM 없이 바로 처리 — 열려 있는 예/아니오 팝업이 있을 때만.
+        // 처리하지 않으면 false → 기존 LLM 경로로 넘어간다. LLM이 말하지 않으므로 다음 안내는 사전 녹음으로 직접 재생.
+        case 'quick_reply':
+          // 반환값: 처리한 내용을 나타내는 태그(문자열) 또는 false. ChatPanel이 이 태그로 LLM 대화 기록에
+          // '어떤 질문에 어떻게 답했는지'를 정확히 남긴다 — 그렇지 않으면 LLM이 포인트 질문이 아직
+          // 답변되지 않은 줄 알고 결제 수단을 말할 때마다 포인트를 다시 묻는다(무한 반복).
+          if (pointPromptOpenRef.current) {
+            setShowPointPrompt(false)
+            if (a.value === 'yes') { setShowPointsPopup(true); return 'points_yes' }
+            openPayment(); playTTS('결제 수단을 선택해 주세요')
+            return 'points_no'
+          }
+          if (orderTypeConfirmOpenRef.current) {
+            if (a.value === 'yes') { confirmOrderType(); playTTS('포인트를 적립하시겠습니까'); return 'order_type_confirm' }
+            setShowOrderTypeConfirm(false)
+            return 'order_type_cancel'
+          }
+          return false
         case 'points_phone':
           setShowPointsPopup(true)
           setPointsInput(a.phone ?? '')
@@ -213,6 +250,28 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
     return () => { if (voiceRef) voiceRef.current = null }
   }, [voiceRef, cart, total])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 아두이노 시리얼 브릿지
+  useEffect(() => {
+    if (!serialRef) return
+    serialRef.current = (event) => {
+      // 카드 결제 팝업이 열려 있으면 두 아두이노(Coin·Cash)의 어떤 신호든 카드 승인으로 본다.
+      // (INPUT=CARD, INPUT=…WON, TOTAL, INPUT=UNKNOWN/RETRY. 부팅 신호 RESET COMPLETE는 오지 않는다.)
+      // handleComplete가 isCompletingRef로 중복 호출을 막는다.
+      if (showCardPayment) {
+        if (['card', 'cash', 'signal'].includes(event.type)) handleCompleteRef.current?.()
+        return
+      }
+      // 카드 팝업이 아닐 때: 현금 금액은 기존처럼 누적하고, 카드·기타 신호는 무시한다.
+      if (event.type === 'cash') setReceivedCash(prev => prev + event.amount)
+    }
+    return () => { if (serialRef) serialRef.current = null }
+  }, [serialRef, showCardPayment])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 현금 결제 창이 닫히면 수납액 초기화
+  useEffect(() => {
+    if (!showCashPayment) setReceivedCash(0)
+  }, [showCashPayment])
+
   // 카트가 바뀔 때마다 적용 가능한 할인 미리보기
   useEffect(() => {
     if (cart.length === 0) { setDiscountPreview(null); return }
@@ -221,7 +280,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
 
   const automaticDiscount = discountPreview?.discountAmount ?? 0
   const couponDiscount = couponInfo?.valid ? (couponInfo.discountAmount ?? 0) : 0
-  const finalDisplayAmount = Math.max(0, total - automaticDiscount - couponDiscount)
+  // total은 이미 finalPrice(할인가) 합산 — automaticDiscount를 추가로 빼면 이중 할인됨
+  const finalDisplayAmount = Math.max(0, total - couponDiscount)
 
   const handleComplete = async () => {
     if (isCompletingRef.current) return
@@ -252,6 +312,23 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       isCompletingRef.current = false
     }
   }
+  handleCompleteRef.current = handleComplete
+
+  pointPromptOpenRef.current = showPointPrompt
+  orderTypeConfirmOpenRef.current = showOrderTypeConfirm
+
+  // 결제 단계 진행을 서버에 알린다 — 터치·빠른 응답으로 단계를 넘겨도 LLM이 "포인트를 아직 안 물었다"고
+  // 보고 결제 수단을 말할 때마다 포인트를 되묻는 무한 반복을 막는다.
+  useEffect(() => { if (showPointPrompt) markCheckoutSteps(['start_checkout']) }, [showPointPrompt])
+  useEffect(() => { if (showPointsPopup || showPaymentPopup) markCheckoutSteps(['start_checkout', 'points']) }, [showPointsPopup, showPaymentPopup])
+
+  // 터치 플로우 팝업 TTS 내레이션 (음성인식이 꺼진 경우에만)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showOrderTypeConfirm && !chatOpen) playTTS('식사 장소를 확인해 주세요') }, [showOrderTypeConfirm])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showPointPrompt && !chatOpen) playTTS('포인트를 적립하시겠습니까') }, [showPointPrompt])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (showPaymentPopup && !chatOpen) playTTS('결제 수단을 선택해 주세요') }, [showPaymentPopup])
 
   return (
     <div style={{
@@ -306,7 +383,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
       </div>
 
       {/* ── 아이템 목록 ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: `14px ${LIST_PX}px` }}>
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+        padding: `14px ${LIST_PX}px`,
+      }}>
         {cart.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#bbb', padding: '100px 0', fontSize: 20 }}>
             {t('cartEmpty')}
@@ -432,17 +516,47 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           <p style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 14 }}>
             {t('enterPhoneSub')}
           </p>
-          <div style={{
-            width: '100%', border: '2px solid #e44', borderRadius: 10,
-            padding: '14px', fontSize: 22, fontWeight: 700,
-            minHeight: 58, marginBottom: 6,
-            textAlign: 'center', letterSpacing: 2, color: '#1a1a1a',
-          }}>
-            {formatPhone(pointsInput) || ' '}
+          {/* 번호 입력칸 + 오른쪽 마이크 버튼. 버튼은 제스처(커서) 모드가 ON일 때만 — 커서로는 키패드 입력이 어렵기 때문.
+              음성 채팅이 켜져 있으면 번호를 그냥 말하면 되고(기존 음성 주문 경로) 마이크를 둘이 잡으면 충돌하므로 숨긴다 */}
+          <style>{'@keyframes phoneMicPulse { 0%,100% { opacity: 1 } 50% { opacity: .6 } } @keyframes micSpin { to { transform: rotate(360deg) } }'}</style>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 6 }}>
+            <div style={{
+              flex: 1, minWidth: 0, border: '2px solid #e44', borderRadius: 10,
+              padding: '14px', fontSize: 22, fontWeight: 700,
+              minHeight: 58,
+              textAlign: 'center', letterSpacing: 2, color: '#1a1a1a',
+            }}>
+              {formatPhone(pointsInput) || ' '}
+            </div>
+            {gestureUIOn && !chatOpen && (
+              <button
+                type="button"
+                onClick={phoneVoice.state === 'listening' ? phoneVoice.cancel : phoneVoice.start}
+                disabled={phoneVoice.state === 'processing'}
+                aria-label={t('micInput')}
+                title={t('micInput')}
+                style={{
+                  flexShrink: 0, width: 64, border: 'none', borderRadius: 10,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: phoneVoice.state === 'processing' ? 'default' : 'pointer',
+                  // 앱 색상(갈색·노랑)에 맞춘다: 평소 갈색 바탕+흰 아이콘, 듣는 중에는 노랑 바탕+갈색 아이콘
+                  background: phoneVoice.state === 'listening' ? '#F5B800' : '#744032',
+                  color: phoneVoice.state === 'listening' ? '#744032' : '#fff',
+                  opacity: phoneVoice.state === 'processing' ? 0.65 : 1,
+                  animation: phoneVoice.state === 'listening' ? 'phoneMicPulse 1s ease-in-out infinite' : 'none',
+                }}
+              >
+                <MicIcon size={28} kind={phoneVoice.state === 'processing' ? 'spinner' : 'mic'} />
+              </button>
+            )}
           </div>
-          {pointsError && (
-            <p style={{ fontSize: 13, color: '#e44', textAlign: 'center', marginBottom: 8 }}>
-              {pointsError}
+          {(pointsError || phoneVoice.state !== 'idle') && (
+            <p aria-live="polite" style={{
+              fontSize: 13, textAlign: 'center', marginBottom: 8,
+              color: phoneVoice.state !== 'idle' ? '#744032' : '#e44',
+            }}>
+              {phoneVoice.state === 'listening' ? t('micListening')
+                : phoneVoice.state === 'processing' ? t('micProcessing') : pointsError}
             </p>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
@@ -599,6 +713,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onCancel={() => { setShowCardPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
           error={paymentError}
+          serialConnected={serialConnected}
         >
           <CardIllustration />
         </PayWaitPopup>
@@ -613,6 +728,8 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onCancel={() => { setShowCashPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
           error={paymentError}
+          receivedCash={receivedCash}
+          serialConnected={serialConnected}
         >
           <CashIllustration />
         </PayWaitPopup>
@@ -627,6 +744,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           onCancel={() => { setShowPayPayment(false); setShowPaymentPopup(true) }}
           onComplete={handleComplete}
           error={paymentError}
+          serialConnected={serialConnected}
         >
           {/* 간편결제 QR/바코드 인식을 흉내내기 위해 실제 카메라를 켠다(결제 자체는 시뮬레이션) */}
           <div style={{ position: 'relative', width: '100%', maxWidth: 240, aspectRatio: '1 / 1' }}>
@@ -653,13 +771,39 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   )
 }
 
+const SKIP_CLICKS = 5
+const SKIP_WINDOW_MS = 3000
+
 /* ── 결제 대기 팝업 ── */
-function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error }) {
+function PayWaitPopup({ title, total, onCancel, onComplete, image, children, error, receivedCash, serialConnected }) {
   const t = useT()
+  const hasCashInput = receivedCash != null
+  const [skipVisible, setSkipVisible] = useState(false)
+  const skipClicksRef = useRef([])
+
+  // 결제금액 행 5회 클릭 → 확인 버튼 임시 표시 (아두이노 연결 시 테스트 스킵용)
+  const handleAmountClick = () => {
+    if (!serialConnected) return
+    const now = Date.now()
+    skipClicksRef.current = skipClicksRef.current.filter(t => now - t < SKIP_WINDOW_MS)
+    skipClicksRef.current.push(now)
+    if (skipClicksRef.current.length >= SKIP_CLICKS) {
+      skipClicksRef.current = []
+      setSkipVisible(true)
+    }
+  }
+
+  // 현금: 수납 충족 시 자동 완료
+  // 카드/간편: Arduino 미연결이면 5초 타이머, 연결되면 타이머 없음
   useEffect(() => {
+    if (hasCashInput) {
+      if (receivedCash >= total) onComplete?.()
+      return
+    }
+    if (serialConnected) return  // Arduino 연결 시 자동 완료 없음
     const timer = setTimeout(() => onComplete?.(), 5000)
     return () => clearTimeout(timer)
-  }, [])
+  }, [hasCashInput, receivedCash, total, serialConnected])
 
   return (
     <ModalBase onClose={onCancel} minHeight="clamp(440px,66vh,600px)">
@@ -675,16 +819,33 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children, err
           }}>{error}</div>
         )}
 
-        <div style={{
-          background: '#616161', borderRadius: 8,
-          padding: '14px 20px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        }}>
+        <div
+          onClick={handleAmountClick}
+          style={{
+            background: '#616161', borderRadius: 8,
+            padding: '14px 20px',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            cursor: serialConnected ? 'default' : undefined,
+          }}
+        >
           <span style={{ color: '#ccc', fontSize: 14 }}>{t('payAmount')}</span>
           <span style={{ color: '#F5B800', fontSize: 22, fontWeight: 900 }}>
             {(total || 0).toLocaleString()} {t('won')}
           </span>
         </div>
+
+        {hasCashInput && (
+          <div style={{
+            background: '#424242', borderRadius: 8,
+            padding: '14px 20px',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ color: '#ccc', fontSize: 14 }}>수납액</span>
+            <span style={{ color: receivedCash >= total ? '#66BB6A' : '#fff', fontSize: 22, fontWeight: 900 }}>
+              {receivedCash.toLocaleString()} {t('won')}
+            </span>
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {image
@@ -699,7 +860,7 @@ function PayWaitPopup({ title, total, onCancel, onComplete, image, children, err
             border: 'none', background: '#e0e0e0', color: '#555',
             fontSize: 16, fontWeight: 700, cursor: 'pointer',
           }}>{t('cancel')}</button>
-          {onComplete && (
+          {onComplete && (!serialConnected || skipVisible) && (
             <button onClick={onComplete} style={{
               flex: 1, padding: '14px 0', borderRadius: 12,
               border: 'none', background: '#F5B800', color: '#1a1a1a',
@@ -773,14 +934,13 @@ function CashIllustration() {
   )
 }
 
-function translateOptionName(korName, locale) {
+function translateOptionName(korName, locale, nameEn = null) {
   if (!korName || locale === 'ko') return korName
   const all = [...SET_SIDES, ...SET_DRINKS]
   const found = all.find(x => x.name === korName)
-  if (!found) return korName
-  if (locale === 'ja') return found.nameJa ?? found.nameEn ?? korName
-  if (locale === 'zh') return found.nameZh ?? found.nameEn ?? korName
-  return found.nameEn ?? korName
+  if (locale === 'ja') return found?.nameJa ?? found?.nameEn ?? nameEn ?? korName
+  if (locale === 'zh') return found?.nameZh ?? found?.nameEn ?? nameEn ?? korName
+  return found?.nameEn ?? nameEn ?? korName
 }
 
 /* ── CartItem ── */
@@ -788,6 +948,9 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
   const t = useT()
   const { locale } = useLocale()
   const hasOptions = (item.exclusion && item.exclusion !== '없음') || item.side || item.drink
+  const exclusionLabel = item.exclusions?.length
+    ? item.exclusions.map(option => translateOptionName(option.name, locale, option.nameEn)).join(', ')
+    : item.exclusion
   return (
     <div style={{
       background: '#fff', borderRadius: 14, marginBottom: 12,
@@ -850,9 +1013,9 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
             gridColumn: '2 / -1', gridRow: 2, background: '#ededed',
             borderRadius: 10, overflow: 'hidden', alignSelf: 'center', marginTop: 4,
           }}>
-            {item.exclusion && item.exclusion !== '없음' && <SubRow label={item.exclusion} extra={0} />}
-            {item.side  && <SubRow label={translateOptionName(item.side,  locale)} extra={item.sideExtra}  />}
-            {item.drink && <SubRow label={translateOptionName(item.drink, locale)} extra={item.drinkExtra} />}
+            {item.exclusion && item.exclusion !== '없음' && <SubRow label={exclusionLabel} extra={0} />}
+            {item.side  && <SubRow label={translateOptionName(item.side,  locale, item.sideEn)} extra={item.sideExtra}  />}
+            {item.drink && <SubRow label={translateOptionName(item.drink, locale, item.drinkEn)} extra={item.drinkExtra} />}
           </div>
         )}
       </div>

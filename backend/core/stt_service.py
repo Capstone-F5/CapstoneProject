@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -36,17 +37,31 @@ _VOCAB_NAMES = (
 )
 
 
+# whisper-1이 구간마다 주는 "말이 없을 확률". 2026-10-04 실험: 무음·잡음에서 나온 환각 구간은 0.85~0.97, 실제 말소리는 0.00~0.40
+# (짧은 "네"가 언어 자동 감지에서 0.40). 이 값 이상인 구간은 말이 아니라고 보고 버린다. 언어와 무관하게 동작해서 문구 목록이
+# 못 막는 새 환각 문장과 영어·일본어·중국어 환각도 걸러 준다. whisper-1 전용(다른 모델은 구간 정보가 없다).
+# 합성(잡음 없는) 음성으로 잰 값이라 실제 매장 소음에서는 정상 발화 값이 올라갈 수 있다 — 환경변수로 조정한다.
+NO_SPEECH_DROP = float(os.getenv("STT_NO_SPEECH_DROP", "0.7"))
+
+# 유튜브 마무리 멘트 등 무음·잡음에 Whisper가 지어내는 전형적 문장. 공백을 없애고 소문자로 비교한다(띄어쓰기 변형 대응).
 _HALLUCINATION_FRAGMENTS: frozenset[str] = frozenset({
+    # 한국어
     "시청해주셔서 감사합니다",
-    "구독과 좋아요",
-    "다음 영상에서",
+    "구독과 좋아요", "좋아요와 구독",
+    "다음 영상에서", "다음 영상",
+    "한글자막", "자막 제공", "영상을 시청", "이 영상은",
     "mbc 뉴스", "kbs 뉴스", "sbs 뉴스",
-    "copyright", "subtitles by", "transcribed by",
-    "благодарю за просмотр",
-    "ありがとうございました",
-    "感谢您的观看",
-    "字幕",
+    # 영어 — 언어를 정하지 않은 첫 발화에서 무음·잡음에 실제로 나온다("Thank you for watching.", 2026-10-04 실험)
+    "thank you for watching", "thanks for watching", "please subscribe", "like and subscribe",
+    "amara.org", "subtitles by", "subtitles provided", "transcribed by", "copyright",
+    # 일본어·중국어·러시아어
+    "ありがとうございました", "ご視聴ありがとう", "チャンネル登録",
+    "感谢您的观看", "感谢观看", "请订阅", "点赞订阅", "謝謝觀看", "字幕",
+    "благодарю за просмотр", "субтитры",
 })
+_HALLUCINATION_COMPACT: frozenset[str] = frozenset(re.sub(r"\s+", "", f.lower()) for f in _HALLUCINATION_FRAGMENTS)
+# 문장 전체가 이것뿐이면 환각이다(무음에 "you"가 단독으로 나온다). "thank you"처럼 실제 손님이 말할 수 있는 것은 넣지 않는다.
+_HALLUCINATION_EXACT: frozenset[str] = frozenset({"you", "bye"})
 
 _COMMON_ENGLISH_WORDS: frozenset[str] = frozenset({
     "the", "a", "an", "is", "yes", "no", "hi", "hello", "ok", "okay",
@@ -84,6 +99,8 @@ _PAYMENT_NORMALIZATIONS: list[tuple[str, str]] = [
     ("제로 페이", "제로페이"),
     ("제로빼이", "제로페이"),
     # QR
+    # 결제 일반 — "결재할게요", "카드로 결재" 등(위의 "간편결재"류는 앞에서 먼저 처리된다)
+    ("결재", "결제"),
     ("큐알코드", "QR코드"),
     ("큐 알", "QR"),
     ("큐알", "QR"),
@@ -102,8 +119,34 @@ def _is_hallucination(text: str) -> bool:
     """Whisper 전형적 환각(유튜브 자막 패턴 등) 감지."""
     if not text:
         return False
-    t = text.lower()
-    return any(frag in t for frag in _HALLUCINATION_FRAGMENTS)
+    t = re.sub(r"\s+", "", text.lower())
+    if not re.search(r"[0-9a-z가-힣぀-ヿ一-鿿]", t):
+        return True   # "."·"…"처럼 글자가 하나도 없으면 말이 아니다
+    if t.strip(".,!?~") in _HALLUCINATION_EXACT:
+        return True
+    return any(frag in t for frag in _HALLUCINATION_COMPACT)
+
+
+def _drop_no_speech(segments, threshold: float) -> tuple[str | None, float | None]:
+    """구간별 no_speech_prob가 threshold 이상인 구간을 버리고 남은 구간의 텍스트를 이어 돌려준다.
+    (남은 텍스트 또는 None, 전체 구간 중 최대 no_speech_prob). 버린 구간이 없거나 구간 정보가 없으면 텍스트는 None —
+    호출한 쪽이 원래 텍스트를 그대로 쓴다."""
+    probs, kept, dropped = [], [], False
+    for seg in segments or []:
+        p = getattr(seg, "no_speech_prob", None)
+        if p is None and isinstance(seg, dict):
+            p = seg.get("no_speech_prob")
+        seg_text = getattr(seg, "text", None) if not isinstance(seg, dict) else seg.get("text")
+        if p is None:
+            kept.append((seg_text or "").strip())
+            continue
+        probs.append(float(p))
+        if float(p) >= threshold:
+            dropped = True
+        else:
+            kept.append((seg_text or "").strip())
+    peak = max(probs) if probs else None
+    return (" ".join(t for t in kept if t).strip() if dropped else None), peak
 
 
 def _is_prompt_echo(text: str) -> bool:
@@ -177,6 +220,7 @@ async def transcribe_bytes(
     audio_bytes: bytes,
     filename: str = "audio.webm",
     language: str | None = None,
+    prompt_override: str | None = None,
 ) -> dict[str, Any]:
     """
     오디오 바이트 → STT 전사.
@@ -204,7 +248,8 @@ async def transcribe_bytes(
     use_verbose = model == "whisper-1"
 
     lang = language if language in _SUPPORTED_LANGS else None
-    prompt = _STT_PROMPT if lang == "ko" else None
+    # prompt_override: 전화번호처럼 메뉴 어휘 힌트가 방해되는 입력은 호출한 쪽이 힌트를 직접 정한다
+    prompt = prompt_override if prompt_override is not None else (_STT_PROMPT if lang == "ko" else None)
 
     kwargs: dict[str, Any] = dict(
         model=model,
@@ -221,13 +266,25 @@ async def transcribe_bytes(
     resp = await client.audio.transcriptions.create(**kwargs)
     text = (getattr(resp, "text", None) or "").strip()
 
+    # 말이 없을 확률이 높은 구간(무음·잡음의 환각)을 먼저 버린다. 문구 목록은 그 뒤에 한 번 더 거른다.
+    no_speech = None
+    filtered = False   # 이 전사에서 무언가를 환각·에코로 보고 버렸는가(품질 로그용)
+    if use_verbose:
+        kept_text, no_speech = _drop_no_speech(getattr(resp, "segments", None), NO_SPEECH_DROP)
+        if kept_text is not None:
+            logger.info("STT no_speech_prob %.2f ≥ %.2f → 환각 구간 제거 (원문 %d자 → %d자)", no_speech, NO_SPEECH_DROP, len(text), len(kept_text))
+            text = kept_text
+            filtered = True
+
     # 무음/잡음에 prompt를 그대로 받아쓴 환각이면 빈 텍스트로 처리 → 프론트에서 무시됨
     if _is_prompt_echo(text):
         logger.info("STT prompt echo 감지 → 무시: %s", text[:40])
         text = ""
+        filtered = True
     elif _is_hallucination(text):
         logger.info("STT 환각 감지 → 무시: %s", text[:40])
         text = ""
+        filtered = True
     else:
         normalized = _normalize_payment_text(text)
         if normalized != text:
@@ -243,4 +300,6 @@ async def transcribe_bytes(
         "text": text,
         "language": language,
         "duration": getattr(resp, "duration", None) if use_verbose else None,
+        "no_speech_prob": no_speech,   # 실제 매장 값 수집·임계값 조정용(whisper-1에서만)
+        "filtered": filtered,
     }

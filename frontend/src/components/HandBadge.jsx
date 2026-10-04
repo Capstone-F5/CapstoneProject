@@ -1,4 +1,4 @@
-import { useGestureUIEnabled } from '../contexts/GestureUIContext'
+import { useGestureUIEnabled, useFingerUIEnabled } from '../contexts/GestureUIContext'
 
 const VARIANT_CONFIG = {
   primary: { bg: '#744032', color: 'y', cardRadius: 16 }, // 갈색 배경 + 노란 손 (매장/포장/단품세트 카드용, 카드 모서리 16px)
@@ -19,7 +19,8 @@ const VARIANT_CONFIG = {
  */
 export default function HandBadge({ number, variant = 'primary', size, cardRadius }) {
   const gestureEnabled = useGestureUIEnabled()
-  if (!number || !gestureEnabled) return null
+  const fingerEnabled  = useFingerUIEnabled()
+  if (!number || !gestureEnabled || !fingerEnabled) return null
 
   const config = VARIANT_CONFIG[variant] ?? VARIANT_CONFIG.primary
   const badgeSize = size ?? (variant === 'option' ? 22 : 44)

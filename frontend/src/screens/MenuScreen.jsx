@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Logo from '../components/Logo'
+import { playTTS } from '../utils/tts'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
 import SingleSetModal from '../components/SingleSetModal'
 import ItemDetailModal from '../components/ItemDetailModal'
@@ -11,8 +12,7 @@ import useT from '../i18n/useT'
 const COLS = 3
 const GRID_GAP = 9
 
-// 아이템에 적용되는 모든 할인을 합산해 할인된 단가 정보를 반환한다.
-// 할인이 없으면 null 반환.
+// 단품 할인 정보 계산 (서버 제공 finalPrice 기준)
 function getServerDiscount(item) {
   const originalPrice = Number(item.originalPrice ?? item.price ?? item.unitPrice)
   const finalPrice = Number(item.finalPrice ?? item.price ?? item.unitPrice)
@@ -22,6 +22,27 @@ function getServerDiscount(item) {
     discountedPrice: finalPrice,
     savings: originalPrice - finalPrice,
     label: label?.discount_type === 'PERCENT' ? `-${label.discount_value}%` : '',
+  }
+}
+
+// 세트 할인 정보 계산: 단품과 같은 할인율/금액을 setPrice에 적용
+function getSetDiscount(item, setSurcharge) {
+  const originalPrice = Number(item.originalPrice ?? item.price ?? item.unitPrice)
+  const finalPrice = Number(item.finalPrice ?? item.price ?? item.unitPrice)
+  if (finalPrice >= originalPrice) return null
+  const label = item.appliedDiscounts?.[0]
+  if (!label) return null
+  const setPrice = Number(item.price ?? item.unitPrice) + (setSurcharge ?? 0)
+  let setFinal
+  if (label.discount_type === 'PERCENT') {
+    setFinal = Math.round(setPrice * (1 - Number(label.discount_value) / 100))
+  } else {
+    setFinal = Math.max(0, setPrice - Number(label.discount_value))
+  }
+  return {
+    discountedPrice: setFinal,
+    savings: setPrice - setFinal,
+    label: label.discount_type === 'PERCENT' ? `-${label.discount_value}%` : '',
   }
 }
 
@@ -42,6 +63,10 @@ const CAT_I18N_KEY = {
 export default function MenuScreen({ cart, total, addToCart, updateQty, clearCart, nav, chatOpen, swipeRef, modalRef, voiceRef, modalStateRef }) {
   const t = useT()
   const { menuData, isLoading, error, retry } = useMenuData()
+
+  useEffect(() => {
+    if (!chatOpen) playTTS('주문하실 메뉴를 선택해 주세요')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [catId,     setCatId]     = useState('recommended')
   const [page,      setPage]      = useState(0)
@@ -288,7 +313,8 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
     )
   }
 
-  const { categories, menuItems, setSides, setDrinks, setSurcharge, activeDiscounts = [] } = menuData
+  const { categories, menuItems, activeDiscounts = [] } = menuData
+  const modalSetSurcharge = modalItem?.setSurcharge ?? 0
   const pageItems  = items.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
 
   const handleCat = (id) => { setCatId(id); setPage(0) }
@@ -398,7 +424,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           {pageItems.map((item, idx) => (
             <div
               key={item.id + '-' + catId}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
+              style={{ display: 'flex', alignItems: 'stretch', justifyContent: 'center', position: 'relative' }}
             >
               <FoodCard
                 badgeNumber={idx + 1}
@@ -517,9 +543,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           item={modalItem}
           onSelect={handleTypeSelect}
           onClose={closeModal}
-          setSurcharge={setSurcharge}
+          setSurcharge={modalSetSurcharge}
           singleDiscount={getServerDiscount(modalItem)}
-          setDiscount={null}
+          setDiscount={getSetDiscount(modalItem, modalSetSurcharge)}
         />
       )}
 
@@ -530,9 +556,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
           type={modalType}
           onAdd={handleAdd}
           onClose={closeModal}
-          setSides={setSides}
-          setDrinks={setDrinks}
-          setSurcharge={setSurcharge}
+          setSides={modalItem.setSides ?? []}
+          setDrinks={modalItem.setDrinks ?? []}
+          setSurcharge={modalSetSurcharge}
           initialQty={voiceOpts?.qty ?? null}
           initialExclusion={voiceOpts?.exclusion ?? null}
           initialSideName={voiceOpts?.sideName ?? null}
@@ -677,9 +703,9 @@ function FoodCard({ badgeNumber, item, onClick, chatOpen, discount }) {
     }}>
       <HandBadge number={badgeNumber} />
             <div style={{
-        width: '100%', aspectRatio: compact ? '1 / 0.55' : '1 / 0.62',
+        width: '100%', aspectRatio: '4 / 3',
         background: '#ffffff',
-        padding: 0,
+        padding: compact ? 4 : 6,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderBottom: '1px solid #f2f2f2',
         position: 'relative',
@@ -689,26 +715,44 @@ function FoodCard({ badgeNumber, item, onClick, chatOpen, discount }) {
           <img
             src={item.image}
             alt={item.name}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              objectPosition: 'center',
+            }}
           />
         ) : (
           <span style={{ fontSize: compact ? 'clamp(17px, 4.5vw, 25px)' : 'clamp(21px, 5.6vw, 31px)' }}>
             {item.emoji ?? '🍔'}
           </span>
         )}
-        {discount && (
-          <span style={{
-            position: 'absolute', top: 4, right: 4,
-            background: '#e44', color: '#fff',
-            fontSize: smallFontSize, fontWeight: 800,
-            borderRadius: 5, padding: '2px 5px',
+          {discount && (
+            <span style={{
+            position: 'absolute', top: -1, right: -1,
+            background: 'linear-gradient(135deg, #f05a4f, #d93d36)', color: '#fff',
+            fontSize: smallFontSize, fontWeight: 900,
+            borderRadius: '0 15px 0 10px', padding: compact ? '4px 7px' : '5px 9px',
             lineHeight: 1.2,
+            boxShadow: '0 3px 8px rgba(217,61,54,0.24)',
+            letterSpacing: '-0.02em',
           }}>
             {discount.label}
           </span>
         )}
       </div>
-      <div style={{ padding: compact ? '6px 8px 7px' : '8px 8px 9px', flexShrink: 0 }}>
+      <div style={{
+        padding: compact ? '7px 8px 8px' : '10px 8px 11px',
+        flex: 1,
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        background: discount
+          ? 'linear-gradient(180deg, #fff 0%, #fff8f7 100%)'
+          : '#fff',
+      }}>
         <div style={{
           fontSize: compact ? 'clamp(12px, 3.4vw, 15px)' : 'clamp(15px, 4.2vw, 19px)',
           fontWeight: 800, color: '#1a1a1a',
@@ -718,18 +762,24 @@ function FoodCard({ badgeNumber, item, onClick, chatOpen, discount }) {
           {item.name}
         </div>
         {discount ? (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: compact ? 1 : 2,
+          }}>
+            <span style={{
               fontSize: smallFontSize, color: '#bbb',
               textDecoration: 'line-through', lineHeight: 1.2,
             }}>
               {item.price.toLocaleString()}원~
-            </div>
-            <div style={{
-              fontSize: priceFontSize, color: '#e44', fontWeight: 800,
+            </span>
+            <span style={{
+              fontSize: priceFontSize, color: '#d93d36', fontWeight: 900,
             }}>
               {discount.discountedPrice.toLocaleString()}원~
-            </div>
+            </span>
           </div>
         ) : (
           <div style={{
