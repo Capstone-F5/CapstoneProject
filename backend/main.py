@@ -77,12 +77,25 @@ async def _warmup_finger_model() -> None:
         logging.warning("finger 모델 예열 실패: %s", e)
 
 
+async def _warmup_approach_model() -> None:
+    """접근 감지(TFLite) 모델을 미리 올려 첫 /ws/approach 연결의 로드 지연을 없앤다. 실패해도 서버는 계속 뜬다
+    (프론트는 감지 실패 시 제스처로 복귀한다)."""
+    try:
+        from ai_modules.cv.approach_detector import get_detector
+
+        await asyncio.to_thread(get_detector)
+        logging.info("approach 모델 예열 완료")
+    except Exception as e:  # noqa: BLE001
+        logging.warning("approach 모델 예열 실패: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    warmup = asyncio.create_task(_warmup_finger_model())
+    warmups = [asyncio.create_task(_warmup_finger_model()), asyncio.create_task(_warmup_approach_model())]
     yield
-    warmup.cancel()
+    for w in warmups:
+        w.cancel()
 
 
 app = FastAPI(title="Kiosk Backend", lifespan=lifespan)

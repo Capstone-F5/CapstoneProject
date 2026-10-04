@@ -18,12 +18,14 @@ const CAM_H = 240
  * @param {function} options.onModeAction    - 새 감지로 모드 활성화 시 호출 ('voice' | 'gesture')
  * @param {function} options.onModeEnd       - 3회 안내 완료 또는 사용자 입력 후 호출
  * @param {function} options.onStateChange   - 매 프레임 결과 수신 시 호출 ({ mode_on, active_trigger, announcement_count, ... })
+ * @param {function} options.onUnavailable   - 서버 연결 실패·끊김(모델 로드 실패 포함) 시 1회 호출. 카메라는 이미 풀린 상태
  */
 export function useApproachDetector({
   enabled = true,
   onModeAction,
   onModeEnd,
   onStateChange,
+  onUnavailable,
 } = {}) {
   const wsRef        = useRef(null)
   const videoRef     = useRef(null)
@@ -119,13 +121,22 @@ export function useApproachDetector({
     const ws = new WebSocket(getWsUrl())
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
+    let closedByUs = false   // cleanup이 닫은 연결은 "감지 불가"로 보고하지 않는다
+    let reported = false
+    // 서버 오류·연결 끊김 → 카메라를 풀고 알린다(App이 제스처 등 다른 입력으로 복귀한다)
+    const reportUnavailable = () => {
+      if (closedByUs || reported) return
+      reported = true
+      stopCamera()
+      onUnavailable?.()
+    }
 
     ws.onopen = () => {
       timerRef.current = setInterval(sendFrame, FRAME_INTERVAL_MS)
     }
 
     ws.onmessage = (e) => {
-      // binary: TTS 오디오
+      // binary: (구버전 서버) TTS 오디오 — 안내 음성은 이제 프론트가 재생한다
       if (e.data instanceof ArrayBuffer) {
         playAudio(e.data)
         return
@@ -136,6 +147,7 @@ export function useApproachDetector({
 
       if (data.error) {
         console.warn('[ApproachDetector] 서버 오류:', data.error)
+        // 모델 로드 실패는 서버가 곧 연결을 닫는다(onclose에서 처리). 프레임 추론 오류는 일시적일 수 있어 무시.
         return
       }
 
@@ -163,14 +175,19 @@ export function useApproachDetector({
     ws.onclose = () => {
       clearInterval(timerRef.current)
       timerRef.current = null
+      reportUnavailable()
     }
+    ws.onerror = reportUnavailable
 
     return () => {
+      closedByUs = true
       stopCamera()
+      // 재생 중인 안내가 다음 음성(주문 인사말 등)과 겹치지 않게 끊는다
+      audioRef.current?.pause()
       ws.close()
       wsRef.current = null
     }
-  }, [enabled, getWsUrl, sendFrame, playAudio, onModeAction, onModeEnd, onStateChange, stopCamera])
+  }, [enabled, getWsUrl, sendFrame, playAudio, onModeAction, onModeEnd, onStateChange, onUnavailable, stopCamera])
 
   return { notifyUserInput }
 }

@@ -16,6 +16,7 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
+import { playTTS } from './utils/tts'
 // import { useFingerCount } from './hooks/useFingerCount'   // 숫자인식 비활성
 import { useSerial } from './hooks/useSerial'
 import { useExitKioskTaps } from './hooks/useExitKioskTaps'
@@ -194,6 +195,7 @@ function AppContent() {
       setChatOpen(false)
       setGestureEnabled(false)
       setPipEnabled(false)
+      setApproachSuspended(false)   // 떠난 손님 — 다음 손님을 위해 접근 감지 재개
       // setFingerEnabled(false)   // 숫자인식 비활성
     }
     const rearm = () => {
@@ -208,21 +210,39 @@ function AppContent() {
     }
   }, [screen])
 
-  // 취약계층 자동 감지 (Issue #66): 카메라로 휠체어 감지 시 제스처 인식 모드 자동 ON.
-  // 흰 지팡이 감지(mode_action==='voice')는 별도 이슈(#49) 범위라 여기서는 처리하지 않음
-  // — 서버는 안내 음성만 재생하고 프론트 모드 전환은 아직 없음.
+  // 취약계층 자동 감지 (Issue #66): 휠체어 감지 → 제스처 ON + 안내 음성, 흰 지팡이 감지 → 음성 주문(채팅) 자동 ON.
+  //   - 휠체어: 카메라를 제스처 엔진에 넘기려고 접근 감지를 중단(approachSuspended)한다.
+  //   - 흰 지팡이: 채팅이 열리면 ChatPanel이 시작 화면 인사말을 재생하므로 별도 안내 음성은 없다.
   // 콜백은 반드시 안정적인 참조여야 함 — 훅의 useEffect 의존성이라, 매 렌더 새 함수를 넘기면
   // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
+  const [approachSuspended,   setApproachSuspended]   = useState(false)
+  const [approachUnavailable, setApproachUnavailable] = useState(false)
   const handleApproachModeAction = useCallback((action) => {
-    if (action === 'gesture') setGestureEnabled(true)
+    if (action === 'gesture') {
+      setGestureEnabled(true)
+      setApproachSuspended(true)
+      playTTS('손동작으로도 메뉴를 선택하실 수 있습니다.').catch(() => {})
+    } else if (action === 'voice') {
+      setChatOpen(true)
+    }
   }, [])
+  // 서버 감지 불가(모델 로드 실패·연결 끊김) → 접근 감지를 멈춰 카메라를 제스처에 돌려준다. 30초 뒤 다시 시도.
+  const handleApproachUnavailable = useCallback(() => setApproachUnavailable(true), [])
+  useEffect(() => {
+    if (!approachUnavailable) return
+    const t = setTimeout(() => setApproachUnavailable(false), 30000)
+    return () => clearTimeout(t)
+  }, [approachUnavailable])
+  // 주문 화면으로 넘어가면 중단을 풀어, 시작 화면으로 돌아왔을 때 다시 감지한다.
+  useEffect(() => { if (screen !== 'start') setApproachSuspended(false) }, [screen])
   // 물리 카메라가 1대뿐이라 접근 감지와 제스처 인식이 동시에 getUserMedia를 열면
   // 나중에 연 쪽이 NotReadableError로 실패한다. 대기 화면에서는 접근 감지만,
   // 주문에 들어가면 제스처 인식만 카메라를 잡도록 단계를 나눈다.
-  const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen
+  const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen && !approachSuspended && !approachUnavailable
   const { notifyUserInput } = useApproachDetector({
     enabled: approachActive,
     onModeAction: handleApproachModeAction,
+    onUnavailable: handleApproachUnavailable,
   })
   // 화면을 만지거나 제스처 OK로 클릭하면 진행 중인 안내를 끝낸다 (서버는 안내 중일 때만 반응)
   useEffect(() => {
@@ -558,12 +578,16 @@ function AppContent() {
   const [gestureHud, setGestureHud] = useState(null)
 
   const handleGesture = useCallback(({ gesture, hands, total_fingers }) => {
-    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신)
-    setGestureHud({
-      left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
-      right: hands?.right ? `${hands.right.finger_count}개` : '-',
-      total: total_fingers ?? 0,
-    })
+    // HUD 업데이트 (포인터는 onPointer 가 처리, 제스처는 showLabel 이 갱신).
+    // HUD가 숨겨져 있으면(SHOW_GESTURE_HUD=false) 상태를 갱신하지 않는다 — 이 갱신은 제스처 결과가 올 때마다(5~15fps)
+    // 새 객체를 만들어 App 전체를 다시 렌더링하게 해서, 화면에 안 보이는데도 Pi의 메인 스레드를 쓰고 있었다.
+    if (SHOW_GESTURE_HUD) {
+      setGestureHud({
+        left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
+        right: hands?.right ? `${hands.right.finger_count}개` : '-',
+        total: total_fingers ?? 0,
+      })
+    }
 
     if (!gesture) return
 
