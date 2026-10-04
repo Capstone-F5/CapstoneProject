@@ -394,7 +394,8 @@ SCENARIOS: list[Scenario] = [
     ]),
     Scenario("F02", "메뉴질의", "특정 메뉴 가격 질문", [
         state(M, D),
-        say("비건 버거 가격 알려줘", unchanged=True, no_actions=["add_item"], out_any=["6,800", "6800"]),
+        # 할인 중이면 현재 할인가(정가의 50% = 3,400원)를 말해야 하므로 정가·할인가 어느 쪽이든 인정한다
+        say("비건 버거 가격 알려줘", unchanged=True, no_actions=["add_item"], out_any=["6,800", "6800", "3,400", "3400"]),
     ]),
     Scenario("F03", "메뉴질의", "음료 목록 질문", [
         state(M, D),

@@ -45,6 +45,23 @@ def _resolve(name: str, menu: list[dict]) -> dict | None:
     return hits[0] if len(hits) == 1 else None
 
 
+_QTY_TOKEN = re.compile(r"\d+\s*(?:개|잔|조각|판)|(?:한|두|세|네|다섯|여섯)\s*(?:개|잔|조각|판)|하나")
+
+
+def _split_after_quantity(text: str, names: list[str]) -> str:
+    """"치즈 버거 단품 한개 콜라 한잔"처럼 구분어 없이 이어 말한 주문을 항목별로 나눈다. 수량 표현 바로 뒤에 다른 메뉴 이름이
+    이어질 때만 쉼표를 넣는다("치즈버거 하나 줘"의 "하나 줘"는 나누지 않는다)."""
+    keys = sorted({menu_key(n) for n in names if len(menu_key(n)) >= 2}, key=len, reverse=True)
+    out, last = [], 0
+    for m in _QTY_TOKEN.finditer(text):
+        rest = re.sub(r"\s+", "", text[m.end():])
+        if any(rest.startswith(k) for k in keys):
+            out.append(text[last:m.end()])
+            last = m.end()
+    out.append(text[last:])
+    return ",".join(out)
+
+
 def parse_simple_order(text: str, menu: list[dict]) -> list[tuple[dict, int]] | None:
     """[(메뉴 항목, 수량), ...]을 돌려준다. 단순 주문으로 확신할 수 없으면 None."""
     if not text or not menu or not guards.has_hangul(text):
@@ -53,7 +70,7 @@ def parse_simple_order(text: str, menu: list[dict]) -> list[tuple[dict, int]] | 
         return None
     burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
     names = [i["name_ko"] for i in menu]
-    segments = [s.strip() for s in _SPLIT.split(text) if s and s.strip()]
+    segments = [s.strip() for s in _SPLIT.split(_split_after_quantity(text, names)) if s and s.strip()]
     if not segments:
         return None
     whole_burgers = named_menus(re.sub(r"\s+", "", text), burgers)
@@ -85,6 +102,40 @@ def parse_simple_order(text: str, menu: list[dict]) -> list[tuple[dict, int]] | 
                 return None   # 버거는 단품이라고 분명히 말했을 때만(아니면 단품/세트를 되묻는 것이 설계)
         out.append((item, qty))
     return out or None
+
+
+_CLAIM_SENTENCE = re.compile(r"담았(?:습니다|어요|죠)|추가했(?:습니다|어요)|담겠습니다|담아\s*드리겠습니다|추가하겠습니다|추가해\s*드리겠습니다")
+
+
+def parse_claimed_add(output: str, menu: list[dict]) -> list[tuple[dict, int]] | None:
+    """모델이 "X 단품을 담겠습니다/담았습니다"라고 했을 때 그 품목. 메뉴 하나가 분명하고, 버거라면 "단품"이라고 적혀 있을 때만
+    돌려준다(세트·여러 메뉴·애매하면 None). 도구를 부르지 않은 채 말로만 약속한 주문을 코드가 지킬 때 쓴다."""
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    for sent in re.split(r"(?<=[.!?])\s*", output or ""):
+        if not _CLAIM_SENTENCE.search(sent):
+            continue
+        found = named_menus(re.sub(r"\s+", "", sent), [i["name_ko"] for i in menu])
+        if len(found) != 1 or guards.mentions_set(sent):
+            return None
+        item = _resolve(found[0], menu)
+        if item is None or (found[0] in burgers and not guards.mentions_single(sent)):
+            return None
+        return [(item, guards.quantity_in(sent) or 1)]
+    return None
+
+
+def claimed_burger_without_type(output: str, menu: list[dict]) -> str | None:
+    """응답이 버거 하나를 "담겠습니다/담았습니다"라고 하면서 단품/세트를 말하지 않았으면 그 버거 이름(손님이 단품/세트를
+    말하지 않았으니 먼저 물어야 하는 경우)."""
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    for sent in re.split(r"(?<=[.!?])\s*", output or ""):
+        if not _CLAIM_SENTENCE.search(sent):
+            continue
+        found = named_menus(re.sub(r"\s+", "", sent), [i["name_ko"] for i in menu])
+        if len(found) == 1 and found[0] in burgers and not guards.mentions_set(sent) and not guards.mentions_single(sent):
+            return found[0]
+        return None
+    return None
 
 
 def burger_only_order(text: str, menu: list[dict]) -> str | None:

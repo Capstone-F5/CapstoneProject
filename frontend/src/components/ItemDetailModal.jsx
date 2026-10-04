@@ -277,12 +277,17 @@ function OptionSection({ label, children }) {
 
 function Chip({ number, label, extra, active, onClick, won }) {
   const size = 'clamp(64px, 17vw, 80px)'
+  // 3행 격자: [위 여백 | 이름 | 금액 영역]. 이름은 항상 가운데 행이라 한 줄이든 여러 줄이든 칸의 세로 중앙에 오고,
+  // 금액은 이름 바로 아래(세 번째 행 맨 위)에 붙는다. 예전에는 둘 다 칸 중앙 기준 absolute였고 금액이 중앙에서 10px 아래에
+  // 고정이라 이름이 두 줄 이상(예: "뽀로로 음료수", "Orange Juice")이면 글자가 금액 위로 내려와 겹쳤다.
+  // 위 행의 최소 20px은 왼쪽 위 손동작 번호 배지(22px)가 글자를 가리지 않게 하고, 아래 행의 최소 14px은 금액 자리다.
+  // 높이는 고정(height)이 아니라 최소(minHeight)라서 이름이 길면 칸이 커지고 같은 줄의 다른 칸도 함께 늘어난다.
   return (
     <button
       onClick={onClick}
       style={{
         flexShrink: 0,
-        width: size, height: size,
+        width: size, minHeight: size,
         borderRadius: 10,
         border: active ? '2px solid #744032' : '1.5px solid #e8e8e8',
         background: active ? '#744032' : '#fff',
@@ -291,27 +296,22 @@ function Chip({ number, label, extra, active, onClick, won }) {
         fontWeight: active ? 700 : 400,
         cursor: 'pointer',
         position: 'relative',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        display: 'grid',
+        gridTemplateRows: 'minmax(20px, 1fr) auto minmax(14px, 1fr)',
+        justifyItems: 'center',
         textAlign: 'center',
         wordBreak: 'keep-all', lineHeight: 1.3,
-        padding: '4px 6px',
+        padding: '0 6px',
       }}
     >
       <HandBadge number={number} variant="option" />
-      <span style={{
-        position: 'absolute',
-        left: '50%', top: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: '100%',
-        padding: '0 6px',
-      }}>{label}</span>
+      <span style={{ gridRow: 2, width: '100%' }}>{label}</span>
       {extra > 0 && (
         <span style={{
+          gridRow: 3, alignSelf: 'start',
           fontSize: 10,
           color: active ? 'rgba(255,255,255,0.8)' : '#e44',
-          position: 'absolute',
-          left: '50%', top: '50%',
-          transform: 'translate(-50%, 10px)',
+          whiteSpace: 'nowrap',
         }}>
           +{extra.toLocaleString()}{won}
         </span>

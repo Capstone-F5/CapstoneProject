@@ -20,6 +20,7 @@ import { useApproachDetector } from './hooks/useApproachDetector'
 import { useSerial } from './hooks/useSerial'
 import { useExitKioskTaps } from './hooks/useExitKioskTaps'
 import { GestureUIProvider } from './contexts/GestureUIContext'
+// import NumberSpeechTest from './components/NumberSpeechTest'   // [테스트용] 주문번호 낭독 테스트 — 다시 쓰려면 이 줄과 아래 <NumberSpeechTest />의 주석을 푼다
 import { findMenuOption } from './services/menuOptions'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
@@ -73,6 +74,9 @@ function autoScrollHorizontal(x, y, dtMs) {
     el = el.parentElement
   }
 }
+
+// 왼쪽 아래에 제스처 인식내역("제스처: …") HUD를 보일지. true로 바꾸면 다시 나온다(개발·점검용).
+const SHOW_GESTURE_HUD = false
 
 // 대기 화면 무입력 자동 OFF (음성인식/제스처/카메라)
 const START_IDLE_OFF_MS  = 30000
@@ -960,6 +964,7 @@ function AppContent() {
 
   return (
     <GestureUIProvider enabled={gestureEnabled} fingerEnabled={fingerEnabled}>
+        {/* <NumberSpeechTest /> */}   {/* [테스트용] 주문번호 낭독 테스트 패널(꺼짐) — 다시 쓰려면 위 import와 이 줄의 주석을 푼다 */}
         {/* ── AI 동작 토스트 알림 ── */}
         {voiceToast && (
           <div key={voiceToast.key} style={{
@@ -982,8 +987,8 @@ function AppContent() {
           </div>
         )}
 
-        {/* ── 테스트 HUD (좌측 하단) ── */}
-        {gestureHud && (
+        {/* ── 테스트 HUD (좌측 하단) — 기본 숨김(SHOW_GESTURE_HUD) ── */}
+        {SHOW_GESTURE_HUD && gestureHud && (
           <div style={{
             position: 'fixed', bottom: CONTROL_BAR_HEIGHT + 16, left: 16,
             background: 'rgba(0,0,0,0.75)', color: '#fff',
@@ -1163,17 +1168,20 @@ function AppContent() {
         >
           <ControlText
             onClick={() => setChatOpen(o => !o)}
+            on={chatOpen}
             ko={`음성인식 ${chatOpen ? 'ON' : 'OFF'}`}
             en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
           />
           <ControlText
             onClick={() => setGestureEnabled(v => !v)}
+            on={gestureEnabled}
             ko={`제스처 ${gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Gesture ${gestureEnabled ? 'ON' : 'OFF'}`}
           />
           <ControlText
             disabled={!gestureEnabled}
             onClick={() => gestureEnabled && setPipEnabled(v => !v)}
+            on={pipEnabled && gestureEnabled}
             ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
             en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
           />
@@ -1198,7 +1206,9 @@ function AppContent() {
 }
 
 // 접근성 컨트롤 바의 텍스트 버튼 — 한국어(위, 크게) + 영어(아래, 작게) 동시 표기
-function ControlText({ onClick, disabled = false, ko, en }) {
+// on: 켜진 상태면 초록색으로 보여 준다(음성인식·제스처·카메라). 꺼져 있으면 기존처럼 흰색.
+const CONTROL_ON_COLOR = '#5CFF7A'
+function ControlText({ onClick, disabled = false, on = false, ko, en }) {
   return (
     <button
       onClick={onClick}
@@ -1206,7 +1216,7 @@ function ControlText({ onClick, disabled = false, ko, en }) {
       style={{
         background: 'none',
         border: 'none',
-        color: disabled ? 'rgba(255,255,255,0.4)' : '#fff',
+        color: disabled ? 'rgba(255,255,255,0.4)' : on ? CONTROL_ON_COLOR : '#fff',
         cursor: disabled ? 'not-allowed' : 'pointer',
         padding: '4px 0',
         display: 'flex',
@@ -1216,8 +1226,8 @@ function ControlText({ onClick, disabled = false, ko, en }) {
         lineHeight: 1.3,
       }}
     >
-      <span style={{ fontSize: 15, fontWeight: 700 }}>{ko}</span>
-      <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.75 }}>{en}</span>
+      <span style={{ fontSize: 15, fontWeight: 700 }}>{on && <span aria-hidden style={{ marginRight: 5 }}>●</span>}{ko}</span>
+      <span style={{ fontSize: 11, fontWeight: 400, opacity: on ? 0.95 : 0.75 }}>{en}</span>
     </button>
   )
 }

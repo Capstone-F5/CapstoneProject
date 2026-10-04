@@ -133,7 +133,7 @@ class FailureSignals(unittest.TestCase):
             "더블 불고기 버거는 현재 주문할 수 없습니다. 다른 메뉴를 선택하시겠어요?": "claimed_unavailable",
             "오렌지주스를 추가하는 데 문제가 발생했습니다. 다시 시도해 보시겠어요?": "claimed_unavailable",
             "모짜렐라 버거 단품은 7200원입니다. 단품으로 두 개 담아드릴까요?": "asked_single_set",
-            "불고기버거 단품 1개를 추가로 담겠습니다. 다른 메뉴를 더 주문하시겠어요?": "asked_single_set",
+            "불고기버거 단품 1개를 추가로 담겠습니다. 다른 메뉴를 더 주문하시겠어요?": "claimed_add",   # 약속도 "담았다"는 주장으로 본다
             "치즈 버거 단품 1개 담았습니다.": "claimed_add",
             "매장 식사로 선택했습니다. 메뉴를 읽어 드릴까요?": None,
         }.items():
@@ -198,6 +198,84 @@ class Hints(unittest.TestCase):
         self.assertIn(ids["콜라(M)"], txt)
         self.assertNotIn(ids["생수"], txt)   # 이미 담긴 품목은 다시 시키지 않는다
         self.assertEqual(H.missing_items(h, [{"type": "add_item", "menu_item_id": m} for m in ids.values()]), [])
+
+
+class PhoneDigits(unittest.TestCase):
+    def test_transcripts_to_digits(self):
+        """/ai_modules/stt/phone이 쓰는 숫자 추출. 실제 Whisper 전사 결과 모양을 포함한다."""
+        f = action_tools._spoken_digits
+        for text, want in {
+            "010-12345678": "01012345678",
+            "0104-567-8901": "01045678901",
+            "공일공 일이삼사 오육칠팔": "01012345678",
+            "공일공 1234 5678이요": "01012345678",
+            "오늘의 주식시황 알아보겠습니다.": "",   # 무음에서 Whisper가 만든 환각 — 입력창에 아무것도 채우지 않는다
+            "": "",
+            "네": "",
+        }.items():
+            self.assertEqual(f(text)[:11], want, text)
+
+
+class ClaimedAdd(unittest.TestCase):
+    """모델이 "담겠습니다"라고만 하고 도구를 안 부른 경우(2026-10-04 로그) 약속한 품목을 읽어 낸다."""
+
+    def test_parse_claimed_add(self):
+        from ai_modules.llm import order_parser as P
+        by = {i["name_ko"]: i for i in MENU2}
+        cases = {
+            "더블 치즈 버거를 단품으로 담겠습니다. 다른 메뉴를 더 주문하시겠어요?": [("더블 치즈 버거", 1)],   # 실제 로그와 같은 형태
+            "치즈 버거 단품 2개 담았습니다.": [("치즈 버거", 2)],
+            "콜라를 담겠습니다.": [("콜라(M)", 1)],
+            "치즈 버거를 담겠습니다.": None,                    # 단품이라는 말이 없는 버거는 담지 않는다
+            "치즈 버거 세트를 담겠습니다.": None,               # 세트는 사이드·음료가 필요하다
+            "F 버거 단품 1개와 새우 버거 단품 1개 담았습니다.": None,   # 메뉴가 둘이면 어느 것이 빠졌는지 모른다
+            "단품으로 드릴까요, 세트로 드릴까요?": None,        # 질문은 약속이 아니다
+            "": None,
+        }
+        for text, want in cases.items():
+            got = P.parse_claimed_add(text, MENU2)
+            self.assertEqual([(i["name_ko"], q) for i, q in got] if got else None, want, text)
+
+    def test_claim_without_type_becomes_a_question(self):
+        """손님이 단품/세트를 말하지 않았는데 모델이 "단품으로 담겠습니다"라고 한 경우 — 담지 않고 물어야 한다(2026-10-04 로그)."""
+        from ai_modules.llm import order_parser as P
+        f = P.claimed_burger_without_type
+        self.assertEqual(f("치즈 버거를 담겠습니다.", MENU2), "치즈 버거")
+        self.assertIsNone(f("치즈 버거 단품을 담겠습니다.", MENU2))     # 단품이라고 적혀 있으면 질문 대상이 아니다
+        self.assertIsNone(f("치즈 버거 세트를 담겠습니다.", MENU2))
+        self.assertIsNone(f("콜라를 담겠습니다.", MENU2))              # 버거가 아니면 묻지 않는다
+        self.assertIsNone(f("", MENU2))
+
+    def test_price_label_shows_discount(self):
+        """가격 도구 출력: 할인 중이면 정가와 현재 할인가를 함께 적는다(정가만 적어 50% 할인 중에도 정가를 말하던 문제)."""
+        self.assertEqual(action_tools._price_label({"base_price": "7800.00", "original_price": "7800.00", "final_price": "3900.00"}),
+                         "정가 7,800원 → 현재 할인가 3,900원")
+        self.assertEqual(action_tools._price_label({"base_price": "4500.00", "original_price": "4500.00", "final_price": "4500.00"}), "4,500원")
+        self.assertEqual(action_tools._price_label({"base_price": "4500.00"}), "4,500원")
+        self.assertEqual(action_tools._current_price({"base_price": "7800.00", "final_price": "3900.00"}), 3900.0)
+
+    def test_future_promise_is_a_claim(self):
+        from ai_modules.llm import guards as G
+        self.assertTrue(G.claims_add("더블 불고기 버거를 단품으로 담겠습니다."))
+        self.assertTrue(G.claims_add("추가하겠습니다."))
+        self.assertFalse(G.claims_add("단품으로 담아드릴까요?"))
+        # 약속만 하고 액션이 없으면 안전한 문구로 바꾼다
+        self.assertIsNotNone(G.correct_reply("더블 불고기 버거를 단품으로 담겠습니다.", []))
+        self.assertIsNone(G.correct_reply("더블 불고기 버거를 단품으로 담겠습니다.", ["add_item"]))
+
+
+class TopicBurger(unittest.TestCase):
+    """변경 대상이 이야기 중인 버거의 줄인지 확인하는 기준(2026-10-04 로그: 담긴 적 없는 더블 불고기 대신 다른 줄을 바꿈)."""
+
+    def test_topic_burger(self):
+        f = action_tools._topic_burger
+        turns = [("human", "더 큰 불고기 버거 없어?"), ("ai", "더블 치즈 버거를 추천드립니다."), ("human", "그걸로 줘"),
+                 ("ai", "새우 버거 단품으로 드릴까요?")]
+        self.assertEqual(f("음료를 콜라로 바꿔줘", MENU2, turns), "새우 버거")          # 발화에 이름이 없으면 가장 최근에 나온 버거
+        self.assertEqual(f("치즈버거 음료를 콜라로 바꿔줘", MENU2, turns), "치즈 버거")   # 발화에 하나만 있으면 그것
+        self.assertIsNone(f("치즈버거랑 새우버거 음료를 바꿔줘", MENU2, turns))         # 둘 이상이면 모호하다
+        self.assertIsNone(f("음료를 콜라로 바꿔줘", MENU2, [("ai", "네, 알겠습니다.")]))  # 근거가 없으면 None
+        self.assertIsNone(f("음료를 콜라로 바꿔줘", None, turns))
 
 
 class AwaitingOption(unittest.TestCase):

@@ -9,7 +9,7 @@
  *   TTS_API  — TTS 엔드포인트 (기본값: http://localhost:8000/ai_modules/tts)
  */
 
-import { writeFileSync, mkdirSync } from 'fs'
+import { writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -33,25 +33,49 @@ const PHRASES = {
   'confirm_order_type.mp3': '식사 장소를 확인해 주세요.',
   'ask_points.mp3':         '포인트를 적립하시겠습니까?',
   'select_payment.mp3':     '결제 수단을 선택해 주세요.',
+  // 잘 못 알아들었을 때의 고정 응답(backend/ai_modules/llm/guards.py의 NOISE_REPLY["ko"]와 같은 문장이어야 한다)
+  'not_heard.mp3':          '잘 못 들었어요. 다시 한번 말씀해 주세요.',
 }
 
-mkdirSync(OUTPUT_DIR, { recursive: true })
+// 주문번호 낭독용 조각 — 번호를 말할 때마다 API로 합성하지 않고 이 조각을 이어 붙인다(src/utils/numberSpeech.js).
+// 1~999번을 "주문번호는" + [백] + [십] + [일의 자리] + "번입니다"로 조합하므로 숫자 9개와 십·백, 앞뒤 문구 14개면 된다.
+// 파일 이름은 numberSpeech.js의 CLIP_FILES와 짝을 맞춰야 한다.
+const NUMBER_PHRASES = {
+  'prefix.mp3': '주문번호는',
+  'n1.mp3': '일', 'n2.mp3': '이', 'n3.mp3': '삼', 'n4.mp3': '사', 'n5.mp3': '오',
+  'n6.mp3': '육', 'n7.mp3': '칠', 'n8.mp3': '팔', 'n9.mp3': '구',
+  'ten.mp3': '십', 'hundred.mp3': '백',
+  'suffix.mp3': '번입니다',
+}
+const NUMBER_DIR = join(__dirname, '../public/audio/numbers')
 
-for (const [filename, text] of Object.entries(PHRASES)) {
-  const outPath = join(OUTPUT_DIR, filename)
-  try {
-    const res = await fetch(TTS_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, format: 'mp3', language: 'ko' }),
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const buf = Buffer.from(await res.arrayBuffer())
-    writeFileSync(outPath, buf)
-    console.log(`✓ ${filename} (${buf.length} bytes)`)
-  } catch (e) {
-    console.error(`✗ ${filename}: ${e.message}`)
+async function generate(phrases, dir) {
+  mkdirSync(dir, { recursive: true })
+  for (const [filename, text] of Object.entries(phrases)) {
+    const outPath = join(dir, filename)
+    // 이미 있는 파일은 다시 합성하지 않는다(비용 절약, 목소리 일관성). 전부 다시 만들려면 --force
+    if (!process.argv.includes('--force') && existsSync(outPath)) {
+      console.log(`- ${filename} (이미 있음, 건너뜀)`)
+      continue
+    }
+    try {
+      const res = await fetch(TTS_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, format: 'mp3', language: 'ko' }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const buf = Buffer.from(await res.arrayBuffer())
+      writeFileSync(outPath, buf)
+      console.log(`✓ ${filename} (${buf.length} bytes)`)
+    } catch (e) {
+      console.error(`✗ ${filename}: ${e.message}`)
+    }
   }
 }
 
-console.log(`\n완료. 파일 위치: ${OUTPUT_DIR}`)
+await generate(PHRASES, OUTPUT_DIR)
+await generate(NUMBER_PHRASES, NUMBER_DIR)   // 주문번호 낭독 조각
+
+console.log(`
+완료. 파일 위치: ${OUTPUT_DIR}, ${NUMBER_DIR}`)

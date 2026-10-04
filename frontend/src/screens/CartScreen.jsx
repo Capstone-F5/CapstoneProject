@@ -11,6 +11,9 @@ import CouponScanModal from '../components/CouponScanModal'
 import CameraPreview from '../components/CameraPreview'
 import useT from '../i18n/useT'
 import { useLocale } from '../i18n/LocaleContext'
+import usePhoneVoice from '../hooks/usePhoneVoice'
+import MicIcon from '../components/MicIcon'
+import { useGestureUIEnabled } from '../contexts/GestureUIContext'
 import { SET_SIDES, SET_DRINKS } from '../data/menuData'
 
 const POINT_KEYS = ['1','2','3','4','5','6','7','8','9','지움','0','010']
@@ -53,6 +56,14 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   const [showCashPayment,  setShowCashPayment]  = useState(false)
   const [showPayPayment,   setShowPayPayment]   = useState(false)
   const [pointsInput,      setPointsInput]      = useState('')
+  // 제스처(커서) 모드에서는 키패드 입력이 어려워서, 마이크 버튼을 한 번 누르면 전화번호만 듣고 입력창에 채운다(LLM 없음)
+  const gestureUIOn = useGestureUIEnabled()   // 제스처(커서) 모드 ON 여부 — 마이크 버튼 표시 조건
+  const { locale: voiceLocale } = useLocale()
+  const phoneVoice = usePhoneVoice({
+    language: voiceLocale,
+    onDigits: (digits) => { setPointsInput(digits); setPointsError('') },
+    onError: (kind) => setPointsError(t({ mic: 'micErrMic', nospeech: 'micErrNoSpeech', nodigits: 'micErrNoDigits', network: 'micErrNetwork' }[kind])),
+  })
   const [pointsError,      setPointsError]      = useState('')
   const [confirmedPhone,   setConfirmedPhone]   = useState('')
   const [confirmedName,    setConfirmedName]    = useState('')
@@ -116,6 +127,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
   }
 
   const closePointsPopup = () => {
+    phoneVoice.cancel()   // 듣는 중이었다면 녹음을 버리고 마이크를 놓는다
     setShowPointsPopup(false)
     setPointsInput('')
     setPointsError('')
@@ -504,17 +516,47 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           <p style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 14 }}>
             {t('enterPhoneSub')}
           </p>
-          <div style={{
-            width: '100%', border: '2px solid #e44', borderRadius: 10,
-            padding: '14px', fontSize: 22, fontWeight: 700,
-            minHeight: 58, marginBottom: 6,
-            textAlign: 'center', letterSpacing: 2, color: '#1a1a1a',
-          }}>
-            {formatPhone(pointsInput) || ' '}
+          {/* 번호 입력칸 + 오른쪽 마이크 버튼. 버튼은 제스처(커서) 모드가 ON일 때만 — 커서로는 키패드 입력이 어렵기 때문.
+              음성 채팅이 켜져 있으면 번호를 그냥 말하면 되고(기존 음성 주문 경로) 마이크를 둘이 잡으면 충돌하므로 숨긴다 */}
+          <style>{'@keyframes phoneMicPulse { 0%,100% { opacity: 1 } 50% { opacity: .6 } } @keyframes micSpin { to { transform: rotate(360deg) } }'}</style>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 6 }}>
+            <div style={{
+              flex: 1, minWidth: 0, border: '2px solid #e44', borderRadius: 10,
+              padding: '14px', fontSize: 22, fontWeight: 700,
+              minHeight: 58,
+              textAlign: 'center', letterSpacing: 2, color: '#1a1a1a',
+            }}>
+              {formatPhone(pointsInput) || ' '}
+            </div>
+            {gestureUIOn && !chatOpen && (
+              <button
+                type="button"
+                onClick={phoneVoice.state === 'listening' ? phoneVoice.cancel : phoneVoice.start}
+                disabled={phoneVoice.state === 'processing'}
+                aria-label={t('micInput')}
+                title={t('micInput')}
+                style={{
+                  flexShrink: 0, width: 64, border: 'none', borderRadius: 10,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: phoneVoice.state === 'processing' ? 'default' : 'pointer',
+                  // 앱 색상(갈색·노랑)에 맞춘다: 평소 갈색 바탕+흰 아이콘, 듣는 중에는 노랑 바탕+갈색 아이콘
+                  background: phoneVoice.state === 'listening' ? '#F5B800' : '#744032',
+                  color: phoneVoice.state === 'listening' ? '#744032' : '#fff',
+                  opacity: phoneVoice.state === 'processing' ? 0.65 : 1,
+                  animation: phoneVoice.state === 'listening' ? 'phoneMicPulse 1s ease-in-out infinite' : 'none',
+                }}
+              >
+                <MicIcon size={28} kind={phoneVoice.state === 'processing' ? 'spinner' : 'mic'} />
+              </button>
+            )}
           </div>
-          {pointsError && (
-            <p style={{ fontSize: 13, color: '#e44', textAlign: 'center', marginBottom: 8 }}>
-              {pointsError}
+          {(pointsError || phoneVoice.state !== 'idle') && (
+            <p aria-live="polite" style={{
+              fontSize: 13, textAlign: 'center', marginBottom: 8,
+              color: phoneVoice.state !== 'idle' ? '#744032' : '#e44',
+            }}>
+              {phoneVoice.state === 'listening' ? t('micListening')
+                : phoneVoice.state === 'processing' ? t('micProcessing') : pointsError}
             </p>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>

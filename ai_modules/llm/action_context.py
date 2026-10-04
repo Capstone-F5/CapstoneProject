@@ -26,6 +26,7 @@ _checkout_snapshot: ContextVar[frozenset] = ContextVar("kiosk_checkout_snapshot"
 _last_bot_text: ContextVar[str] = ContextVar("kiosk_last_bot_text", default="")
 _stt_original: ContextVar[str] = ContextVar("kiosk_stt_original", default="")
 _recent_user_text: ContextVar[str] = ContextVar("kiosk_recent_user_text", default="")
+_recent_turns: ContextVar[list] = ContextVar("kiosk_recent_turns", default=[])
 _guard_hits: ContextVar[list] = ContextVar("kiosk_guard_hits", default=[])
 _guard_rejects: ContextVar[int] = ContextVar("kiosk_guard_rejects", default=0)
 _added_keys: ContextVar[set] = ContextVar("kiosk_added_keys", default=set())
@@ -50,6 +51,16 @@ def get_user_input() -> str:
 def set_recent_user_text(text: str) -> None:
     """이번 발화 직전 손님이 한 말 몇 턴. 사이드·음료처럼 여러 턴에 걸쳐 말한 것이 실제로 말해졌는지 따질 때 쓴다."""
     _recent_user_text.set(text or "")
+
+
+def set_recent_turns(turns: list) -> None:
+    """이번 발화 직전 대화 몇 턴을 오래된 것부터 [(role, text)]로 저장한다(role: "human"|"ai").
+    "단품으로 줘"처럼 이름 없는 말이 가리키는 버거를 키오스크 안내와 손님 발화를 함께 거슬러 올라가 찾을 때 쓴다."""
+    _recent_turns.set(list(turns or []))
+
+
+def get_recent_turns() -> list:
+    return list(_recent_turns.get())
 
 
 def get_recent_user_text() -> str:

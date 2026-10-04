@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 import re
 from .action_context import (
     push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text, get_recent_user_text,
-    add_seen_this_turn,
+    add_seen_this_turn, get_recent_turns,
 )
 from . import guards
 from .order_parser import menu_key as _menu_key, named_menus as _named_menus
@@ -103,11 +103,25 @@ def _find_option_by_name(
         return exact
     return next((o for o in candidates if name in o["name_ko"]), None)
 
+def _price_label(item: dict) -> str:
+    """가격 안내 문구. 할인 중이면 "정가 7,800원 → 현재 할인가 3,900원"처럼 둘 다 적는다.
+    예전에는 정가(base_price)만 출력해서 모델이 할인가를 볼 수 없었고, 50% 할인 중인데도 정가를 말했다(실제 로그)."""
+    orig = int(float(item.get("original_price") or item["base_price"]))
+    final = int(float(item.get("final_price") or orig))
+    return f"정가 {orig:,}원 → 현재 할인가 {final:,}원" if final < orig else f"{orig:,}원"
+
+
+def _current_price(item: dict) -> float:
+    """현재 판매가(할인 적용 후). 가격 비교·정렬은 이 값으로 한다."""
+    return float(item.get("final_price") or item["base_price"])
+
+
 @tool
 def list_menu() -> str:
     """판매 중인 전체 메뉴를 가격 낮은 순으로 조회한다. add_item 호출 전 menu_item_id 확인용이며,
     "가장 싼/비싼 메뉴", "세트로 바꾸면 얼마 더", 전체 목록·가격 비교 질문에는 반드시 이 도구를 쓴다
-    (결과 맨 위에 버거 최저가·최고가와 세트 추가 요금이 적혀 있다)."""
+    (결과 맨 위에 버거 최저가·최고가와 세트 추가 요금이 적혀 있다). 가격을 말할 때는 현재 판매가(할인가)를 말하고,
+    할인 중이면 정가도 함께 알려 준다."""
     try:
         items = _run(api_client.fetch_menu_items())
     except Exception as e:
@@ -117,13 +131,13 @@ def list_menu() -> str:
         return "조회된 메뉴가 없습니다."
 
     # 가격 오름차순으로 보여 "가장 저렴한/비싼" 질문을 모델이 직접 비교하다 틀리지 않게 한다.
-    items = sorted(items, key=lambda i: float(i["base_price"]))
+    items = sorted(items, key=_current_price)
     burgers = [i for i in items if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
     lines = ["[메뉴 목록 — 가격 낮은 순]"]
     if burgers:
         lines.append(
-            f"(버거 중 가장 저렴: {burgers[0]['name_ko']} {int(float(burgers[0]['base_price']))}원, "
-            f"가장 비쌈: {burgers[-1]['name_ko']} {int(float(burgers[-1]['base_price']))}원)"
+            f"(버거 중 가장 저렴: {burgers[0]['name_ko']} {_price_label(burgers[0])}, "
+            f"가장 비쌈: {burgers[-1]['name_ko']} {_price_label(burgers[-1])})"
         )
     for item in items:
         status = " [품절]" if not item.get("is_available", True) else ""
@@ -133,7 +147,7 @@ def list_menu() -> str:
         upgrade = next((o for o in item.get("options") or [] if o.get("option_group") == "SET_UPGRADE"), None)
         set_tag = f" [세트로 바꾸면 +{int(float(upgrade['additional_price']))}원]" if upgrade else ""
         lines.append(
-            f"- {item['name_ko']} {int(float(item['base_price']))}원 "
+            f"- {item['name_ko']} {_price_label(item)} "
             f"(menu_item_id: {item['id']}){status}{popular}{set_tag}{allergen_tag}"
         )
     return "\n".join(lines)
@@ -159,7 +173,7 @@ def list_popular_menu() -> str:
     for item in popular_items:
         allergens = item.get("allergens") or []
         allergen_tag = f" [알레르기: {', '.join(a['name_ko'] for a in allergens)}]" if allergens else ""
-        lines.append(f"- {item['name_ko']} {int(float(item['base_price']))}원 (menu_item_id: {item['id']}){allergen_tag}")
+        lines.append(f"- {item['name_ko']} {_price_label(item)} (menu_item_id: {item['id']}){allergen_tag}")
     return "\n".join(lines)
 
 
@@ -189,7 +203,7 @@ def search_menu(query: str, k: int = 5) -> str:
         popular = " [추천메뉴]" if h.get("is_popular") else ""
         desc = h.get("description") or ""
         allergens = h.get("allergens") or []
-        line = f"- {h['name_ko']} (menu_item_id: {h['id']}) {int(float(h['base_price']))}원{avail}{popular}"
+        line = f"- {h['name_ko']} (menu_item_id: {h['id']}) {_price_label(h)}{avail}{popular}"
         if desc:
             line += f"\n  설명: {desc}"
         line += f"\n  알레르기: {', '.join(a['name_ko'] for a in allergens) if allergens else '없음'}"
@@ -417,6 +431,22 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
                 if msg:
                     return msg, item, quantity
     return None, item, quantity
+
+
+def _topic_burger(user: str, menu: list | None, turns: list) -> str | None:
+    """지금 이야기 중인 버거. 발화에 버거 이름이 정확히 하나 있으면 그것, 둘 이상이면 모호하므로 None, 하나도 없으면 최근 대화
+    (키오스크 안내·손님 발화)를 최근 것부터 거슬러 올라가 버거 이름이 나온 첫 턴이 정확히 하나를 가리킬 때 그것."""
+    if not menu or not guards.has_hangul(user):
+        return None
+    burgers = [i["name_ko"] for i in menu if any(o.get("option_group") == "SET_UPGRADE" for o in i.get("options") or [])]
+    said = _named_menus(re.sub(r"\s+", "", user), burgers)
+    if said:
+        return said[0] if len(said) == 1 else None
+    for _role, text in reversed(turns or []):
+        named = _named_menus(re.sub(r"\s+", "", text or ""), burgers)
+        if named:
+            return named[0] if len(named) == 1 else None
+    return None
 
 
 def _target_mismatch(user: str, target_name: str, menu: list | None) -> str | None:
@@ -653,6 +683,26 @@ def update_item_options(
         if error:
             return error
         cart_item_id = cart_item["cart_item_id"]
+        # 변경하려는 줄이 지금 이야기 중인 버거의 줄인지 확인한다. 실제 로그: 더블 불고기 버거는 담긴 적이 없는데 모델이 "더블 불고기
+        # 버거 세트로 변경했습니다"라고 하면서 장바구니의 다른 버거(그릴드 비프)의 옵션을 바꿨다.
+        try:
+            topic = _topic_burger(get_user_input(), _run(api_client.fetch_menu_items()), get_recent_turns())
+        except Exception:  # noqa: BLE001 - 가드 때문에 변경이 막히면 안 된다
+            topic = None
+        if topic and _menu_key(cart_item.get("name_ko", "")) != _menu_key(topic):
+            same = [i for i in cart.get("items", []) if _menu_key(i.get("name_ko", "")) == _menu_key(topic)]
+            if same or len(cart.get("items", [])) >= 2:   # 줄이 하나뿐이면 그 줄이 대상일 수밖에 없다
+                if same:
+                    hint = f"장바구니에서 '{topic}' 줄의 cart_item_id를 찾아 다시 호출하세요."
+                else:
+                    hint = (f"'{topic}'은(는) 장바구니에 없습니다. 다른 메뉴의 줄을 바꾸지 말고, 손님에게 아직 담기지 않았다고 알린 뒤 "
+                            "담을지 물어보세요.")
+                msg = guards.block(
+                    "update_wrong_target",
+                    f"「{get_user_input()[:30]}」 이야기 중인 메뉴={topic} / 변경 대상={cart_item.get('name_ko')}",
+                    f"오류: 지금 이야기 중인 메뉴는 '{topic}'인데 변경하려는 줄은 '{cart_item.get('name_ko')}'입니다. {hint}")
+                if msg:
+                    return msg
         if any(e["cart_item_id"] == cart_item_id for e in cart_history.peek_added(session_id, this_turn_only=True)):
             # 방금 이 요청에서 담은 줄을 또 수정하려는 호출 — 담은 직후의 "확인용" 수정이 "하나 더"로 해석돼 수량이 두 배가 됐다
             guards.fix("update_after_add", f"이번 턴에 담은 {cart_item.get('name_ko')} 줄을 같은 턴에 다시 수정하려는 호출 무시")

@@ -1,4 +1,5 @@
 import { getCachedAudio } from './ttsCache.js'
+import { tapOutput } from './bargeIn.js'
 
 let _current = null
 // 재생 요청 일련번호. playTTS는 await 지점이 여러 개라, 앞선 요청이 대기하는 사이
@@ -21,15 +22,17 @@ export function stopTTS() {
   if (_current) { _current.pause(); _current.currentTime = 0; _current = null }
 }
 
-export async function playTTS(text) {
+// opts.cache=false면 사전 녹음 캐시를 건너뛰고 항상 API로 합성한다(캐시와 API 소리를 비교하는 테스트용).
+export async function playTTS(text, { cache = true } = {}) {
   stopTTS()
   const seq = _seq
 
   try {
-    const cached = await getCachedAudio(text)
+    const cached = cache ? await getCachedAudio(text) : null
     if (seq !== _seq) return
     if (cached) {
       _current = cached
+      tapOutput(cached)   // 끼어들기 ON이면 재생 소리 크기를 분석기에 연결(꺼져 있으면 아무것도 안 함)
       emit('kiosk-tts-start')
       trackEnd(cached)
       // 재생 실패를 catch로 떨어뜨려 API 경로로 넘긴다. 예전엔 로그만 찍고
@@ -58,6 +61,7 @@ export async function playTTS(text) {
     const url = URL.createObjectURL(blob)
     const audio = new Audio(url)
     _current = audio
+    tapOutput(audio)
     emit('kiosk-tts-start')
     trackEnd(audio)
     audio.onended = () => { URL.revokeObjectURL(url); if (_current === audio) _current = null }

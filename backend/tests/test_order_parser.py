@@ -28,6 +28,17 @@ def names(parsed):
 
 
 class ParseCases(unittest.TestCase):
+    def test_items_spoken_without_separators(self):
+        """구분어 없이 이어 말한 다품목 주문(2026-10-04 시나리오 H03): 수량 표현 뒤에 다른 메뉴 이름이 이어지면 나눈다."""
+        cases = {
+            "치즈 버거 단품 한개 콜라 한잔": [("치즈 버거", 1), ("콜라(M)", 1)],
+            "치즈버거 단품 두 개 콜라 한 잔 생수 하나": [("생수", 1), ("치즈 버거", 2), ("콜라(M)", 1)],
+            "치즈버거 단품 하나 줘": [("치즈 버거", 1)],          # "하나 줘"의 "줘"는 메뉴가 아니므로 나누지 않는다
+            "콜라 한 잔 줘": [("콜라(M)", 1)],
+        }
+        for text, want in cases.items():
+            self.assertEqual(sorted(names(P.parse_simple_order(text, MENU)) or []), sorted(want), text)
+
     def test_simple_orders(self):
         cases = {
             "치즈버거 단품 세 개 주세요": [("치즈 버거", 3)],

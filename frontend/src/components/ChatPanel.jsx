@@ -3,6 +3,8 @@ import { useMicVAD, utils } from '@ricky0123/vad-react'
 import { useLocale } from '../i18n/LocaleContext'
 import { getSessionId, newSessionId } from '../services/session'
 import { getCachedAudio } from '../utils/ttsCache'
+import { stopTTS } from '../utils/tts'
+import { isBargeInEnabled, useBargeInEnabled, startBargeWatch, tapOutput } from '../utils/bargeIn'
 import { classifyQuickReply } from '../utils/quickReply'
 
 // ── 음성 응답 지연 계측 ──────────────────────────────────────────────────────
@@ -76,6 +78,13 @@ const INIT_MESSAGES = [
   },
 ]
 
+// 음성 인사말. 초기(대기) 화면에서는 음성을 켤 때마다(30초 자동 OFF 뒤 다시 켜도) 시작 안내를 한 번 하고,
+// 주문 중에는 세션당 한 번만 일반 인사말을 한다(껐다 켜도 다시 하지 않는다).
+const START_GREETING = '안녕하세요, F BURGER 주문 도우미입니다. 주문을 시작하시려면 주문 시작이라고 말씀해주세요.'
+const ORDER_GREETING = '안녕하세요! F버거 주문 도우미입니다. 메뉴 추천, 주문 방법 등 궁금한 점을 말씀해 주세요.'
+// 초기 화면에서 대화창 첫 말풍선도 음성 안내와 같은 말로 바꿔 보여 준다(주문 중에는 기존 첫 말풍선 INIT_MESSAGES 그대로)
+const START_BUBBLE = '안녕하세요, F BURGER 주문 도우미입니다.\n주문을 시작하시려면 "주문 시작"이라고 말씀해주세요.'
+
 const LANG_KEY = 'kiosk_detected_lang'
 
 // 페이지 새로고침/닫기 시 언어 감지 상태만 초기화 (세션 ID는 카트와 공유되므로 유지 —
@@ -148,6 +157,12 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const speechEndHandlerRef = useRef(null)
   // async 함수 안에서 최신 vad 인스턴스에 접근하기 위한 ref
   const vadRef = useRef(null)
+  // 끼어들기(실험, utils/bargeIn.js): TTS 재생 중에도 VAD를 멈추지 않고 사용자 말이 확인되면 TTS를 끊는다. 꺼져 있으면 아래 값은 쓰이지 않는다.
+  const bargeOn = useBargeInEnabled()
+  const speechDuringTtsRef = useRef(false)   // TTS가 재생되는 중에 VAD가 말소리를 감지했다(에코일 수도 있다)
+  const bargeConfirmedRef  = useRef(false)   // 판정기가 그 소리를 사용자 말로 확인했다
+  const externalTtsRef     = useRef(false)   // 화면 안내음(utils/tts.js)이 재생 중이다
+  const handleBargeRef     = useRef(null)
 
   useEffect(() => { isTypingRef.current = isTyping }, [isTyping])
 
@@ -171,7 +186,14 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     onSpeechStart: () => {
       // 스피커에서 재생 중일 때 들어온 소리는 사용자가 아니라 마이크가 다시 들은 TTS(에코)일 가능성이 크다.
       // 이때 끼어들기로 처리하면 말하는 도중에 TTS가 스스로 끊긴다.
-      if (ttsBusyRef.current || audioRef.current) return
+      if (ttsBusyRef.current || audioRef.current || externalTtsRef.current) {
+        // 끼어들기 ON이면 VAD가 재생 중에도 돈다: 이 소리가 에코인지 사용자 말인지는 판정기(bargeIn.js)가 가린다 —
+        // 사용자 말로 확인되기 전에는 TTS를 끊지 않고, 확인되지 않은 채 끝난 소리는 speechEnd에서 버린다.
+        if (isBargeInEnabled()) speechDuringTtsRef.current = true
+        return
+      }
+      speechDuringTtsRef.current = false
+      bargeConfirmedRef.current = false
       if (activeRef.current && !isTypingRef.current) {
         setListening(true)
         window.dispatchEvent(new Event('gesture-activity'))  // 말하는 순간 idle 타이머 리셋
@@ -207,8 +229,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   // 다른 곳(utils/tts.js의 화면 안내음)에서 재생하는 소리도 마이크가 듣지 않도록 같이 막는다.
   useEffect(() => {
-    const onStart = () => pauseVadForTts()
-    const onEnd   = () => maybeResumeVad()
+    const onStart = () => { externalTtsRef.current = true; pauseVadForTts() }
+    const onEnd   = () => { externalTtsRef.current = false; maybeResumeVad() }
     window.addEventListener('kiosk-tts-start', onStart)
     window.addEventListener('kiosk-tts-end', onEnd)
     return () => {
@@ -221,6 +243,14 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   speechEndHandlerRef.current = useCallback(async (audio) => {
     setListening(false)
     if (!activeRef.current) return
+    // 끼어들기: TTS 재생 중에 시작된 소리인데 사용자 말로 확인되지 않았으면 스피커 소리가 되돌아온 것(에코)이라 STT에 보내지 않는다
+    if (speechDuringTtsRef.current && !bargeConfirmedRef.current) {
+      speechDuringTtsRef.current = false
+      console.info('[bargein] TTS 재생 중 감지된 소리를 에코로 판단해 버림')
+      return
+    }
+    speechDuringTtsRef.current = false
+    bargeConfirmedRef.current = false
     const requestGeneration = sessionGenerationRef.current
 
     // 이미 STT 처리 중이면 건너뜀 (동시 STT 방지)
@@ -343,6 +373,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const ECHO_WINDOW_MS     = 30000
 
   function pauseVadForTts() {
+    if (isBargeInEnabled()) return   // 끼어들기 ON: 재생 중에도 마이크 감지를 유지한다(에코 판정은 bargeIn.js가 한다)
     clearTimeout(vadResumeTimerRef.current)
     try { vadRef.current?.pause() } catch {}
   }
@@ -373,6 +404,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   function isEchoOfBot(text) {
     const t = normSpeech(text)
     if (t.length < 4) return false          // "네", "응" 같은 짧은 대답은 에코로 보지 않는다
+    // 시작 안내("…주문 시작이라고 말씀해주세요")가 안내한 그 말을 사용자가 하면 안내문에 들어 있는 말이라 에코로 오인되므로 제외한다
+    if (/^주문시작(할게요?|할래요?|이요|요)?$/.test(t)) return false
     const now = Date.now()
     return recentSpokenRef.current.some(({ norm, at }) => {
       if (now - at > ECHO_WINDOW_MS) return false
@@ -393,6 +426,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const cached = await getCachedAudio(text)
     if (cached && activeRef.current) {
       audioRef.current = cached
+      tapOutput(cached)   // 끼어들기 ON이면 재생 소리의 크기를 분석기에 연결한다(꺼져 있으면 아무것도 안 함)
       await new Promise(resolve => {
         cached.onended = resolve
         cached.onerror = resolve
@@ -423,6 +457,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         const url   = URL.createObjectURL(blob)
         const audio = new Audio(url)
         audioRef.current = audio
+        tapOutput(audio)
         await new Promise(resolve => {
           audio.onended = resolve
           audio.onerror = resolve
@@ -439,6 +474,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     audioRef.current  = audio
     const objectUrl   = URL.createObjectURL(mediaSource)
     audio.src         = objectUrl
+    tapOutput(audio)
 
     await new Promise((resolve) => {
       mediaSource.addEventListener('sourceopen', async () => {
@@ -616,7 +652,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
                 // 오디오가 끝내 안 나오는 경우(TTS 실패 등)에도 기록이 남도록 5초 뒤 강제 보고
                 setTimeout(() => { if (_activeTurn === turn) { _activeTurn = null; reportVoiceTurn(turn, 'timeout') } }, 5000)
               }
+              // 토큰 없이 done만 온 응답(서버가 LLM 없이 돌려주는 "잘 못 들었어요", 장바구니 조회 등)은 TTS 버퍼가 비어
+              // 있어 읽히지 않았다 — 이 경우에는 최종 문장을 버퍼에 넣어 읽어 준다(토큰이 있었으면 이미 읽는 중이라 중복 X)
+              const hadTokens = replyText.length > 0
               replyText = data.output
+              if (!hadTokens) ttsBufRef.current += data.output
               flushTtsBuf(true)                  // ← 잔여 버퍼 강제 플러시
               setMessages(prev =>
                 prev.map(m => m.id === msgId ? { ...m, text: replyText } : m)
@@ -701,17 +741,48 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   useEffect(() => {
     if (!isOpen) return
-    // 인사말은 세션당 한 번만. 주문 도중에 껐다 켠 경우에는 처음 안내를 다시 하지 않는다.
-    if (greetedRef.current) return
+    // 초기(대기) 화면: 켤 때마다 시작 안내를 한다(자동 OFF 뒤 다시 켠 경우 포함).
+    // 그 밖(주문 중): 세션당 한 번만 — 주문 도중에 껐다 켠 경우에는 처음 안내를 다시 하지 않는다.
+    const onStart = screenRef2.current === 'start'
+    if (!onStart && greetedRef.current) return
     greetedRef.current = true
+    const greeting = onStart ? START_GREETING : ORDER_GREETING
+    // 첫 말풍선(고정 문구)을 음성 안내와 맞춘다. 주문 중에 처음 켠 경우에는 기존 문구를 그대로 둔다.
+    if (onStart) setMessages(prev => prev.map(m => (m.id === 'init' ? { ...m, text: START_BUBBLE } : m)))
     const timer = setTimeout(() => {
       if (!activeRef.current) return
       // 인사말이 끝난 뒤에 마이크를 다시 켠다(재생 중 마이크가 소리를 되받아 끊기는 것을 막음)
-      playTts('안녕하세요! F버거 주문 도우미입니다. 메뉴 추천, 주문 방법 등 궁금한 점을 말씀해 주세요.')
-        .finally(() => maybeResumeVad())
+      playTts(greeting).finally(() => maybeResumeVad())
     }, 300)
     return () => clearTimeout(timer)
   }, [isOpen])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── 끼어들기(실험) ─────────────────────────────────────────────────────────────
+  // 판정기(bargeIn.js)가 "스피커 소리가 마이크로 되돌아온 만큼을 뺀 뒤에도 확실한 소리가 계속 들어온다"고 판정하고 VAD도 재생 중
+  // 말소리를 감지했을 때(이중 확인) 재생 중인 TTS와 아직 만드는 중인 응답을 끊는다. 이어지는 발화는 평소처럼 STT로 처리된다.
+  handleBargeRef.current = () => {
+    if (!activeRef.current) return
+    console.info('[bargein] 끼어들기 감지 → TTS·응답 중단')
+    bargeConfirmedRef.current = true
+    sessionGenerationRef.current += 1            // 진행 중인 응답 요청이 뒤늦게 화면·음성을 만들지 않게(세션 초기화와 같은 정리)
+    activeLlmRequestRef.current?.abort(); activeLlmRequestRef.current = null
+    activeSttRequestRef.current?.abort(); activeSttRequestRef.current = null
+    isProcessingRef.current = false
+    pendingTextRef.current = null
+    isTypingRef.current = false; setIsTyping(false)
+    clearTtsQueue()
+    stopTTS()
+    setListening(true)
+    window.dispatchEvent(new Event('gesture-activity'))
+  }
+
+  useEffect(() => {
+    if (!isOpen || !bargeOn) return
+    return startBargeWatch({
+      onBarge: () => handleBargeRef.current?.(),
+      canFire: () => speechDuringTtsRef.current,   // VAD도 재생 중 말소리를 감지했을 때만
+    })
+  }, [isOpen, bargeOn])
 
   // ─── 세션 리셋 이벤트 (nav('start') 호출 시) ─────────────────────────────────
 

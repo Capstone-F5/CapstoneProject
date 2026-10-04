@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Logo from '../components/Logo'
 import useT from '../i18n/useT'
 import { playTTS } from '../utils/tts'
+import { speakOrderNumber } from '../utils/numberSpeech'
 
 const TOTAL_SECONDS = 10
 
@@ -12,7 +13,28 @@ export default function CompletionScreen({ orderNum, nav, narrate }) {
   const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS)
 
   useEffect(() => {
-    if (narrate) playTTS('결제가 완료되었습니다')
+    // 터치 주문(음성 채팅 꺼짐): 완료 안내만 읽는다.
+    if (narrate) { playTTS('결제가 완료되었습니다'); return }
+
+    // 음성 주문(채팅 켜짐): 완료 안내(사전 녹음 캐시)에 이어 주문번호까지 읽어 준다.
+    // playTTS는 재생이 시작되면 바로 돌아오고 다음 playTTS가 앞 소리를 끊으므로, 종료 이벤트(kiosk-tts-end)를 기다린 뒤 이어서 재생한다.
+    // 재생이 막히거나 끝 이벤트가 안 오는 경우를 대비해 기다리는 시간에 상한을 둔다.
+    // 재생 중에는 ChatPanel이 같은 이벤트로 마이크를 멈추므로 안내음이 음성 입력으로 들어가지 않는다.
+    let cancelled = false
+    ;(async () => {
+      const ended = new Promise(resolve => {
+        const onEnd = () => { window.removeEventListener('kiosk-tts-end', onEnd); resolve() }
+        window.addEventListener('kiosk-tts-end', onEnd)
+        setTimeout(() => { window.removeEventListener('kiosk-tts-end', onEnd); resolve() }, 6000)
+      })
+      await playTTS('결제가 완료되었습니다')
+      await ended
+      if (cancelled || orderNum == null) return
+      await new Promise(r => setTimeout(r, 250))   // 두 문장 사이에 짧은 쉼
+      if (cancelled) return
+      speakOrderNumber(Number(numStr))   // 문장째 사전 녹음(1~100번) 또는 API
+    })()
+    return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

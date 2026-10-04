@@ -23,8 +23,65 @@ class FixSttTests(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertEqual(fix_stt(src), want)
 
+    def test_corrects_gyeolje_misspelling(self):
+        cases = {
+            "결재할게요": "결제할게요",
+            "결재 할게요": "결제 할게요",
+            "카드로 결재할게요": "카드로 결제할게요",
+            "간편결재로 할게요": "간편결제로 할게요",
+            "결제할게요": "결제할게요",   # 이미 맞는 말은 그대로
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(fix_stt(src), want)
+
+    def test_corrects_jwo_misheard_as_jyo(self):
+        """"단품으로 줘"가 "단품으로죠"로 들어온다(실제 로그 + 2026-10-04 실험의 "탄품으로죠")."""
+        cases = {
+            "단품으로죠.": "단품으로 줘.",
+            "단품으로죠": "단품으로 줘",
+            "탄품으로죠.": "단품으로 줘.",
+            "세트로죠": "세트로 줘",
+            "치즈버거 단품으로 죠": "치즈버거 단품으로 줘",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(fix_stt(src), want)
+        for keep in ("단품으로 줘", "세트로 줄까요", "단품으로죠스바"):   # 맞는 말·다른 낱말은 그대로
+            self.assertEqual(fix_stt(keep), keep, keep)
+
+    def test_corrects_dampum_mul_misrecognition(self):
+        """"단품으로 줘" → "단풍물을 줘"(2026-10-04 실험)."""
+        cases = {
+            "단풍물을 줘.": "단품으로 줘.",
+            "단풍물을 줘": "단품으로 줘",
+            "단풍물 주세요": "단품으로 주세요",
+            "치즈버거 탐풍물로 줘": "치즈버거 단품으로 줘",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(fix_stt(src), want)
+        for keep in ("단풍물감을 샀어요", "단풍물이 들었어요"):   # 다른 낱말은 그대로
+            self.assertEqual(fix_stt(keep), keep, keep)
+
+    def test_corrects_dampum_misrecognition(self):
+        """"단품"의 실제 오인식(2026-10-04 로그). 단품/세트를 묻는 말에 이렇게 답하면 노이즈로 걸러져 주문이 안 됐다."""
+        cases = {
+            "탐풍.": "단품.",
+            "단풍": "단품",
+            "단풍으로 줘": "단품으로 줘",
+            "잔툼으로 쏘옥": "단품으로 쏘옥",
+            "그냥 단푼이요": "그냥 단품이요",
+            "단품으로 줘": "단품으로 줘",   # 이미 맞는 말은 그대로
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(fix_stt(src), want)
+
     def test_leaves_other_sentences_untouched(self):
         for src in [
+            "단풍잎이 예쁘네요",      # 다른 낱말의 일부는 건드리지 않는다
+            "가을 단풍 구경 가고 싶어요",
             "내장이 뭐야",
             "내장 알레르기가 있어요",
             "매장에서 먹을게요",
