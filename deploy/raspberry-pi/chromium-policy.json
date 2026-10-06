@@ -29,5 +29,14 @@
     "https://192.168.0.32:5198",
     "https://192.168.0.32:5199",
     "https://192.168.0.32:5200"
+  ],
+  "AudioCaptureAllowedUrls": [
+    "https://cap.dmuce-stu.kr"
+  ],
+  "VideoCaptureAllowedUrls": [
+    "https://cap.dmuce-stu.kr"
+  ],
+  "AutoplayAllowlist": [
+    "https://cap.dmuce-stu.kr"
   ]
 }
