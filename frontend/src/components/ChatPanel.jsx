@@ -111,7 +111,7 @@ function quickReplyNote(handled, quick, screen) {
   }
 }
 
-export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction, onQuickReply }) {
+export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = null, orderType = null, modalStateRef = null, onAction, onQuickReply, openingGreeting = null, onOpeningGreetingEnd }) {
   const { locale: uiLocale, setLocale } = useLocale()
 
   const [messages,  setMessages]  = useState(INIT_MESSAGES)
@@ -746,13 +746,16 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const onStart = screenRef2.current === 'start'
     if (!onStart && greetedRef.current) return
     greetedRef.current = true
-    const greeting = onStart ? START_GREETING : ORDER_GREETING
+    const greeting = onStart ? (openingGreeting || START_GREETING) : ORDER_GREETING
     // 첫 말풍선(고정 문구)을 음성 안내와 맞춘다. 주문 중에 처음 켠 경우에는 기존 문구를 그대로 둔다.
-    if (onStart) setMessages(prev => prev.map(m => (m.id === 'init' ? { ...m, text: START_BUBBLE } : m)))
+    if (onStart) setMessages(prev => prev.map(m => (m.id === 'init' ? { ...m, text: openingGreeting || START_BUBBLE } : m)))
     const timer = setTimeout(() => {
       if (!activeRef.current) return
       // 인사말이 끝난 뒤에 마이크를 다시 켠다(재생 중 마이크가 소리를 되받아 끊기는 것을 막음)
-      playTts(greeting).finally(() => maybeResumeVad())
+      playTts(greeting).finally(() => {
+        if (onStart && openingGreeting) onOpeningGreetingEnd?.()
+        maybeResumeVad()
+      })
     }, 300)
     return () => clearTimeout(timer)
   }, [isOpen])  // eslint-disable-line react-hooks/exhaustive-deps

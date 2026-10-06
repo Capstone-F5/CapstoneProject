@@ -16,7 +16,7 @@ import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
-import { playTTS } from './utils/tts'
+import { playTTS, stopTTS } from './utils/tts'
 // import { useFingerCount } from './hooks/useFingerCount'   // 숫자인식 비활성
 import { useSerial } from './hooks/useSerial'
 import { useExitKioskTaps } from './hooks/useExitKioskTaps'
@@ -154,6 +154,7 @@ function AppContent() {
   const { menuData, isLoading: isMenuLoading, error: menuError, retry: retryMenu } = useMenuData()
   const activeDiscounts = menuData?.activeDiscounts ?? []
   const [screen,    setScreen]    = useState('start')
+  const rearmStartIdleTimerRef = useRef(null)
   // 전체화면 해제(좌상단 10회 터치)는 시작 화면과 매장/포장 선택 화면에서만 허용
   useExitKioskTaps(screen === 'start' || screen === 'orderType')
   const [cart,      setCart]      = useState([])
@@ -161,6 +162,7 @@ function AppContent() {
   const [orderType, setOrderType] = useState(null)
   const [orderNum,  setOrderNum]  = useState(null)
   const [chatOpen,  setChatOpen]  = useState(false)
+  const [approachVoiceGreeting, setApproachVoiceGreeting] = useState(null)
   const [voiceToast, setVoiceToast] = useState(null)   // AI 동작 알림
   const voiceToastTimer = useRef(null)
 
@@ -193,6 +195,7 @@ function AppContent() {
     let timer = null
     const turnOff = () => {
       setChatOpen(false)
+      setApproachVoiceGreeting(null)
       setGestureEnabled(false)
       setPipEnabled(false)
       setApproachSuspended(false)   // 떠난 손님 — 다음 손님을 위해 접근 감지 재개
@@ -202,30 +205,114 @@ function AppContent() {
       clearTimeout(timer)
       timer = setTimeout(turnOff, START_IDLE_OFF_MS)
     }
+    rearmStartIdleTimerRef.current = rearm
     rearm()
     START_IDLE_EVENTS.forEach(ev => window.addEventListener(ev, rearm, true))
     return () => {
       clearTimeout(timer)
+      if (rearmStartIdleTimerRef.current === rearm) rearmStartIdleTimerRef.current = null
       START_IDLE_EVENTS.forEach(ev => window.removeEventListener(ev, rearm, true))
     }
   }, [screen])
 
   // 취약계층 자동 감지 (Issue #66): 휠체어 감지 → 제스처 ON + 안내 음성, 흰 지팡이 감지 → 음성 주문(채팅) 자동 ON.
   //   - 휠체어: 카메라를 제스처 엔진에 넘기려고 접근 감지를 중단(approachSuspended)한다.
-  //   - 흰 지팡이: 채팅이 열리면 ChatPanel이 시작 화면 인사말을 재생하므로 별도 안내 음성은 없다.
+  //   - 흰 지팡이: ChatPanel의 시작 인사말을 접근 안내 문구로 바꾸고, 3초 간격 알림음 두 번 뒤 음성인식을 시작한다.
   // 콜백은 반드시 안정적인 참조여야 함 — 훅의 useEffect 의존성이라, 매 렌더 새 함수를 넘기면
   // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
   const [approachSuspended,   setApproachSuspended]   = useState(false)
   const [approachUnavailable, setApproachUnavailable] = useState(false)
+  const playApproachDingDongs = useCallback(() => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    const playDingDong = (context) => {
+      const startAt = context.currentTime + 0.03
+      for (const note of [
+        { frequency: 880, offset: 0, duration: 0.24 },
+        { frequency: 659.25, offset: 0.26, duration: 0.36 },
+      ]) {
+        const oscillator = context.createOscillator()
+        const gain = context.createGain()
+        const start = startAt + note.offset
+        oscillator.type = 'sine'
+        oscillator.frequency.value = note.frequency
+        gain.gain.setValueAtTime(0.0001, start)
+        gain.gain.exponentialRampToValueAtTime(0.16, start + 0.02)
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + note.duration)
+        oscillator.connect(gain)
+        gain.connect(context.destination)
+        oscillator.start(start)
+        oscillator.stop(start + note.duration)
+      }
+    }
+
+    // 두 번의 알림음 동안 마이크가 소리를 사용자 발화로 받지 않도록 TTS 이벤트로 감싼다.
+    window.dispatchEvent(new Event('kiosk-tts-start'))
+    if (!AudioContextClass) {
+      window.setTimeout(() => {
+        rearmStartIdleTimerRef.current?.()
+        window.dispatchEvent(new Event('kiosk-tts-end'))
+      }, 3750)
+      return
+    }
+    try {
+      const context = new AudioContextClass()
+      context.resume().catch(() => {})
+      playDingDong(context)
+      window.setTimeout(() => {
+        playDingDong(context)
+        window.setTimeout(() => {
+          context.close().catch(() => {})
+          rearmStartIdleTimerRef.current?.()
+          window.dispatchEvent(new Event('kiosk-tts-end'))
+        }, 750)
+      }, 3000)
+    } catch (error) {
+      console.warn('[ApproachDetector] 안내음 재생 실패:', error)
+      window.setTimeout(() => {
+        rearmStartIdleTimerRef.current?.()
+        window.dispatchEvent(new Event('kiosk-tts-end'))
+      }, 3750)
+    }
+  }, [])
+
+  const playApproachAnnouncement = useCallback((text) => {
+    // TTS가 끝난 뒤 띵동을 재생하고, 3초 뒤 한 번 더 재생한다.
+    stopTTS()
+    let finished = false
+    let fallbackTimer
+    const onSpeechStart = () => {
+      clearTimeout(fallbackTimer)
+      fallbackTimer = window.setTimeout(finishSpeech, 15000)
+    }
+    const finishSpeech = () => {
+      if (finished) return
+      finished = true
+      clearTimeout(fallbackTimer)
+      window.removeEventListener('kiosk-tts-start', onSpeechStart)
+      window.removeEventListener('kiosk-tts-end', finishSpeech)
+      playApproachDingDongs()
+    }
+    window.addEventListener('kiosk-tts-start', onSpeechStart)
+    window.addEventListener('kiosk-tts-end', finishSpeech, { once: true })
+    // TTS 합성이 시작되지 않는 경우에도 알림음이 오래 멈춰 있지 않도록 한다.
+    fallbackTimer = window.setTimeout(finishSpeech, 5000)
+    playTTS(text).catch(finishSpeech)
+  }, [playApproachDingDongs])
   const handleApproachModeAction = useCallback((action) => {
+    rearmStartIdleTimerRef.current?.()
     if (action === 'gesture') {
       setGestureEnabled(true)
       setApproachSuspended(true)
-      playTTS('손동작으로도 메뉴를 선택하실 수 있습니다.').catch(() => {})
+      playApproachAnnouncement('손동작으로 주문하시려면 이 키오스크를 이용해 주세요.')
     } else if (action === 'voice') {
+      setApproachVoiceGreeting('음성으로 주문하시려면 이 키오스크를 사용해 주세요.')
       setChatOpen(true)
     }
-  }, [])
+  }, [playApproachAnnouncement])
+  const handleApproachVoiceGreetingEnd = useCallback(() => {
+    setApproachVoiceGreeting(null)
+    playApproachDingDongs()
+  }, [playApproachDingDongs])
   // 서버 감지 불가(모델 로드 실패·연결 끊김) → 접근 감지를 멈춰 카메라를 제스처에 돌려준다. 30초 뒤 다시 시도.
   const handleApproachUnavailable = useCallback(() => setApproachUnavailable(true), [])
   useEffect(() => {
@@ -1159,13 +1246,15 @@ function AppContent() {
             borderTop: chatOpen ? '1.5px solid #bbb' : 'none',
           }}>
             <ChatPanel
-              onClose={() => setChatOpen(false)}
+              onClose={() => { setChatOpen(false); setApproachVoiceGreeting(null) }}
               isOpen={chatOpen}
               cart={cartForLLM}
               screen={screen}
               orderType={orderType}
               modalStateRef={modalStateRef}
               onAction={handleVoiceAction}
+              openingGreeting={approachVoiceGreeting}
+              onOpeningGreetingEnd={handleApproachVoiceGreetingEnd}
               // 짧은 "네/아니요" 응답을 화면이 바로 처리할 수 있으면 true(LLM 왕복 생략)
               onQuickReply={(value) => screenVoiceRef.current?.({ type: 'quick_reply', value }) || false}
             />

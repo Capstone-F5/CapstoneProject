@@ -29,7 +29,8 @@ export const COMMON_PHRASES = {
   // 잘 못 알아들었을 때의 고정 응답(서버가 LLM 없이 돌려주는 NOISE_REPLY 한국어 문장)
   '잘 못 들었어요 다시 한번 말씀해 주세요':   'not_heard.mp3',
   // 접근 감지(휠체어) 안내
-  '손동작으로도 메뉴를 선택하실 수 있습니다':   'approach_wheelchair.mp3',
+  '손동작으로 주문하시려면 이 키오스크를 이용해 주세요': 'approach_gesture_order.mp3',
+  '음성으로 주문하시려면 이 키오스크를 사용해 주세요': 'approach_voice_order.mp3',
   // 터치 플로우 내레이션
   '식사하실 장소를 선택해 주세요':           'select_order_type.mp3',
   '주문하실 메뉴를 선택해 주세요':           'select_menu_order.mp3',

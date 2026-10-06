@@ -36,7 +36,8 @@ const PHRASES = {
   // 잘 못 알아들었을 때의 고정 응답(backend/ai_modules/llm/guards.py의 NOISE_REPLY["ko"]와 같은 문장이어야 한다)
   'not_heard.mp3':          '잘 못 들었어요. 다시 한번 말씀해 주세요.',
   // 접근 감지(휠체어) 안내 — App.jsx handleApproachModeAction과 같은 문장. 대상을 지칭하지 않고 기능만 알린다.
-  'approach_wheelchair.mp3': '손동작으로도 메뉴를 선택하실 수 있습니다.',
+  'approach_gesture_order.mp3': '손동작으로 주문하시려면 이 키오스크를 이용해 주세요.',
+  'approach_voice_order.mp3': '음성으로 주문하시려면 이 키오스크를 사용해 주세요.',
 }
 
 // 주문번호 낭독용 조각 — 번호를 말할 때마다 API로 합성하지 않고 이 조각을 이어 붙인다(src/utils/numberSpeech.js).
