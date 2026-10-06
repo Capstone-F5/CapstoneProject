@@ -7,6 +7,7 @@ OpenAI TTS 비동기 스트리밍 래퍼.
 from __future__ import annotations
 
 import os
+import re
 from typing import AsyncIterator
 
 from openai import AsyncOpenAI
@@ -31,6 +32,13 @@ _TTS_LANG_NAMES: dict[str, str] = {
     "zh": "Chinese",
     "en": "English",
 }
+
+
+def _prepare_tts_text(text: str) -> str:
+    """괄호 표시는 음성에서 빼고, 괄호 안의 내용은 유지한다."""
+    text = re.sub(r"[ \t]*[（(][ \t]*", " ", text)
+    text = re.sub(r"[ \t]*[）)][ \t]*", " ", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 async def stream_tts(
@@ -63,7 +71,7 @@ async def stream_tts(
     async with client.audio.speech.with_streaming_response.create(
         model=model,
         voice=voice,
-        input=text,
+        input=_prepare_tts_text(text),
         response_format=audio_format,
         **extra_kwargs,
     ) as resp:
