@@ -326,6 +326,39 @@ function AppContent() {
   // 나중에 연 쪽이 NotReadableError로 실패한다. 대기 화면에서는 접근 감지만,
   // 주문에 들어가면 제스처 인식만 카메라를 잡도록 단계를 나눈다.
   const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen && !approachSuspended && !approachUnavailable
+  const gestureControlOn = gestureEnabled && !approachActive
+  const cameraControlOn = pipEnabled && gestureControlOn
+  const handleGestureToggle = () => {
+    rearmStartIdleTimerRef.current?.()
+    if (screen === 'start' && approachActive) {
+      // 수동 제어로 전환할 때 접근 감지에 할당된 카메라를 해제한다.
+      setApproachSuspended(true)
+      setGestureEnabled(true)
+      return
+    }
+
+    const nextEnabled = !gestureEnabled
+    setGestureEnabled(nextEnabled)
+    if (screen === 'start') {
+      if (nextEnabled) {
+        setApproachSuspended(true)
+      } else {
+        setPipEnabled(false)
+        setApproachSuspended(false)
+      }
+    }
+  }
+  const handleCameraToggle = () => {
+    rearmStartIdleTimerRef.current?.()
+    if (cameraControlOn) {
+      setPipEnabled(false)
+      return
+    }
+
+    if (screen === 'start') setApproachSuspended(true)
+    setGestureEnabled(true)
+    setPipEnabled(true)
+  }
   const { notifyUserInput } = useApproachDetector({
     enabled: approachActive,
     onModeAction: handleApproachModeAction,
@@ -1286,17 +1319,16 @@ function AppContent() {
             en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
           />
           <ControlText
-            onClick={() => setGestureEnabled(v => !v)}
-            on={gestureEnabled}
-            ko={`제스처 ${gestureEnabled ? 'ON' : 'OFF'}`}
-            en={`Gesture ${gestureEnabled ? 'ON' : 'OFF'}`}
+            onClick={handleGestureToggle}
+            on={gestureControlOn}
+            ko={`제스처 ${gestureControlOn ? 'ON' : 'OFF'}`}
+            en={`Gesture ${gestureControlOn ? 'ON' : 'OFF'}`}
           />
           <ControlText
-            disabled={!gestureEnabled}
-            onClick={() => gestureEnabled && setPipEnabled(v => !v)}
-            on={pipEnabled && gestureEnabled}
-            ko={`카메라 ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
-            en={`Camera ${pipEnabled && gestureEnabled ? 'ON' : 'OFF'}`}
+            onClick={handleCameraToggle}
+            on={cameraControlOn}
+            ko={`카메라 ${cameraControlOn ? 'ON' : 'OFF'}`}
+            en={`Camera ${cameraControlOn ? 'ON' : 'OFF'}`}
           />
           {/* 숫자인식 비활성 — 컨트롤 바 버튼
           <ControlText

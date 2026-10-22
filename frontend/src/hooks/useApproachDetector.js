@@ -103,25 +103,35 @@ export function useApproachDetector({
       return
     }
 
+    let closedByUs = false   // cleanup 전에 getUserMedia가 끝나는 경우 뒤늦게 열린 카메라를 닫는다.
+
     // 카메라 초기화
-    videoRef.current  = document.createElement('video')
+    const video = document.createElement('video')
+    videoRef.current  = video
     canvasRef.current = document.createElement('canvas')
-    videoRef.current.playsInline = true
-    videoRef.current.muted = true
+    video.playsInline = true
+    video.muted = true
 
     navigator.mediaDevices
       .getUserMedia({ video: { width: CAM_W, height: CAM_H, facingMode: 'user' } })
       .then(stream => {
-        videoRef.current.srcObject = stream
-        return videoRef.current.play()
+        if (closedByUs || videoRef.current !== video) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
+        video.srcObject = stream
+        return video.play()
       })
-      .catch(err => console.warn('[ApproachDetector] 카메라 접근 실패:', err))
+      .catch(err => {
+        video.srcObject?.getTracks().forEach(track => track.stop())
+        video.srcObject = null
+        if (!closedByUs) console.warn('[ApproachDetector] 카메라 접근 실패:', err)
+      })
 
     // WebSocket 연결
     const ws = new WebSocket(getWsUrl())
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
-    let closedByUs = false   // cleanup이 닫은 연결은 "감지 불가"로 보고하지 않는다
     let reported = false
     // 서버 오류·연결 끊김 → 카메라를 풀고 알린다(App이 제스처 등 다른 입력으로 복귀한다)
     const reportUnavailable = () => {

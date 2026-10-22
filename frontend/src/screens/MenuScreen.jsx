@@ -473,9 +473,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
             borderTop: '1px solid #e8e8e8',
             boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
           }}>
-            {/* 항목 목록 — 채팅 열림: 2개 높이, 기본: 3개 높이 스크롤 */}
+            {/* 항목 목록 — 기본은 약 2.2개, 채팅 열림은 압축 행 기준 70% 높이 */}
             <div style={{
-              maxHeight: chatOpen ? 172 : 324,
+              maxHeight: chatOpen ? 120 : 238,
               overflowY: 'auto',
               transition: 'max-height 0.35s ease',
             }}>
@@ -496,7 +496,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
 
             {/* 합계 + 결제하기 */}
             <div style={{
-              padding: '17px 24px 20px',
+              padding: '12px 18px 14px',
               borderTop: '1px solid #f0f0f0',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
@@ -506,10 +506,10 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                 const discountedTotal = cart.reduce((s, c) => s + (c.finalPrice ?? c.unitPrice) * c.qty, 0)
                 const hasDis = discountedTotal < grossTotal
                 return (
-                  <span style={{ fontSize: 24, color: '#888' }}>
+                  <span style={{ fontSize: 20, color: '#888' }}>
                     {t('cartSummary', totalQty, discountedTotal)}
                     {hasDis && (
-                      <span style={{ fontSize: 16, color: '#e44', fontWeight: 700, marginLeft: 6 }}>
+                      <span style={{ fontSize: 13, color: '#e44', fontWeight: 700, marginLeft: 6 }}>
                         (-{(grossTotal - discountedTotal).toLocaleString()}원)
                       </span>
                     )}
@@ -518,9 +518,9 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
               })()}
               <button onClick={() => nav('cart')} style={{
                 background: '#F5B800', color: '#1a1a1a',
-                border: 'none', borderRadius: 15,
-                padding: '21px 39px',
-                fontSize: 27, fontWeight: 900,
+                border: 'none', borderRadius: 11,
+                padding: '14px 27px',
+                fontSize: 20, fontWeight: 900,
                 cursor: 'pointer',
               }}>
                 {t('checkout')}

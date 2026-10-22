@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="900" viewBox="0 0 3200 900" role="img" aria-describedby="description">
+  <desc id="description">접근 감지가 흰 지팡이와 휠체어를 구분하고, 음성 인식 또는 손동작 인식 경로를 활성화해 사용자 입력을 화면에 반영하는 흐름도.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M1 1 L10 6 L1 11" fill="none" stroke="#222" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: "Noto Sans KR", "Malgun Gothic", sans-serif; fill: #202020; }
+      .node { fill: #fff; stroke: #252525; stroke-width: 2.2; }
+      .node-soft { fill: #f4f4f4; stroke: #252525; stroke-width: 2.2; }
+      .node-text { font-size: 21px; font-weight: 600; text-anchor: middle; }
+      .node-sub { font-size: 17px; font-weight: 500; text-anchor: middle; }
+      .lane-label { font-size: 20px; font-weight: 700; }
+      .branch-label { font-size: 17px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect width="3200" height="900" fill="#fff"/>
+
+  <!-- 접근 감지 및 유형 분기 -->
+  <ellipse cx="155" cy="450" rx="75" ry="48" class="node-soft"/>
+  <text x="155" y="457" class="node-text">대기 상태</text>
+
+  <path d="M230 450H300" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="300" y="375" width="280" height="150" class="node"/>
+  <text x="440" y="442" class="node-text">
+    <tspan x="440" dy="0">접근 감지</tspan>
+    <tspan x="440" dy="31" class="node-sub">휠체어·흰 지팡이 탐지</tspan>
+  </text>
+
+  <path d="M580 450H660" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <polygon points="760,350 860,450 760,550 660,450" class="node-soft"/>
+  <text x="760" y="443" class="node-text">
+    <tspan x="760" dy="0">감지 유형</tspan>
+    <tspan x="760" dy="28">확인</tspan>
+  </text>
+
+  <!-- 손동작 인식 경로 -->
+  <rect x="960" y="158" width="1080" height="192" rx="5" fill="#fafafa" stroke="#777" stroke-width="1.5" stroke-dasharray="8 6"/>
+  <text x="990" y="190" class="lane-label">손동작 인식 경로</text>
+
+  <path d="M760 350V260H1000" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="795" y="246" class="branch-label">휠체어</text>
+
+  <rect x="1000" y="210" width="270" height="112" class="node"/>
+  <text x="1135" y="259" class="node-text">
+    <tspan x="1135" dy="0">손동작 인식</tspan>
+    <tspan x="1135" dy="28" class="node-sub">카메라 영상 분석</tspan>
+  </text>
+
+  <path d="M1270 266H1370" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="1370" y="210" width="270" height="112" class="node"/>
+  <text x="1505" y="259" class="node-text">
+    <tspan x="1505" dy="0">제스처 해석</tspan>
+    <tspan x="1505" dy="28" class="node-sub">조작 명령으로 변환</tspan>
+  </text>
+
+  <path d="M1640 266H1740" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="1740" y="210" width="270" height="112" class="node"/>
+  <text x="1875" y="259" class="node-text">
+    <tspan x="1875" dy="0">화면 조작</tspan>
+    <tspan x="1875" dy="28" class="node-sub">선택·이동 실행</tspan>
+  </text>
+
+  <!-- 음성 인식 경로 -->
+  <rect x="960" y="550" width="1080" height="192" rx="5" fill="#fafafa" stroke="#777" stroke-width="1.5" stroke-dasharray="8 6"/>
+  <text x="990" y="582" class="lane-label">음성 인식 경로</text>
+
+  <path d="M760 550V660H1000" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="795" y="642" class="branch-label">흰 지팡이</text>
+
+  <rect x="1000" y="602" width="270" height="112" class="node"/>
+  <text x="1135" y="651" class="node-text">
+    <tspan x="1135" dy="0">음성 인식</tspan>
+    <tspan x="1135" dy="28" class="node-sub">사용자 발화 변환</tspan>
+  </text>
+
+  <path d="M1270 658H1370" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="1370" y="602" width="270" height="112" class="node"/>
+  <text x="1505" y="651" class="node-text">
+    <tspan x="1505" dy="0">발화 이해</tspan>
+    <tspan x="1505" dy="28" class="node-sub">요청 의도 파악</tspan>
+  </text>
+
+  <path d="M1640 658H1740" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="1740" y="602" width="270" height="112" class="node"/>
+  <text x="1875" y="651" class="node-text">
+    <tspan x="1875" dy="0">응답 생성</tspan>
+    <tspan x="1875" dy="28" class="node-sub">음성·화면 안내</tspan>
+  </text>
+
+  <!-- 두 인식 경로의 결과 통합 -->
+  <path d="M2010 266H2140V425H2240" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <path d="M2010 658H2180V495H2240" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="2240" y="375" width="320" height="170" class="node-soft"/>
+  <text x="2400" y="451" class="node-text">
+    <tspan x="2400" dy="0">서비스 화면 반영</tspan>
+    <tspan x="2400" dy="31" class="node-sub">사용자에게 결과 안내</tspan>
+  </text>
+
+  <path d="M2560 460H2720" fill="none" stroke="#222" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <ellipse cx="2900" cy="460" rx="180" ry="62" class="node-soft"/>
+  <text x="2900" y="453" class="node-text">
+    <tspan x="2900" dy="0">사용자 확인</tspan>
+    <tspan x="2900" dy="29" class="node-sub">다음 입력</tspan>
+  </text>
+</svg>

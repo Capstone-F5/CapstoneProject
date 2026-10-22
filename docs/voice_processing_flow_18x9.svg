@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="1600" viewBox="0 0 3600 1800" role="img" aria-label="음성 인식 및 처리 흐름도">
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1 L12 7 L1 13 Z" fill="#222"/>
+    </marker>
+    <style>
+      text { font-family: "Noto Sans KR", "Malgun Gothic", sans-serif; fill: #171717; }
+      .node { fill: #fff; stroke: #222; stroke-width: 3; }
+      .node-soft { fill: #f4f4f4; stroke: #222; stroke-width: 3; }
+      .flow { fill: none; stroke: #222; stroke-width: 4; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #555; stroke-width: 3.5; stroke-dasharray: 12 10; marker-end: url(#arrow); }
+      .node-main { font-size: 32px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+      .node-sub { font-size: 24px; font-weight: 400; text-anchor: middle; dominant-baseline: middle; fill: #444; }
+      .node-note { font-size: 21px; font-weight: 400; text-anchor: middle; dominant-baseline: middle; fill: #555; }
+      .node-main-sm { font-size: 28px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+      .node-sub-sm { font-size: 21px; font-weight: 400; text-anchor: middle; dominant-baseline: middle; fill: #444; }
+      .branch-label { font-size: 22px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; }
+    </style>
+  </defs>
+
+  <rect width="3600" height="1800" fill="#fff"/>
+
+  <!-- Connectors are kept clear of all labels and node borders. -->
+  <path class="flow" d="M350 800 H410"/>
+  <path class="flow" d="M770 800 H830"/>
+  <path class="flow" d="M1190 800 H1250"/>
+  <path class="flow" d="M1510 800 H1570"/>
+  <path class="flow" d="M1970 800 H2030"/>
+  <path class="flow" d="M2470 800 H2530"/>
+  <path d="M2940 800 H3000" fill="none" stroke="#222" stroke-width="4"/>
+  <circle cx="3000" cy="800" r="8" fill="#222"/>
+  <path class="flow" d="M3000 800 V530 H3060"/>
+  <path class="flow" d="M3000 800 V1080 H3060"/>
+
+  <path class="flow" d="M1380 920 V1060"/>
+  <path class="loop" d="M1380 1220 V1350 H250 V865"/>
+
+  <ellipse class="node" cx="250" cy="800" rx="100" ry="65"/>
+  <text class="node-main" x="250" y="800">사용자 발화</text>
+
+  <rect class="node" x="410" y="700" width="360" height="200" rx="22"/>
+  <text class="node-main" x="590" y="779">음성 입력 수집</text>
+  <text class="node-sub" x="590" y="829">발화 감지 · 녹음</text>
+
+  <rect class="node" x="830" y="690" width="360" height="220" rx="22"/>
+  <text class="node-main" x="1010" y="755">음성 인식</text>
+  <text class="node-sub" x="1010" y="805">발화를 문자로 변환</text>
+  <text class="node-note" x="1010" y="851">잡음 · 환각 구간 필터</text>
+
+  <path class="node-soft" d="M1380 680 L1510 800 L1380 920 L1250 800 Z"/>
+  <text class="node-main" x="1380" y="782" font-size="30">인식 결과</text>
+  <text class="node-sub" x="1380" y="824">확인</text>
+
+  <rect class="node" x="1570" y="700" width="400" height="200" rx="22"/>
+  <text class="node-main" x="1770" y="779">문맥 · 의도 분석</text>
+  <text class="node-sub" x="1770" y="829">대화 · 화면 상태 해석</text>
+
+  <rect class="node-soft" x="2030" y="690" width="440" height="220" rx="22"/>
+  <text class="node-main" x="2250" y="777">규칙 기반 검증기</text>
+  <text class="node-sub" x="2250" y="831">주문 액션 · 응답 일치 점검</text>
+
+  <rect class="node" x="2530" y="700" width="410" height="200" rx="22"/>
+  <text class="node-main" x="2735" y="779">처리 결과 생성</text>
+  <text class="node-sub" x="2735" y="829">화면 명령 · 응답 문장</text>
+
+  <text class="branch-label" x="1530" y="750">인식됨</text>
+  <text class="branch-label" x="1500" y="990">인식되지 않음</text>
+  <text class="branch-label" x="800" y="1318" fill="#555">다시 발화</text>
+
+  <rect class="node-soft" x="1230" y="1060" width="300" height="160" rx="20"/>
+  <text class="node-main-sm" x="1380" y="1115">재입력 안내</text>
+  <text class="node-sub-sm" x="1380" y="1167">다시 말씀해 주세요</text>
+
+  <rect class="node" x="3060" y="430" width="440" height="200" rx="22"/>
+  <text class="node-main" x="3280" y="510">화면 동작 실행</text>
+  <text class="node-sub" x="3280" y="558">주문 화면 · 상태 갱신</text>
+
+  <rect class="node" x="3060" y="970" width="440" height="220" rx="22"/>
+  <text class="node-main" x="3280" y="1059">음성 응답</text>
+  <text class="node-sub" x="3280" y="1107">문장 합성 · 재생</text>
+</svg>
