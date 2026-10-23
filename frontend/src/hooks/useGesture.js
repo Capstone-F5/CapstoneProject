@@ -1,14 +1,39 @@
 import { useEffect, useRef } from 'react'
 
-// ── 카메라 설정 ──────────────────────────────────────────────────────────────
-const CAM_W   = 640
-const CAM_H   = 480
-const MAX_FPS = 15
+// ── 카메라 및 제스처 런타임 설정 ─────────────────────────────────────────────
+const CAM_W_DEFAULT   = 640
+const CAM_H_DEFAULT   = 480
+const MAX_FPS_DEFAULT = 15
 // 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
-const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
+const AR_REF  = CAM_W_DEFAULT / CAM_H_DEFAULT   // ≈ 1.333
 
 const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
+
+export function getActiveGestureSettings() {
+  const fallback = {
+    min_palm_size: 0.08,
+    detection_confidence: 0.65,
+    tracking_confidence: 0.50,
+    target_fps: 15,
+    cam_width: 640,
+    cam_height: 480,
+    margin_left: 0.20,
+    margin_right: 0.20,
+    margin_top: 0.25,
+    margin_bottom: 0.10,
+    edge_pad: 0.05,
+    margin_x: 0.20,
+    margin_bot: 0.10,
+  }
+  if (typeof window === 'undefined') return fallback
+  if (window.__kioskGestureConfig) return { ...fallback, ...window.__kioskGestureConfig }
+  try {
+    const raw = window.localStorage.getItem('kioskGestureConfig')
+    if (raw) return { ...fallback, ...JSON.parse(raw) }
+  } catch {}
+  return fallback
+}
 
 // ── 손 인식 엔진 (Web Worker + MediaPipe Tasks HandLandmarker) ───────────────
 // 추론을 메인 스레드 밖으로 빼는 실험용 엔진. 기본은 기존 @mediapipe/hands(메인 스레드)다.
@@ -140,11 +165,11 @@ function _isValidLandmarks(lm) {
 }
 
 // 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
-const MIN_PALM_SIZE = 0.10  // 이 이하면 너무 멀리 있는 손으로 간주
+export const DEFAULT_MIN_PALM_SIZE = 0.08  // 기본값 (설정값에 의해 런타임 동적 조정)
 
 // 정규화 좌표의 x는 화면 비율만큼 압축되어 있다. 보정하지 않으면 손을 옆으로 눕혔을 때
 // 같은 거리에서도 크기가 작게 측정되어, 회전만으로 임계값 아래로 떨어진다.
-function _palmSize(lm, camAR = 1) {
+export function _palmSize(lm, camAR = 1) {
   const a = lm[0], b = lm[9]
   if (!a || !b) return Number.NaN
   if (!Number.isFinite(a.x) || !Number.isFinite(a.y) ||
@@ -223,20 +248,28 @@ function _isPinching(lm, alreadyPinching = false) {
 }
 
 // 카메라 활성 구역 마진 (손바닥 중심 기준 → 손가락 끝 오프셋 보정 포함)
-const CAM_MARGIN_L   = 0.20   // 좌: 손 측면 오프셋 보정
-const CAM_MARGIN_R   = 0.20   // 우: 손 측면 오프셋 보정
-const CAM_MARGIN_TOP = 0.25   // 상: 기본 10% + 손가락 끝↔손바닥 중심 차이 15%
-const CAM_MARGIN_BOT = 0.10
+export const DEFAULT_CAM_MARGINS = {
+  l: 0.20,
+  r: 0.20,
+  top: 0.25,
+  bot: 0.10,
+  edgePad: 0.05,
+}
+const CAM_MARGIN_L   = DEFAULT_CAM_MARGINS.l
+const CAM_MARGIN_R   = DEFAULT_CAM_MARGINS.r
+const CAM_MARGIN_TOP = DEFAULT_CAM_MARGINS.top
+const CAM_MARGIN_BOT = DEFAULT_CAM_MARGINS.bot
 const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
 const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
 
-// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 5% 앞에서 커서가 화면 끝에 닿는다.
-// 카메라 가장자리에서는 랜드마크 인식이 불안정해 모서리 도달이 어렵기 때문.
+// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 패딩 앞에서 커서가 화면 끝에 닿는다.
 const CAM_EDGE_PAD = 0.05
 
 // 활성 구역 내 0~1 좌표를 패딩만큼 잘라내고 다시 0~1로 늘린다.
-function _padNorm(v) {
-  return Math.max(0, Math.min(1, (v - CAM_EDGE_PAD) / (1 - 2 * CAM_EDGE_PAD)))
+function _padNorm(v, pad = CAM_EDGE_PAD) {
+  if (pad <= 0) return Math.max(0, Math.min(1, v))
+  const denom = Math.max(0.01, 1 - 2 * pad)
+  return Math.max(0, Math.min(1, (v - pad) / denom))
 }
 
 // ── 클라이언트 사이드 제스처 인식 ────────────────────────────────────────────
@@ -459,8 +492,8 @@ const HAND_CONNECTIONS = [
   [0,17],[5,9],[9,13],[13,17],       // 손바닥
 ]
 
-// PiP 캔버스에 영상 + 랜드마크를 그린다 (미러 반전 포함)
-function _drawPip(canvas, video, lms, handed) {
+// PiP 캔버스에 영상 + 랜드마크를 그린다 (미러 반전 포함 및 모서리 활성 영역 가이드라인)
+function _drawPip(canvas, video, lms, handed, margins = DEFAULT_CAM_MARGINS) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const vw = video.videoWidth, vh = video.videoHeight
@@ -474,6 +507,30 @@ function _drawPip(canvas, video, lms, handed) {
   ctx.translate(vw, 0)
   ctx.scale(-1, 1)
   ctx.drawImage(video, 0, 0)
+  ctx.restore()
+
+  // 모서리 마진 가이드 (활성 영역 사각형 및 마진 영역 반투명 음영)
+  const ml = (margins?.l ?? CAM_MARGIN_L) * vw
+  const mr = (margins?.r ?? CAM_MARGIN_R) * vw
+  const mt = (margins?.top ?? CAM_MARGIN_TOP) * vh
+  const mb = (margins?.bot ?? CAM_MARGIN_BOT) * vh
+  const aw = Math.max(0, vw - ml - mr)
+  const ah = Math.max(0, vh - mt - mb)
+
+  ctx.save()
+  // 마진 영역 반투명 음영 마스크
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)'
+  ctx.fillRect(0, 0, vw, mt)             // 상단 마진
+  ctx.fillRect(0, vh - mb, vw, mb)       // 하단 마진
+  ctx.fillRect(0, mt, ml, ah)            // 좌측 마진
+  ctx.fillRect(vw - mr, mt, mr, ah)      // 우측 마진
+
+  // 활성 영역 테두리
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)'
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 3])
+  ctx.strokeRect(ml, mt, aw, ah)
+  ctx.setLineDash([])
   ctx.restore()
 
   // 각 손 랜드마크
@@ -511,14 +568,14 @@ function _drawPip(canvas, video, lms, handed) {
 }
 
 // ── 카메라 ───────────────────────────────────────────────────────────────────
-async function openCamera() {
+async function openCamera(w = CAM_W_DEFAULT, h = CAM_H_DEFAULT, fps = MAX_FPS_DEFAULT) {
   for (let attempt = 1; attempt <= CAM_RETRY_COUNT; attempt++) {
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: {
-          width:     { ideal: CAM_W, max: CAM_W },
-          height:    { ideal: CAM_H, max: CAM_H },
-          frameRate: { ideal: MAX_FPS, max: MAX_FPS },
+          width:     { ideal: w, max: w },
+          height:    { ideal: h, max: h },
+          frameRate: { ideal: fps, max: fps },
         },
       })
     } catch (err) {
@@ -548,6 +605,20 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
   useEffect(() => {
     if (!enabled) return
 
+    // ── 런타임 제스처 설정 (동적 감도 및 RPi4B 최적화) ──────────────────────────
+    let gestureCfg = getActiveGestureSettings()
+    let currentMinPalmSize = Number(gestureCfg.min_palm_size) || DEFAULT_MIN_PALM_SIZE
+    let currentTargetFps = Number(gestureCfg.target_fps) || MAX_FPS_DEFAULT
+    let currentDetectionConf = Number(gestureCfg.detection_confidence) || 0.65
+    let currentTrackingConf = Number(gestureCfg.tracking_confidence) || 0.50
+    let currentMarginL = Number(gestureCfg.margin_left ?? gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.l
+    let currentMarginR = Number(gestureCfg.margin_right ?? gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.r
+    let currentMarginTop = Number(gestureCfg.margin_top) || DEFAULT_CAM_MARGINS.top
+    let currentMarginBot = Number(gestureCfg.margin_bottom ?? gestureCfg.margin_bot) || DEFAULT_CAM_MARGINS.bot
+    let currentEdgePad = Number(gestureCfg.edge_pad ?? DEFAULT_CAM_MARGINS.edgePad)
+    let currentActiveX = Math.max(0.1, 1.0 - currentMarginL - currentMarginR)
+    let currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
+
     let stream   = null
     let video    = null
     let hands    = null
@@ -557,6 +628,38 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let inflight = false
     let lastSent = 0
     let cameraSettings = null
+
+    // 설정 실시간 업데이트 구독 (대시보드 또는 키오스크 디버깅 페이지에서 슬라이더 조절 시 즉각 반영)
+    const handleGestureConfigChange = (e) => {
+      const cfg = e.detail || getActiveGestureSettings()
+      if (!cfg) return
+      gestureCfg = cfg
+      if (typeof cfg.min_palm_size === 'number') currentMinPalmSize = cfg.min_palm_size
+      if (typeof cfg.target_fps === 'number') currentTargetFps = cfg.target_fps
+      if (typeof cfg.detection_confidence === 'number') currentDetectionConf = cfg.detection_confidence
+      if (typeof cfg.tracking_confidence === 'number') currentTrackingConf = cfg.tracking_confidence
+      if (typeof cfg.margin_left === 'number') currentMarginL = cfg.margin_left
+      else if (typeof cfg.margin_x === 'number') currentMarginL = cfg.margin_x
+      if (typeof cfg.margin_right === 'number') currentMarginR = cfg.margin_right
+      else if (typeof cfg.margin_x === 'number') currentMarginR = cfg.margin_x
+      if (typeof cfg.margin_top === 'number') currentMarginTop = cfg.margin_top
+      if (typeof cfg.margin_bottom === 'number') currentMarginBot = cfg.margin_bottom
+      else if (typeof cfg.margin_bot === 'number') currentMarginBot = cfg.margin_bot
+      if (typeof cfg.edge_pad === 'number') currentEdgePad = cfg.edge_pad
+      currentActiveX = Math.max(0.1, 1.0 - currentMarginL - currentMarginR)
+      currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
+
+      if (hands && typeof hands.setOptions === 'function') {
+        try {
+          hands.setOptions({
+            minDetectionConfidence: currentDetectionConf,
+            minTrackingConfidence: currentTrackingConf,
+          })
+        } catch {}
+      }
+    }
+    window.addEventListener('kiosk-gesture-config-changed', handleGestureConfigChange)
+
     const perf = {
       windowStarted: performance.now(), sent: 0, results: 0,
       latencyTotal: 0, latencyMax: 0, sendStarted: 0, workerTotal: 0,
@@ -569,7 +672,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       const seconds = elapsed / 1000
       const avgLatency = perf.results ? perf.latencyTotal / perf.results : 0
       const metrics = {
-        targetFps: MAX_FPS,
+        targetFps: currentTargetFps,
         camera: cameraSettings,
         sentFps: +(perf.sent / seconds).toFixed(1),
         resultFps: +(perf.results / seconds).toFixed(1),
@@ -666,7 +769,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
       try {
         if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
-            _palmSize(lms[activeIdx], camAR) >= MIN_PALM_SIZE) {
+            _palmSize(lms[activeIdx], camAR) >= currentMinPalmSize) {
           const lm       = lms[activeIdx]
           // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
           const pointing = wasPointing
@@ -689,9 +792,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
               if (!wasActive) resetPointerState(pointerState)
               wasActive = true
 
-              // 절대 선형 매핑 — 방향별 마진 개별 적용
-              const normX = _padNorm((px - CAM_MARGIN_L)   / CAM_ACTIVE_X)
-              const normY = _padNorm((py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y)
+              // 절대 선형 매핑 — 방향별 마진 및 가장자리 도달 패딩 개별 적용
+              const normX = _padNorm((px - currentMarginL)   / currentActiveX, currentEdgePad)
+              const normY = _padNorm((py - currentMarginTop) / currentActiveY, currentEdgePad)
               const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
               perf.pointerFrames++
               pointerRef.current?.({ x: sx, y: sy })
@@ -747,7 +850,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
-        if (_palmSize(lm, camAR) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
+        if (_palmSize(lm, camAR) < currentMinPalmSize) continue   // 너무 먼 손 무시
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
@@ -803,9 +906,16 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         gesture:       dominant,
       })
 
-      // PiP 캔버스에 인식 영상 + 관절 그리기
+      // PiP 캔버스에 인식 영상 + 관절 그리기 (활성 영역 마진 가이드 포함)
       if (pipCanvasRef?.current && video) {
-        try { _drawPip(pipCanvasRef.current, video, lms, handed) } catch {}
+        try {
+          _drawPip(pipCanvasRef.current, video, lms, handed, {
+            l: currentMarginL,
+            r: currentMarginR,
+            top: currentMarginTop,
+            bot: currentMarginBot,
+          })
+        } catch {}
       }
     }
 
@@ -816,7 +926,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (!active) return
       const now   = performance.now()
       const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / MAX_FPS &&
+                    now - lastSent >= 1000 / currentTargetFps &&
                     now >= sendCooldownUntil
       if (ready) {
         inflight = true
@@ -881,8 +991,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           hands.setOptions({
             maxNumHands:            1,
             modelComplexity:        0,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence:  0.5,
+            minDetectionConfidence: currentDetectionConf,
+            minTrackingConfidence:  currentTrackingConf,
           })
           hands.onResults(handleResults)
           // 생략하면 첫 send()가 WASM·모델 로딩까지 떠안아 수 초간 멈춘다.
@@ -891,7 +1001,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         })()
 
         const cameraReady = (async () => {
-          const s = await openCamera()
+          const reqW = Number(gestureCfg?.cam_width) || CAM_W_DEFAULT
+          const reqH = Number(gestureCfg?.cam_height) || CAM_H_DEFAULT
+          const s = await openCamera(reqW, reqH, currentTargetFps)
           // 정리된 실행이 카메라를 계속 쥐고 있으면 살아있는 실행이 NotReadableError를 맞는다.
           if (!active) { s.getTracks().forEach(t => t.stop()); return }
           stream = s
@@ -933,6 +1045,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
+      window.removeEventListener('kiosk-gesture-config-changed', handleGestureConfigChange)
       cancelEngine?.()
       clearTimeout(inflightWatchdog)
       clearTimeout(hideTimer)

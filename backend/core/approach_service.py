@@ -27,6 +27,14 @@ CONFIRM_WINDOW = 4
 CONFIRM_HITS = 3
 
 
+def _get_approach_runtime_cfg() -> dict:
+    try:
+        from core.kiosk_settings import get_kiosk_settings
+        return get_kiosk_settings().get("approach", {})
+    except Exception:
+        return {}
+
+
 @dataclass
 class ApproachSession:
     mode_on: bool = False
@@ -44,9 +52,15 @@ class ApproachSession:
     })
 
     def confirmed(self, name: str, detected: bool) -> bool:
+        cfg = _get_approach_runtime_cfg()
+        win = int(cfg.get("confirm_window", CONFIRM_WINDOW))
+        hits = int(cfg.get("confirm_hits", CONFIRM_HITS))
         h = self.history[name]
+        if h.maxlen != win:
+            h = deque(list(h)[-win:], maxlen=win)
+            self.history[name] = h
         h.append(detected)
-        return sum(h) >= CONFIRM_HITS
+        return sum(h) >= hits
 
     def activate(self, trigger_type: str) -> None:
         self.mode_on = True
@@ -84,24 +98,17 @@ def process_frame_result(
     white_cane_confidence: float,
     wheelchair_detected: bool,
     wheelchair_confidence: float,
+    person_detected: bool = False,
+    person_confidence: float = 0.0,
 ) -> dict:
     """
     프레임 추론 결과와 세션 상태를 기반으로 시나리오 로직 실행.
-
-    Returns:
-        {
-            "white_cane_detected": bool,
-            "white_cane_confidence": float,
-            "wheelchair_detected": bool,
-            "wheelchair_confidence": float,
-            "active_trigger": "white_cane" | "wheelchair" | None,
-            "mode_action": "voice" | "gesture" | None,  # 프론트가 켤 입력 모드
-            "mode_on": bool,
-            "announcement_count": int,
-            "mode_ended": bool,
-            "confirmed": {"white_cane": bool, "wheelchair": bool},  # 연속 프레임 확정 여부
-        }
     """
+    cfg = _get_approach_runtime_cfg()
+    rearm_frames = int(cfg.get("rearm_absent_frames", REARM_ABSENT_FRAMES))
+    announce_interval = float(cfg.get("announcement_interval_sec", ANNOUNCEMENT_INTERVAL))
+    max_announces = int(cfg.get("max_announcements", MAX_ANNOUNCEMENTS))
+
     mode_ended = False
     current_time = time.time()
 
@@ -113,7 +120,7 @@ def process_frame_result(
         # 종료 후 잠금: 대상이 연속으로 안 보이면 해제, 다시 보이면 카운트 리셋
         if trigger is None:
             session.absent_frames += 1
-            if session.absent_frames >= REARM_ABSENT_FRAMES:
+            if session.absent_frames >= rearm_frames:
                 session.latched = False
                 session.absent_frames = 0
         else:
@@ -125,8 +132,8 @@ def process_frame_result(
     # ACTIVE 상태 내 타이머 처리
     if session.mode_on:
         elapsed = current_time - session.last_announcement_time
-        if elapsed >= ANNOUNCEMENT_INTERVAL:
-            if session.announcement_count < MAX_ANNOUNCEMENTS:
+        if elapsed >= announce_interval:
+            if session.announcement_count < max_announces:
                 session.last_announcement_time = current_time
                 session.announcement_count += 1
             else:
@@ -135,6 +142,8 @@ def process_frame_result(
 
     active_trigger = session.trigger_type
     return {
+        "person_detected": person_detected,
+        "person_confidence": round(person_confidence, 4),
         "white_cane_detected": white_cane_detected,
         "white_cane_confidence": round(white_cane_confidence, 4),
         "wheelchair_detected": wheelchair_detected,

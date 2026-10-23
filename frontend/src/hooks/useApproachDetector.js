@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
+import { MotionDetector } from '../utils/motionDetector'
 
 const WS_PATH = '/ws/approach'
 const FRAME_INTERVAL_MS = 500   // 0.5초에 1프레임 (2fps)
@@ -9,12 +10,17 @@ const CAM_H = 240
 /**
  * 흰 지팡이 / 휠체어 접근 감지 훅.
  *
- * 카메라 프레임을 0.5초마다 서버로 전송하고, 흰 지팡이나 휠체어가 감지되면
+ * 카메라 프레임을 주기적(기본 0.5초)으로 서버로 전송하고, 흰 지팡이나 휠체어가 감지되면
  * TTS 오디오를 재생하고 콜백을 호출한다. 감지 대상에 따라 프론트가 켜야 할
  * 입력 모드가 다르다 (docs/AI 질의.md 설계: 흰 지팡이 → 음성, 휠체어 → 제스처).
  *
  * @param {object} options
  * @param {boolean} options.enabled          - 감지 활성화 여부
+ * @param {number}  options.frameIntervalMs  - 프레임 전송 주기(ms, 기본 500)
+ * @param {boolean} options.motionGateEnabled - 배경 변화 적을 시 전송 스킵 (기본 true)
+ * @param {number}  options.motionThreshold   - 모션 감지 활성 픽셀 최소 비율 (기본 0.025)
+ * @param {number}  options.motionKeepaliveSec - 정적 대기 시 하트비트 전송 간격 초 (기본 4.0초)
+ * @param {function} options.onMotionChange   - 매 프레임 모션 판정 결과 콜백
  * @param {function} options.onModeAction    - 새 감지로 모드 활성화 시 호출 ('voice' | 'gesture')
  * @param {function} options.onModeEnd       - 3회 안내 완료 또는 사용자 입력 후 호출
  * @param {function} options.onStateChange   - 매 프레임 결과 수신 시 호출 ({ mode_on, active_trigger, announcement_count, ... })
@@ -22,17 +28,28 @@ const CAM_H = 240
  */
 export function useApproachDetector({
   enabled = true,
+  frameIntervalMs = FRAME_INTERVAL_MS,
+  motionGateEnabled = true,
+  motionThreshold = 0.025,
+  motionKeepaliveSec = 4.0,
+  onMotionChange,
   onModeAction,
   onModeEnd,
   onStateChange,
   onUnavailable,
 } = {}) {
-  const wsRef        = useRef(null)
-  const videoRef     = useRef(null)
-  const canvasRef    = useRef(null)
-  const timerRef     = useRef(null)
-  const audioRef     = useRef(null)
-  const prevModeRef  = useRef(false)
+  const wsRef              = useRef(null)
+  const videoRef           = useRef(null)
+  const canvasRef          = useRef(null)
+  const timerRef           = useRef(null)
+  const audioRef           = useRef(null)
+  const prevModeRef        = useRef(false)
+  const lastServerStateRef = useRef(null)
+  const motionDetectorRef  = useRef(new MotionDetector({
+    motionThreshold,
+    keepaliveMs: motionKeepaliveSec * 1000,
+    enabled: motionGateEnabled,
+  }))
 
   const getWsUrl = useCallback(() => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -58,6 +75,23 @@ export function useApproachDetector({
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     if (!video || video.readyState < 2) return
 
+    // 배경 변화 감지(모션 게이트) 판정
+    const decision = motionDetectorRef.current.evaluate(video, {
+      enabled: motionGateEnabled,
+      motionThreshold: Number(motionThreshold) || 0.025,
+      keepaliveMs: (Number(motionKeepaliveSec) || 4.0) * 1000,
+      modeOn: Boolean(lastServerStateRef.current?.mode_on),
+    })
+
+    if (onMotionChange) {
+      onMotionChange(decision)
+    }
+
+    // 움직임이 없고 킵얼라이브 주기도 아니며 안내 중도 아니라면 프레임 전송 스킵
+    if (!decision.shouldSend) {
+      return
+    }
+
     canvas.width  = CAM_W
     canvas.height = CAM_H
     const ctx = canvas.getContext('2d')
@@ -71,7 +105,7 @@ export function useApproachDetector({
         }
       })
     }, 'image/jpeg', JPEG_QUALITY)
-  }, [])
+  }, [motionGateEnabled, motionThreshold, motionKeepaliveSec, onMotionChange])
 
   const playAudio = useCallback((bytes) => {
     const blob = new Blob([bytes], { type: 'audio/mpeg' })
@@ -141,8 +175,9 @@ export function useApproachDetector({
       onUnavailable?.()
     }
 
+    const intervalMs = Math.max(150, Number(frameIntervalMs) || FRAME_INTERVAL_MS)
     ws.onopen = () => {
-      timerRef.current = setInterval(sendFrame, FRAME_INTERVAL_MS)
+      timerRef.current = setInterval(sendFrame, intervalMs)
     }
 
     ws.onmessage = (e) => {
@@ -161,6 +196,8 @@ export function useApproachDetector({
         return
       }
 
+      lastServerStateRef.current = data
+
       // 새 감지로 모드 활성화 알림 — mode_action('voice'|'gesture')과 함께 전달
       if (data.mode_on && !prevModeRef.current) {
         onModeAction?.(data.mode_action)
@@ -173,12 +210,20 @@ export function useApproachDetector({
 
       prevModeRef.current = data.mode_on
       onStateChange?.({
-        mode_on:              data.mode_on,
-        active_trigger:       data.active_trigger,
-        mode_action:          data.mode_action,
-        announcement_count:   data.announcement_count,
-        white_cane_detected:  data.white_cane_detected,
-        wheelchair_detected:  data.wheelchair_detected,
+        mode_on:                data.mode_on,
+        active_trigger:         data.active_trigger,
+        mode_action:            data.mode_action,
+        announcement_count:     data.announcement_count,
+        person_detected:        data.person_detected,
+        person_confidence:      data.person_confidence,
+        person_box_h:           data.person_box_h,
+        white_cane_detected:    data.white_cane_detected,
+        white_cane_confidence:  data.white_cane_confidence,
+        white_cane_box_h:       data.white_cane_box_h,
+        wheelchair_detected:    data.wheelchair_detected,
+        wheelchair_confidence:  data.wheelchair_confidence,
+        wheelchair_box_h:       data.wheelchair_box_h,
+        confirmed:              data.confirmed,
       })
     }
 
@@ -197,7 +242,7 @@ export function useApproachDetector({
       ws.close()
       wsRef.current = null
     }
-  }, [enabled, getWsUrl, sendFrame, playAudio, onModeAction, onModeEnd, onStateChange, onUnavailable, stopCamera])
+  }, [enabled, frameIntervalMs, getWsUrl, sendFrame, playAudio, onModeAction, onModeEnd, onStateChange, onUnavailable, stopCamera])
 
   return { notifyUserInput }
 }

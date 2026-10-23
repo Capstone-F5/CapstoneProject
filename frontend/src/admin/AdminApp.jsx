@@ -8,19 +8,24 @@ import PaymentsPage from './pages/PaymentsPage.jsx'
 import MenuPage from './pages/MenuPage.jsx'
 import CouponsPage from './pages/CouponsPage.jsx'
 import UsersPage from './pages/UsersPage.jsx'
+import KioskSettingsPage from './pages/KioskSettingsPage.jsx'
 
 const PAGES = {
-  dashboard: { label: '대시보드',  Component: DashboardPage },
-  orders:    { label: '주문 관리', Component: OrdersPage    },
-  payments:  { label: '결제·환불', Component: PaymentsPage  },
-  menu:      { label: '메뉴 관리', Component: MenuPage      },
-  coupons:   { label: '쿠폰·할인', Component: CouponsPage   },
-  users:     { label: '회원 관리', Component: UsersPage     },
+  dashboard:     { label: '대시보드',    Component: DashboardPage     },
+  orders:        { label: '주문 관리',   Component: OrdersPage        },
+  payments:      { label: '결제·환불',   Component: PaymentsPage      },
+  menu:          { label: '메뉴 관리',   Component: MenuPage          },
+  coupons:       { label: '쿠폰·할인',   Component: CouponsPage       },
+  users:         { label: '회원 관리',   Component: UsersPage         },
+  kioskSettings: { label: '키오스크 설정', Component: KioskSettingsPage },
 }
 
 export default function AdminApp() {
   const [admin, setAdmin] = useState(null)
-  const [page, setPage] = useState('dashboard')
+  const [page, setPage] = useState(() => {
+    const hash = window.location.hash.replace('#', '')
+    return PAGES[hash] ? hash : 'dashboard'
+  })
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {

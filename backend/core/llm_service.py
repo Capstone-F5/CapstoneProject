@@ -19,17 +19,18 @@ from core.cart_context import (
     is_cart_status_query,
 )
 from ai_modules.llm.action_context import (
-    get_actions, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
-    set_stt_original, set_recent_user_text, set_recent_turns, get_recent_turns, get_checkout_snapshot, reset_guards, record_guard, get_guard_hits,
+    get_actions, push_action, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
+    get_last_bot_text, set_stt_original, set_recent_user_text, set_recent_turns, get_recent_turns, get_checkout_snapshot,
+    reset_guards, record_guard, get_guard_hits,
 )
-from ai_modules.llm import guards, order_parser
+from ai_modules.llm import guards, order_parser, checkout_progress
 from ai_modules.llm.guards import NOISE_REPLY, correct_reply, fix_stt, guard_mode, is_noise
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm import cart_history
 from ai_modules.llm.checkout_progress import snapshot as checkout_snapshot
 from . import order_hints
 from .cart_commands import complete_set_followup, try_command
-from .intent_fallback import _CHECKOUT_INTENT, ensure_actions
+from .intent_fallback import _CHECKOUT_INTENT, ensure_actions, is_decline_more_menu
 from ai_modules.llm.memory import get_memory, save_and_prune
 from ai_modules.llm.session_context import set_session_id
 from ai_modules.llm.rag import get_active_discount_context
@@ -245,8 +246,8 @@ def _align_reply_with_actions(output: str) -> str:
 
 
 async def _server_cart_has_items(session_id: str, user_input: str) -> bool:
-    """결제 의사를 말한 턴에만 서버 장바구니에 품목이 있는지 본다(요청의 cart는 비어 올 수 있다)."""
-    if not _CHECKOUT_INTENT.search(user_input or ""):
+    """결제 의사를 말한 턴(또는 추가 주문 질문에 거절한 턴)에만 서버 장바구니에 품목이 있는지 본다(요청의 cart는 비어 올 수 있다)."""
+    if not (_CHECKOUT_INTENT.search(user_input or "") or is_decline_more_menu(user_input or "", get_last_bot_text())):
         return False
     from ai_modules.llm import api_client
     try:
@@ -292,16 +293,49 @@ async def _checkout_summary_reply(session_id: str, output: str, language: str | 
     items = cart.get("items") or []
     if not items:
         return output
-    parts = []
+    counts: dict[tuple[str, bool], int] = {}
     for it in items:
         is_set = any(s.get("option_group") == "SET_UPGRADE" for s in it.get("selected_options", []))
-        parts.append(f"{it['name_ko']} {'세트' if is_set else '단품'} {int(it.get('quantity', 1))}개")
+        key = (it["name_ko"], is_set)
+        counts[key] = counts.get(key, 0) + int(it.get("quantity", 1))
+    parts = [f"{name} {'세트' if is_set else '단품'} {qty}개" for (name, is_set), qty in counts.items()]
     total = int(float(cart.get("total") or 0))
     text = f"담긴 메뉴는 {', '.join(parts)}입니다. 총 합계는 {total:,}원입니다. 포인트 적립하시겠어요?"
     if text != output:
         record_guard("checkout_summary_from_cart", f"결제 안내를 서버 장바구니 기준으로 만듦 (모델 응답: 「{output[:50]}」)",
                      blocked=False, fixed=True)
     return text
+
+
+async def _try_decline_more_to_checkout(
+    session_id: str,
+    user_input: str,
+    language: str | None,
+    screen: str | None,
+    cart: list | None,
+    snapshot_before: frozenset[str],
+) -> str | None:
+    """직전 안내에서 메뉴를 담고 '다른 메뉴를 추가하시겠어요?'라고 물었을 때 손님이 '아니/없어요/됐어요'로 답하면
+    LLM을 거치지 않고 곧바로 장바구니 화면 전환 + 결제 시작(start_checkout) + 서버 장바구니 요약 안내를 반환한다."""
+    if (guard_mode() != "enforce" or language not in (None, "ko")
+            or screen not in ("menu", "cart") or "start_checkout" in snapshot_before):
+        return None
+    if not is_decline_more_menu(user_input, get_last_bot_text()):
+        return None
+    has_items = bool(cart) or await _server_cart_has_items(session_id, user_input)
+    if not has_items:
+        return None
+    if screen != "cart":
+        push_action({"type": "navigate", "screen": "cart"})
+    push_action({"type": "start_checkout"})
+    checkout_progress.mark_done(session_id, "start_checkout")
+    record_guard(
+        "decline_more_to_checkout",
+        f"「{user_input[:30]}」 추가 주문 거절 → 결제 시작 안내",
+        blocked=False,
+        fixed=True,
+    )
+    return await _checkout_summary_reply(session_id, _POINTS_ASK["ko"], language)
 
 
 async def _direct_command(session_id: str, user_input: str, language: str | None, screen: str | None,
@@ -501,6 +535,14 @@ def _context_message(cart: list, screen: str | None, order_type: str | None = No
     return "\n".join(parts)
 
 
+def _is_domain_guard_enabled() -> bool:
+    try:
+        from core.kiosk_settings import get_kiosk_settings
+        return bool(get_kiosk_settings().get("mic", {}).get("domain_guard_enabled", True))
+    except Exception:
+        return True
+
+
 async def run_agent_stream(
     session_id: str,
     user_input: str,
@@ -532,17 +574,16 @@ async def run_agent_stream(
     set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
 
-    # 배경 소리·음악이 말로 인식된 것으로 보이면 LLM을 부르지 않고 다시 말해 달라고 한다(비용도 절약)
-    if guard_mode() != "off" and is_noise(user_input):
+    # 배경 소리·음악·주변 대화가 말로 인식된 것으로 보이면 LLM을 부르지 않고 조용히 무시(Silent Drop)한다(비용 절약 + 오작동 차단)
+    if guard_mode() != "off" and _is_domain_guard_enabled() and is_noise(user_input, screen=screen):
         enforcing = guard_mode() == "enforce"
         record_guard("noise", f"「{user_input[:30]}」 도메인 어휘 없음", blocked=enforcing)
         if enforcing:
-            output = NOISE_REPLY.get(language if language in NOISE_REPLY else "ko", NOISE_REPLY["ko"])
             log_turn(
-                session_id=session_id, user_input=user_input, output=output, actions=[],
+                session_id=session_id, user_input=user_input, output="", actions=[],
                 language=language, screen=screen, order_type=order_type,
             )
-            yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'output': '', 'ignored': True, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
             return
 
     if is_cart_status_query(user_input):
@@ -597,6 +638,21 @@ async def run_agent_stream(
             mem_vars.get("chat_history", []), language
         )
         _remember_history(mem_vars)
+
+        declined_out = await _try_decline_more_to_checkout(
+            session_id, user_input, language, screen, cart, snapshot_before
+        )
+        if declined_out:
+            await save_and_prune(memory, user_input, declined_out)
+            for action in get_actions():
+                yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'token': declined_out}, ensure_ascii=False)}\n\n"
+            log_turn(
+                session_id=session_id, user_input=user_input, output=declined_out, actions=get_actions(),
+                language=language, screen=screen, order_type=order_type,
+            )
+            yield f"data: {json.dumps({'done': True, 'output': declined_out, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+            return
 
         # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
         discount_context = await get_active_discount_context()
@@ -697,8 +753,8 @@ async def run_agent(
     set_recent_user_text("")
     language = _resolve_language(language, user_input)   # 입력 문자와 선언 언어가 다르면 입력 쪽을 따른다
 
-    # 배경 소리·음악이 말로 인식된 것으로 보이면 LLM을 부르지 않고 다시 말해 달라고 한다(비용도 절약)
-    if guard_mode() != "off" and is_noise(user_input):
+    # 배경 소리·음악·주변 대화가 말로 인식된 것으로 보이면 LLM을 부르지 않고 조용히 무시(Silent Drop)로 표시한다
+    if guard_mode() != "off" and _is_domain_guard_enabled() and is_noise(user_input, screen=screen):
         enforcing = guard_mode() == "enforce"
         record_guard("noise", f"「{user_input[:30]}」 도메인 어휘 없음", blocked=enforcing)
         if enforcing:
@@ -707,7 +763,7 @@ async def run_agent(
                 session_id=session_id, user_input=user_input, output=output, actions=[],
                 language=language, screen=screen, order_type=order_type,
             )
-            return {"session_id": session_id, "output": output, "actions": [], "intermediate_steps": [],
+            return {"session_id": session_id, "output": output, "ignored": True, "actions": [], "intermediate_steps": [],
                     "guards": get_guard_hits()}
 
     if is_cart_status_query(user_input):
@@ -741,6 +797,23 @@ async def run_agent(
         mem_vars.get("chat_history", []), language
     )
     _remember_history(mem_vars)
+
+    declined_out = await _try_decline_more_to_checkout(
+        session_id, user_input, language, screen, cart, snapshot_before
+    )
+    if declined_out:
+        await save_and_prune(memory, user_input, declined_out)
+        log_turn(
+            session_id=session_id, user_input=user_input, output=declined_out, actions=get_actions(),
+            language=language, screen=screen, order_type=order_type,
+        )
+        return {
+            "session_id": session_id,
+            "output": declined_out,
+            "actions": get_actions(),
+            "guards": get_guard_hits(),
+            "intermediate_steps": [],
+        }
 
     discount_context = await get_active_discount_context()
     context = _context_message(cart, screen, order_type, modal_state)
