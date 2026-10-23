@@ -51,6 +51,9 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
         "rearm_absent_frames": 6,              # 안내 종료 후 잠금 해제까지 필요한 연속 미감지 프레임 수 (2 ~ 20)
         "announcement_interval_sec": 10.0,     # 안내 음성 반복 주기 초 (4.0 ~ 30.0)
         "max_announcements": 3,                # 최대 안내 반복 횟수 (1 ~ 5)
+        "motion_gate_enabled": True,           # 배경 변화 적을 시 카메라 프레임 전송 스킵 (모션 게이트)
+        "motion_threshold": 0.025,             # 모션 감지 활성 픽셀 최소 비율 (0.005 ~ 0.100, 기본 2.5%)
+        "motion_keepalive_sec": 4.0,           # 정적 대기 시 하트비트 전송 주기 초 (1.0 ~ 10.0초)
     },
     "gesture": {
         "preset": "standard",                  # standard | far_reach | rpi_eco | custom
@@ -118,6 +121,9 @@ def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
     a["rearm_absent_frames"] = int(max(1, min(30, int(a.get("rearm_absent_frames", 6)))))
     a["announcement_interval_sec"] = round(max(3.0, min(60.0, float(a.get("announcement_interval_sec", 10.0)))), 1)
     a["max_announcements"] = int(max(1, min(10, int(a.get("max_announcements", 3)))))
+    a["motion_gate_enabled"] = bool(a.get("motion_gate_enabled", True))
+    a["motion_threshold"] = round(max(0.005, min(0.120, float(a.get("motion_threshold", 0.025)))), 3)
+    a["motion_keepalive_sec"] = round(max(1.0, min(15.0, float(a.get("motion_keepalive_sec", 4.0)))), 1)
 
     g = s.setdefault("gesture", {})
     g["enabled"] = bool(g.get("enabled", True))

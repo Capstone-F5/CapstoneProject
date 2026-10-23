@@ -36,6 +36,9 @@ export const DEFAULT_KIOSK_SETTINGS = {
     rearm_absent_frames: 6,
     announcement_interval_sec: 10.0,
     max_announcements: 3,
+    motion_gate_enabled: true,
+    motion_threshold: 0.025,
+    motion_keepalive_sec: 4.0,
   },
   gesture: {
     preset: 'standard',

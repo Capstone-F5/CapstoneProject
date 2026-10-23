@@ -9,6 +9,7 @@ import {
   applyKioskSettingsToRuntime,
 } from '../../services/settingsService.js'
 import { AudioEnergyGate, installMicAgcGuard } from '../../utils/audioGate.js'
+import { MotionDetector } from '../../utils/motionDetector.js'
 import { _palmSize } from '../../hooks/useGesture.js'
 
 const HAND_CONNECTIONS = [
@@ -113,6 +114,9 @@ const APPROACH_PRESETS = {
       rearm_absent_frames: 8,
       announcement_interval_sec: 10.0,
       max_announcements: 3,
+      motion_gate_enabled: true,
+      motion_threshold: 0.035,
+      motion_keepalive_sec: 4.0,
     },
   },
   standard: {
@@ -132,6 +136,9 @@ const APPROACH_PRESETS = {
       rearm_absent_frames: 6,
       announcement_interval_sec: 10.0,
       max_announcements: 3,
+      motion_gate_enabled: true,
+      motion_threshold: 0.025,
+      motion_keepalive_sec: 4.0,
     },
   },
   far: {
@@ -151,6 +158,9 @@ const APPROACH_PRESETS = {
       rearm_absent_frames: 6,
       announcement_interval_sec: 10.0,
       max_announcements: 3,
+      motion_gate_enabled: true,
+      motion_threshold: 0.015,
+      motion_keepalive_sec: 3.0,
     },
   },
 }
@@ -236,13 +246,13 @@ function Toggle({ checked, onChange, disabled }) {
   )
 }
 
-function SliderRow({ label, hint, value, min, max, step, unit = '', onChange, isLast = false }) {
+function SliderRow({ label, hint, value, min, max, step, unit = '', onChange, isLast = false, formatValue }) {
   return (
     <div style={{ padding: '14px 0', borderBottom: isLast ? 'none' : '1px solid #f0f0f0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <span style={{ fontWeight: 500, fontSize: 14, color: '#222' }}>{label}</span>
         <span style={{ fontWeight: 600, fontSize: 14, color: '#744032' }}>
-          {value}{unit}
+          {formatValue ? formatValue(value) : `${value}${unit}`}
         </span>
       </div>
       <input
@@ -457,6 +467,15 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
   const [camMode, setCamMode] = useState('approach') // 'approach' | 'gesture'
   const [camTesting, setCamTesting] = useState(false)
   const [camStatus, setCamStatus] = useState(null)
+  const camStatusRef = useRef(null)
+  const [motionLive, setMotionLive] = useState({
+    enabled: true,
+    hasMotion: true,
+    isHeartbeat: false,
+    activeRatio: 0,
+    motionLevel: 0,
+    statusText: '대기 중',
+  })
   const [camWsNote, setCamWsNote] = useState('')
   const camVideoRef = useRef(null)
   const camStreamRef = useRef(null)
@@ -728,8 +747,17 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
       camWsRef.current.close()
       camWsRef.current = null
     }
+    camStatusRef.current = null
     setCamStatus(null)
     setCamWsNote('')
+    setMotionLive({
+      enabled: true,
+      hasMotion: false,
+      isHeartbeat: false,
+      activeRatio: 0,
+      motionLevel: 0,
+      statusText: '대기 중',
+    })
   }, [])
 
   const startApproachWs = useCallback((video) => {
@@ -746,10 +774,40 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
       canvas.height = 240
       camCanvasRef.current = canvas
 
+      const motionDetector = new MotionDetector()
+
       ws.onopen = () => {
-        const interval = Math.max(200, Number(settings.approach?.frame_interval_ms) || 500)
+        const interval = Math.max(200, Number(latestSettingsRef.current?.approach?.frame_interval_ms) || 500)
         camTimerRef.current = setInterval(() => {
           if (!video || video.readyState < 2 || ws.readyState !== WebSocket.OPEN) return
+
+          const appCfg = latestSettingsRef.current?.approach || {}
+          const isEnabled = appCfg.motion_gate_enabled ?? true
+          const motionThresh = Number(appCfg.motion_threshold) || 0.025
+          const keepaliveMs = (Number(appCfg.motion_keepalive_sec) || 4.0) * 1000
+
+          const decision = motionDetector.evaluate(video, {
+            enabled: isEnabled,
+            motionThreshold: motionThresh,
+            keepaliveMs,
+            modeOn: Boolean(camStatusRef.current?.mode_on),
+          })
+
+          setMotionLive({
+            enabled: isEnabled,
+            hasMotion: decision.hasMotion,
+            isHeartbeat: decision.isHeartbeat,
+            activeRatio: decision.activeRatio,
+            motionLevel: decision.motionLevel,
+            statusText: !isEnabled
+              ? '모션 게이트 꺼짐 (상시 전송)'
+              : (decision.hasMotion
+                  ? '움직임 감지 (전송 중)'
+                  : (decision.isHeartbeat ? '하트비트 (전송 중)' : '정적 대기 (전송 스킵)')),
+          })
+
+          if (!decision.shouldSend) return
+
           const ctx = canvas.getContext('2d')
           ctx.drawImage(video, 0, 0, 320, 240)
           canvas.toBlob(blob => {
@@ -768,6 +826,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
           if (data.error) {
             setCamWsNote(data.error)
           } else {
+            camStatusRef.current = data
             setCamStatus(data)
           }
         } catch {}
@@ -1357,6 +1416,32 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
                 {camMode === 'approach' ? (
                   <>
                     <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>배경 변화 감지 (모션 게이트)</span>
+                        <span className={`badge ${!motionLive.enabled ? 'badge-inactive' : (motionLive.hasMotion ? 'badge-active' : (motionLive.isHeartbeat ? 'badge-cooking' : 'badge-inactive'))}`}>
+                          {!motionLive.enabled ? '상시 전송' : (motionLive.hasMotion ? '움직임 감지' : (motionLive.isHeartbeat ? '하트비트' : '전송 스킵 (절전)'))}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                        활성 픽셀 {((motionLive.activeRatio || 0) * 100).toFixed(1)}% (기준 {(((approach.motion_threshold ?? 0.025)) * 100).toFixed(1)}%) · {motionLive.statusText}
+                      </div>
+                      <div style={{ position: 'relative', height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: `${Math.min(100, Math.round((motionLive.motionLevel || 0) * 100))}%`,
+                            background: motionLive.hasMotion ? '#2e7d32' : (motionLive.isHeartbeat ? '#1976d2' : '#9e9e9e'),
+                            borderRadius: 3,
+                            transition: 'width 0.15s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                         <span style={{ fontWeight: 600, fontSize: 13 }}>휠체어 (제스처 안내)</span>
                         <span className={`badge ${camStatus?.confirmed?.wheelchair ? 'badge-active' : (camStatus?.wheelchair_detected ? 'badge-cooking' : 'badge-inactive')}`}>
@@ -1542,6 +1627,36 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
             hint="시작 화면에서 웹캠으로 흰 지팡이·휠체어 접근을 상시 감지합니다."
             checked={Boolean(approach.enabled)}
             onChange={v => updateApproach({ enabled: v })}
+          />
+
+          <ToggleRow
+            label="배경 변화 감지 (모션 게이트) 사용"
+            hint="화면에 손님 움직임이 없을 때 카메라 프레임 전송을 건너뛰어 서버 추론 부하 및 네트워크 트래픽을 대폭 절감합니다."
+            checked={Boolean(approach.motion_gate_enabled ?? true)}
+            onChange={v => updateApproach({ motion_gate_enabled: v })}
+          />
+
+          <SliderRow
+            label="모션 감지 최소 변화율 (감도)"
+            hint="화면 픽셀 중 이 비율 이상 변화가 발생해야 서버로 프레임을 전송합니다. 낮출수록 작은 움직임에도 민감하게 반응합니다. (기본 2.5%)"
+            value={approach.motion_threshold ?? 0.025}
+            min={0.005}
+            max={0.080}
+            step={0.005}
+            unit="%"
+            formatValue={v => `${(v * 100).toFixed(1)}%`}
+            onChange={v => updateApproach({ motion_threshold: v })}
+          />
+
+          <SliderRow
+            label="정적 대기 시 하트비트 전송 주기"
+            hint="움직임이 없는 완전 정적 상태에서도 가만히 서 있는 손님 확인 및 세션 유지를 위해 프레임을 1회 전송하는 간격입니다. (기본 4.0초)"
+            value={approach.motion_keepalive_sec ?? 4.0}
+            min={1.0}
+            max={10.0}
+            step={0.5}
+            unit="초"
+            onChange={v => updateApproach({ motion_keepalive_sec: v })}
           />
 
           <SliderRow

@@ -62,6 +62,9 @@ class ApproachConfirm(unittest.TestCase):
                 "wheelchair_confidence": 0.45,
                 "person_confidence": 0.55,
                 "white_cane_confidence": 0.40,
+                "motion_gate_enabled": True,
+                "motion_threshold": 0.035,
+                "motion_keepalive_sec": 3.5,
             },
         })
         self.assertEqual(updated["mic"]["min_speech_rms"], 0.025)
@@ -69,6 +72,9 @@ class ApproachConfirm(unittest.TestCase):
         self.assertEqual(updated["approach"]["wheelchair_confidence"], 0.45)
         self.assertEqual(updated["approach"]["person_confidence"], 0.55)
         self.assertEqual(updated["approach"]["white_cane_confidence"], 0.40)
+        self.assertTrue(updated["approach"]["motion_gate_enabled"])
+        self.assertEqual(updated["approach"]["motion_threshold"], 0.035)
+        self.assertEqual(updated["approach"]["motion_keepalive_sec"], 3.5)
         self.assertEqual(get_kiosk_settings()["approach"]["confirm_hits"], 2)
 
         s = ApproachSession()

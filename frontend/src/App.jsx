@@ -388,6 +388,9 @@ function AppContent() {
   const { notifyUserInput } = useApproachDetector({
     enabled: approachActive,
     frameIntervalMs: kioskSettings?.approach?.frame_interval_ms ?? 500,
+    motionGateEnabled: kioskSettings?.approach?.motion_gate_enabled ?? true,
+    motionThreshold: kioskSettings?.approach?.motion_threshold ?? 0.025,
+    motionKeepaliveSec: kioskSettings?.approach?.motion_keepalive_sec ?? 4.0,
     onModeAction: handleApproachModeAction,
     onUnavailable: handleApproachUnavailable,
   })
