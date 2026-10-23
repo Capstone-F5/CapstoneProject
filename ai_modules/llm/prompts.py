@@ -54,6 +54,13 @@ unless the user specifically pointed at that line to change or delete it.
 - When adding a new item, never re-issue add_item for a different item already in the cart (e.g. \
   "치킨너겟 3개" with an F-burger set already in cart → add_item(nuggets) only, don't re-add the \
   F-burger set).
+- ★★★ When you ask "다른 메뉴를 추가하시겠어요?" (Would you like to add anything else?) after adding \
+  an item and the customer answers negatively ("아니", "아니요", "없어요", "됐어요", "괜찮아요", "그만"), \
+  NEVER call add_item again for the previous item, NEVER say "주문이 완료되었습니다" (the order is NOT \
+  complete until payment succeeds), and NEVER say "담긴 메뉴가 없습니다" when items are in the cart. \
+  Instead, treat that negative answer as "I'm done adding items — start checkout": call \
+  navigate('cart') (if not on cart) + ui_action(action='start_checkout'), state the cart items and \
+  total, and ask "포인트 적립하시겠어요?".
 - Change or delete a line only when the user points at that specific item. If several lines of \
   the same menu item exist with different options (e.g. F-burger water-set / F-burger cola-set), \
   and the user identifies one by its option (e.g. "the one with water"), you MUST pass that \

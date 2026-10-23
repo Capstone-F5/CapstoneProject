@@ -1,8 +1,22 @@
 """action_tools 안의 규칙 가드(메뉴 해석·직전 id 재사용·수량)를 가짜 메뉴로 검사한다. API·LLM 호출 없음."""
 import os
+import sys
+import types
 import unittest
 
 os.environ.setdefault("GUARD_MODE", "enforce")
+
+try:
+    import langchain_community  # noqa: F401
+except ModuleNotFoundError:
+    rag_stub = types.ModuleType("ai_modules.llm.rag")
+    rag_stub.search_menu = lambda *a, **kw: []
+    sys.modules.setdefault("ai_modules.llm.rag", rag_stub)
+    lc_core = types.ModuleType("langchain_core")
+    lc_tools = types.ModuleType("langchain_core.tools")
+    lc_tools.tool = lambda f: f
+    sys.modules.setdefault("langchain_core", lc_core)
+    sys.modules.setdefault("langchain_core.tools", lc_tools)
 
 from ai_modules.llm import action_tools as T
 from ai_modules.llm import action_context as C
@@ -107,6 +121,38 @@ class FixAndAddSemanticsTests(unittest.TestCase):
             self.assertTrue(guards.has_add_verb(t) and not guards.has_change_verb(t), t)
         for t in ["모짜렐라버거 단품 3개로 바꿔줘", "치즈버거 2개로 해줘", "콜라 세 잔으로 변경해줘"]:
             self.assertTrue(guards.has_change_verb(t), t)
+
+    def test_refusal_blocks_duplicate_add_item(self):
+        """2026-10-23 실제 로그 재현: 직전 턴에 세트를 담고 '다른 메뉴를 추가하시겠어요?'라고 물었는데
+        손님이 '아니.'라고 답한 턴에 모델이 같은 세트를 또 담으려 하면 차단한다."""
+        T._run = lambda x: MENU
+        T.api_client.fetch_menu_items = lambda: None
+        C.set_user_input("아니.")
+        C.set_recent_user_text("세트로 줘. ¦ 양념감자튀김으로 줘. ¦ 생수로 줘.")
+        C.set_last_bot_text("그릴드 비프 버거 세트를 양념감자튀김과 생수로 장바구니에 담았습니다. 다른 메뉴를 추가하시겠어요?")
+        blocked, _, _ = T._check_add_item(BY["그릴드 비프 버거"], 1, True, "양념감자튀김", "생수")
+        self.assertIsNotNone(blocked)
+        self.assertEqual(C.get_guard_hits()[0]["rule"], "refusal_add")
+
+    def test_decline_more_menu_triggers_checkout_actions(self):
+        """'다른 메뉴를 추가하시겠어요?' → '아니.' 응답 시 장바구니 이동 + start_checkout 액션이 생성된다."""
+        from core.intent_fallback import ensure_actions, is_decline_more_menu
+        from ai_modules.llm import checkout_progress
+        C.reset_actions()
+        checkout_progress.reset("test-session-decline")
+        last_bot = "그릴드 비프 버거 세트를 양념감자튀김과 생수로 장바구니에 담았습니다. 다른 메뉴를 추가하시겠어요?"
+        C.set_last_bot_text(last_bot)
+        self.assertTrue(is_decline_more_menu("아니.", last_bot))
+        self.assertFalse(is_decline_more_menu("아니.", "단품으로 드릴까요, 세트로 드릴까요?"))
+        added = ensure_actions(
+            session_id="test-session-decline",
+            user_input="아니.",
+            screen="menu",
+            cart=[{"name": "그릴드 비프 버거", "qty": 1}],
+            snapshot_before=frozenset(),
+            has_items=True,
+        )
+        self.assertEqual(added, [{"type": "navigate", "screen": "cart"}, {"type": "start_checkout"}])
 
 
 if __name__ == "__main__":

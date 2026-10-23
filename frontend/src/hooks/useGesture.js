@@ -1,14 +1,42 @@
 import { useEffect, useRef } from 'react'
 
-// ── 카메라 설정 ──────────────────────────────────────────────────────────────
-const CAM_W   = 640
-const CAM_H   = 480
-const MAX_FPS = 15
+// ── 카메라 및 제스처 런타임 설정 ─────────────────────────────────────────────
+const CAM_W_DEFAULT   = 640
+const CAM_H_DEFAULT   = 480
+const MAX_FPS_DEFAULT = 15
 // 임계값 튜닝 기준 비율 (4:3). 실제 카메라 비율이 다르면 자동 보정됨.
-const AR_REF  = CAM_W / CAM_H   // ≈ 1.333
+const AR_REF  = CAM_W_DEFAULT / CAM_H_DEFAULT   // ≈ 1.333
 
 const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
+
+export function getActiveGestureSettings() {
+  if (typeof window === 'undefined') {
+    return {
+      min_palm_size: 0.08,
+      detection_confidence: 0.65,
+      tracking_confidence: 0.50,
+      target_fps: 15,
+      cam_width: 640,
+      cam_height: 480,
+    }
+  }
+  if (window.__kioskGestureConfig) {
+    return window.__kioskGestureConfig
+  }
+  try {
+    const raw = window.localStorage.getItem('kioskGestureConfig')
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return {
+    min_palm_size: 0.08,
+    detection_confidence: 0.65,
+    tracking_confidence: 0.50,
+    target_fps: 15,
+    cam_width: 640,
+    cam_height: 480,
+  }
+}
 
 // ── 손 인식 엔진 (Web Worker + MediaPipe Tasks HandLandmarker) ───────────────
 // 추론을 메인 스레드 밖으로 빼는 실험용 엔진. 기본은 기존 @mediapipe/hands(메인 스레드)다.
@@ -140,11 +168,11 @@ function _isValidLandmarks(lm) {
 }
 
 // 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
-const MIN_PALM_SIZE = 0.10  // 이 이하면 너무 멀리 있는 손으로 간주
+export const DEFAULT_MIN_PALM_SIZE = 0.08  // 기본값 (설정값에 의해 런타임 동적 조정)
 
 // 정규화 좌표의 x는 화면 비율만큼 압축되어 있다. 보정하지 않으면 손을 옆으로 눕혔을 때
 // 같은 거리에서도 크기가 작게 측정되어, 회전만으로 임계값 아래로 떨어진다.
-function _palmSize(lm, camAR = 1) {
+export function _palmSize(lm, camAR = 1) {
   const a = lm[0], b = lm[9]
   if (!a || !b) return Number.NaN
   if (!Number.isFinite(a.x) || !Number.isFinite(a.y) ||
@@ -511,14 +539,14 @@ function _drawPip(canvas, video, lms, handed) {
 }
 
 // ── 카메라 ───────────────────────────────────────────────────────────────────
-async function openCamera() {
+async function openCamera(w = CAM_W_DEFAULT, h = CAM_H_DEFAULT, fps = MAX_FPS_DEFAULT) {
   for (let attempt = 1; attempt <= CAM_RETRY_COUNT; attempt++) {
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: {
-          width:     { ideal: CAM_W, max: CAM_W },
-          height:    { ideal: CAM_H, max: CAM_H },
-          frameRate: { ideal: MAX_FPS, max: MAX_FPS },
+          width:     { ideal: w, max: w },
+          height:    { ideal: h, max: h },
+          frameRate: { ideal: fps, max: fps },
         },
       })
     } catch (err) {
@@ -548,6 +576,13 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
   useEffect(() => {
     if (!enabled) return
 
+    // ── 런타임 제스처 설정 (동적 감도 및 RPi4B 최적화) ──────────────────────────
+    let gestureCfg = getActiveGestureSettings()
+    let currentMinPalmSize = Number(gestureCfg.min_palm_size) || DEFAULT_MIN_PALM_SIZE
+    let currentTargetFps = Number(gestureCfg.target_fps) || MAX_FPS_DEFAULT
+    let currentDetectionConf = Number(gestureCfg.detection_confidence) || 0.65
+    let currentTrackingConf = Number(gestureCfg.tracking_confidence) || 0.50
+
     let stream   = null
     let video    = null
     let hands    = null
@@ -557,6 +592,28 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let inflight = false
     let lastSent = 0
     let cameraSettings = null
+
+    // 설정 실시간 업데이트 구독 (대시보드 또는 키오스크 디버깅 페이지에서 슬라이더 조절 시 즉각 반영)
+    const handleGestureConfigChange = (e) => {
+      const cfg = e.detail || getActiveGestureSettings()
+      if (!cfg) return
+      gestureCfg = cfg
+      if (typeof cfg.min_palm_size === 'number') currentMinPalmSize = cfg.min_palm_size
+      if (typeof cfg.target_fps === 'number') currentTargetFps = cfg.target_fps
+      if (typeof cfg.detection_confidence === 'number') currentDetectionConf = cfg.detection_confidence
+      if (typeof cfg.tracking_confidence === 'number') currentTrackingConf = cfg.tracking_confidence
+
+      if (hands && typeof hands.setOptions === 'function') {
+        try {
+          hands.setOptions({
+            minDetectionConfidence: currentDetectionConf,
+            minTrackingConfidence: currentTrackingConf,
+          })
+        } catch {}
+      }
+    }
+    window.addEventListener('kiosk-gesture-config-changed', handleGestureConfigChange)
+
     const perf = {
       windowStarted: performance.now(), sent: 0, results: 0,
       latencyTotal: 0, latencyMax: 0, sendStarted: 0, workerTotal: 0,
@@ -569,7 +626,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       const seconds = elapsed / 1000
       const avgLatency = perf.results ? perf.latencyTotal / perf.results : 0
       const metrics = {
-        targetFps: MAX_FPS,
+        targetFps: currentTargetFps,
         camera: cameraSettings,
         sentFps: +(perf.sent / seconds).toFixed(1),
         resultFps: +(perf.results / seconds).toFixed(1),
@@ -666,7 +723,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
       try {
         if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
-            _palmSize(lms[activeIdx], camAR) >= MIN_PALM_SIZE) {
+            _palmSize(lms[activeIdx], camAR) >= currentMinPalmSize) {
           const lm       = lms[activeIdx]
           // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
           const pointing = wasPointing
@@ -747,7 +804,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
-        if (_palmSize(lm, camAR) < MIN_PALM_SIZE) continue   // 너무 먼 손 무시
+        if (_palmSize(lm, camAR) < currentMinPalmSize) continue   // 너무 먼 손 무시
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
@@ -816,7 +873,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (!active) return
       const now   = performance.now()
       const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / MAX_FPS &&
+                    now - lastSent >= 1000 / currentTargetFps &&
                     now >= sendCooldownUntil
       if (ready) {
         inflight = true
@@ -881,8 +938,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           hands.setOptions({
             maxNumHands:            1,
             modelComplexity:        0,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence:  0.5,
+            minDetectionConfidence: currentDetectionConf,
+            minTrackingConfidence:  currentTrackingConf,
           })
           hands.onResults(handleResults)
           // 생략하면 첫 send()가 WASM·모델 로딩까지 떠안아 수 초간 멈춘다.
@@ -891,7 +948,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         })()
 
         const cameraReady = (async () => {
-          const s = await openCamera()
+          const reqW = Number(gestureCfg?.cam_width) || CAM_W_DEFAULT
+          const reqH = Number(gestureCfg?.cam_height) || CAM_H_DEFAULT
+          const s = await openCamera(reqW, reqH, currentTargetFps)
           // 정리된 실행이 카메라를 계속 쥐고 있으면 살아있는 실행이 NotReadableError를 맞는다.
           if (!active) { s.getTracks().forEach(t => t.stop()); return }
           stream = s
@@ -933,6 +992,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
 
     return () => {
       active = false
+      window.removeEventListener('kiosk-gesture-config-changed', handleGestureConfigChange)
       cancelEngine?.()
       clearTimeout(inflightWatchdog)
       clearTimeout(hideTimer)

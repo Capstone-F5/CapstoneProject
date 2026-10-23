@@ -21,6 +21,21 @@ if (_warnOnce) {
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
+// /admin 또는 /admin/ 접속 시 /admin.html 로 자동 연결
+function adminPathRewritePlugin() {
+  return {
+    name: 'admin-path-rewrite',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url === '/admin' || req.url === '/admin/' || req.url?.startsWith('/admin?')) {
+          req.url = req.url.replace(/^\/admin\/?/, '/admin.html')
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, '')
   const useHttps = env.VITE_HTTPS !== 'false'
@@ -31,6 +46,7 @@ export default defineConfig(({ mode }) => {
   return {
     customLogger: logger,
     plugins: [
+      adminPathRewritePlugin(),
       react(),
       ...(useHttps ? [basicSsl()] : []),
       compression({ algorithm: 'brotliCompress', ext: '.br' }),
@@ -39,7 +55,12 @@ export default defineConfig(({ mode }) => {
     envDir: projectRoot,
     base: './',
     // 손 인식 워커는 모듈 워커(MediaPipe wasm 로더를 import()로 불러옴)라 빌드도 es 형식이어야 한다.
-    worker: { format: 'es' },
+    worker: {
+      format: 'es',
+      rollupOptions: {
+        external: ['@mediapipe/tasks-vision'],
+      },
+    },
     optimizeDeps: {
       // vad-react / vad-web: CJS → ESM 변환을 위해 pre-bundle 포함
       include: ['@ricky0123/vad-react', '@ricky0123/vad-web'],

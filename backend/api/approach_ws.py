@@ -6,8 +6,8 @@
   text   : {"type": "user_input"}  — 사용자 터치/입력 신호
 
 서버 → 클라이언트:
-  text   : 상태 JSON  {"white_cane_detected", "white_cane_confidence",
-                       "wheelchair_detected", "wheelchair_confidence",
+  text   : 상태 JSON  {"white_cane_detected", "white_cane_confidence", "white_cane_box_h",
+                       "wheelchair_detected", "wheelchair_confidence", "wheelchair_box_h",
                        "active_trigger", "mode_action", "mode_on",
                        "announcement_count", "mode_ended", "confirmed"}
   (안내 음성은 프론트가 사전 녹음 mp3로 재생한다)
@@ -106,6 +106,8 @@ async def approach_ws(websocket: WebSocket) -> None:
                     detection["wheelchair_detected"],
                     detection["wheelchair_confidence"],
                 )
+                result["white_cane_box_h"] = round(float(detection.get("white_cane_box_h", 0.0)), 4)
+                result["wheelchair_box_h"] = round(float(detection.get("wheelchair_box_h", 0.0)), 4)
                 _log_detection(detection, result, prev_mode)
                 prev_mode = result["mode_on"]
                 await websocket.send_json(result)

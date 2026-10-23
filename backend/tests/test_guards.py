@@ -36,18 +36,25 @@ class FixSttTests(unittest.TestCase):
                 self.assertEqual(fix_stt(src), want)
 
     def test_corrects_jwo_misheard_as_jyo(self):
-        """"단품으로 줘"가 "단품으로죠"로 들어온다(실제 로그 + 2026-10-04 실험의 "탄품으로죠")."""
+        """"~(으)로 줘"가 "~(으)로죠"로 들어온다(실제 로그: "단품으로죠", "생수로죠. 생수로죠.", "탄품으로죠")."""
         cases = {
             "단품으로죠.": "단품으로 줘.",
             "단품으로죠": "단품으로 줘",
             "탄품으로죠.": "단품으로 줘.",
             "세트로죠": "세트로 줘",
             "치즈버거 단품으로 죠": "치즈버거 단품으로 줘",
+            "생수로죠. 생수로죠.": "생수로 줘. 생수로 줘.",
+            "콜라로죠": "콜라로 줘",
+            "양념감자튀김으로죠.": "양념감자튀김으로 줘.",
+            "포장으로죠": "포장으로 줘",
+            "카드로죠": "카드로 줘",
+            "그걸로죠": "그걸로 줘",
+            "설치할게.": "결제할게.",
         }
         for src, want in cases.items():
             with self.subTest(src=src):
                 self.assertEqual(fix_stt(src), want)
-        for keep in ("단품으로 줘", "세트로 줄까요", "단품으로죠스바"):   # 맞는 말·다른 낱말은 그대로
+        for keep in ("단품으로 줘", "세트로 줄까요", "단품으로죠스바", "어디로죠?"):   # 맞는 말·의문사·다른 낱말은 그대로
             self.assertEqual(fix_stt(keep), keep, keep)
 
     def test_corrects_dampum_mul_misrecognition(self):
@@ -141,6 +148,7 @@ class CorrectReplyTests(unittest.TestCase):
         self.assertIn("담지 못했", correct_reply("모짜렐라 버거 단품 1개 담았습니다. 다른 메뉴를 더 주문하시겠어요?", []))
         self.assertIn("빼지 못했", correct_reply("데리버거를 삭제했습니다.", ["add_item"]))
         self.assertIn("변경하지 못했", correct_reply("음료를 생수로 변경했습니다.", []))
+        self.assertIn("결제를 도와드릴까요", correct_reply("주문이 완료되었습니다. 다른 메뉴가 필요하시면 말씀해 주세요.", []))
 
     def test_claim_with_action_is_kept(self):
         self.assertIsNone(correct_reply("치즈 버거 단품 1개 담았습니다.", ["add_item"]))
@@ -160,15 +168,78 @@ class CorrectReplyTests(unittest.TestCase):
 
 
 class NoiseTests(unittest.TestCase):
-    def test_noise(self):
-        for t in ["사랑 전하다 고향을 찾는 철도에", "그대 곁에 하늘.", "음 음 으으"]:
-            self.assertTrue(is_noise(t), t)
+    def test_noise_music_and_lyrics(self):
+        """배경 음악 가사(한국어 발라드·댄스곡·영어 팝송, 40자 초과 포함)는 모두 노이즈로 차단한다."""
+        lyrics = [
+            "사랑 전하다 고향을 찾는 철도에",
+            "그대 곁에 하늘.",
+            "음 음 으으",
+            "오늘 밤 주인공은 나야 나 너만을 기다려 왔어",
+            "눈물이 차올라서 고개를 들어 흐르지 못하게 또 살짝 웃어",
+            "바람이 불어오는 곳 그곳으로 가네 그대의 머릿결같은 나무 아래로",
+            "사랑은 늘 도망가 내 가슴에 내리는 비처럼 어제도 오늘도 그대 생각에 잠 못 이루네",  # 40자 초과 긴 가사
+            "콘서트 티켓 예매 성공했어 너무 신난다",
+            "Dancing in the moonlight everybody is feeling warm and bright",
+            "Never gonna give you up never gonna let you down",
+            "Baby shark doo doo doo doo doo doo",
+        ]
+        for t in lyrics:
+            with self.subTest(t=t):
+                self.assertTrue(is_noise(t), t)
+
+    def test_noise_side_conversations(self):
+        """기존 정규식에서 '어', '네', '예', '응', '좋', '물', '개', '잔' 1글자 매칭 때문에 통과하던 주변 테이블 일상 대화 차단."""
+        side_chats = [
+            "어제 영화 봤어? 진짜 재미없더라",
+            "응 그래서 내가 어제 팀장님한테 말했잖아",
+            "오늘 날씨 진짜 좋다 산책 갈래?",
+            "야 너 이번 주말에 시간 있어?",
+            "내일 시험 끝나고 어디 갈까",
+            "아 진짜 피곤해서 집에 빨리 가고 싶다",
+            "선물 뭐 살지 아직도 고민 중이야",
+            "이번 학기 과제 너무 많은 것 같네",
+            "개인적으로 그 드라마 결말이 별로였어",
+            "잔소리 좀 그만해 알았다니까",
+            "담배 피우러 밖에 잠깐 나갔다 올게",
+            "비 맞아서 옷이 다 젖었네",
+            "예전에 거기 갔을 때는 사람이 별로 없었는데",
+            "가을 단풍 구경 가고 싶어요",
+        ]
+        for t in side_chats:
+            with self.subTest(t=t):
+                self.assertTrue(is_noise(t), t)
+
+    def test_start_screen_blocks_bare_backchannel(self):
+        """대기 화면(start)에서는 지나가는 행인의 짧은 추임새('응', '어', '그거')로 화면이 넘어가면 안 된다."""
+        for t in ["응", "어", "음", "그거", "이거", "저거", "아까", "방금"]:
+            with self.subTest(t=t):
+                self.assertTrue(is_noise(t, screen="start"), t)
+        # 반면 주문 화면(menu/cart)에서는 키오스크 질문에 대한 대답이므로 통과해야 한다
+        for t in ["응", "어", "그거", "이거"]:
+            with self.subTest(t=t):
+                self.assertFalse(is_noise(t, screen="menu"), t)
+        # 대기 화면에서도 명확한 시작/인사/주문 발화는 통과해야 한다
+        for t in ["주문 시작", "안녕하세요", "치즈버거 하나 줘", "매장에서 먹을게요", "메뉴 보여줘"]:
+            with self.subTest(t=t):
+                self.assertFalse(is_noise(t, screen="start"), t)
 
     def test_real_utterances_pass(self):
-        for t in ["치즈버거 하나 줘", "어, 그래 맞아.", "나 뭐 해?", "카메라 꺼줘", "영어로 해줘", "불고기버거 세트",
-                  "안녕하세요", "화장실 어디예요", "Hello", "포장할게요", "네", "공일공 일이삼사 오육칠팔",
-                  "나는 갑상선 알레르기가 있어서 그런 거 못 먹을 것 같은데."]:
-            self.assertFalse(is_noise(t), t)
+        real_utterances = [
+            "치즈버거 하나 줘", "어, 그래 맞아.", "나 뭐 해?", "카메라 꺼줘", "영어로 해줘", "불고기버거 세트",
+            "안녕하세요", "화장실 어디예요", "Hello", "포장할게요", "네", "공일공 일이삼사 오육칠팔",
+            "010-8251-0345", "01012345678",
+            "나는 갑상선 알레르기가 있어서 그런 거 못 먹을 것 같은데.",
+            "물 하나 주세요", "물 두 병 줘", "생수로 바꿔줘", "콘샐러드 하나 추가해줘",
+            "그걸로 줘", "첫 번째 걸로 하나 줘", "어 그렇게 줘", "아니 괜찮아 결제할게",
+            "더블 불고기 버거 단품 두 개 주세요", "사이드 치즈스틱으로 변경해줘",
+            "양파 빼줘", "하나만 빼줘", "장바구니 보여줘", "가장 인기 있는 메뉴 추천해줘",
+            "I'd like a cheeseburger set please", "Can I pay by card?", "For here please",
+            "チーズバーガーをください", "店内で食べます",
+            "我要一个芝士汉堡套餐", "打包带走",
+        ]
+        for t in real_utterances:
+            with self.subTest(t=t):
+                self.assertFalse(is_noise(t), t)
 
 
 class BlockBudgetTests(unittest.TestCase):

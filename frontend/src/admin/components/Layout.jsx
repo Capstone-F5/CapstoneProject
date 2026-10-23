@@ -1,19 +1,21 @@
 const NAV_ITEMS = [
-  { key: 'dashboard', label: '대시보드' },
-  { key: 'orders',    label: '주문 관리' },
-  { key: 'payments',  label: '결제·환불' },
-  { key: 'menu',      label: '메뉴 관리' },
-  { key: 'coupons',   label: '쿠폰·할인' },
-  { key: 'users',     label: '회원 관리' },
+  { key: 'dashboard',     label: '대시보드' },
+  { key: 'orders',        label: '주문 관리' },
+  { key: 'payments',      label: '결제·환불' },
+  { key: 'menu',          label: '메뉴 관리' },
+  { key: 'coupons',       label: '쿠폰·할인' },
+  { key: 'users',         label: '회원 관리' },
+  { key: 'kioskSettings', label: '키오스크 설정' },
 ]
 
 const PAGE_TITLES = {
-  dashboard: '대시보드',
-  orders:    '주문 관리',
-  payments:  '결제·환불',
-  menu:      '메뉴 관리',
-  coupons:   '쿠폰·할인',
-  users:     '회원 관리',
+  dashboard:     '대시보드',
+  orders:        '주문 관리',
+  payments:      '결제·환불',
+  menu:          '메뉴 관리',
+  coupons:       '쿠폰·할인',
+  users:         '회원 관리',
+  kioskSettings: '키오스크 설정',
 }
 
 export default function Layout({ admin, currentPage, onNavigate, onLogout, children }) {

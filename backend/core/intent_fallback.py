@@ -15,9 +15,29 @@ from __future__ import annotations
 
 import re
 
-from ai_modules.llm import checkout_progress
-from ai_modules.llm.action_context import get_actions, push_action
+from ai_modules.llm import checkout_progress, guards, order_parser
+from ai_modules.llm.action_context import get_actions, get_last_bot_text, push_action
 from core.cart_context import _CART_CONTENT_Q_RE, _CART_OPEN_RE
+
+_ASKS_MORE_MENU_RE = re.compile(
+    r"다른\s*메뉴.*(?:추가|주문|필요|있으|원하|더|드릴|말씀)|"
+    r"더\s*(?:필요한|담으실|주문하실|추가하실)\s*메뉴|"
+    r"(?:추가|더)\s*(?:주문|담으|필요).*(?:있으|하시겠|드릴까|말씀)"
+)
+
+
+def is_decline_more_menu(user_input: str, last_bot: str) -> bool:
+    """직전 키오스크 안내가 메뉴 담기를 마치고 추가 주문 여부를 물었는데 손님이 '아니/없어요/됐어요'로 거절했는지 판별한다."""
+    if not guards.is_refusal_only(user_input):
+        return False
+    bot = last_bot or ""
+    if not (_ASKS_MORE_MENU_RE.search(bot) or guards.claims_add(bot)):
+        return False
+    if (order_parser.awaiting_set_option(bot)
+            or order_parser._ASKS_SINGLE_SET.search(bot)
+            or re.search(r"빼\s*드릴까|제외", bot)):
+        return False
+    return True
 
 _TAKEOUT = re.compile(
     r"포장|테이크\s*아웃|가져\s*갈|싸\s*가|take\s*-?\s*out|to\s*-?\s*go|持ち帰り|テイクアウト|外带|打包|带走",
@@ -99,9 +119,11 @@ def ensure_actions(
             added.append({"type": "order_type", "value": value})
 
     # 2) 결제 시작 — 메뉴 화면에서 "결제할게요"라고 해도 모델이 "결제를 진행할게요"라고 말만 하는 일이 잦다(고정 시나리오
-    # 실측 6건). 요청 cart는 비어 올 수 있어서 서버 장바구니 기준(has_items)으로 본다.
+    # 실측 6건). 또 "다른 메뉴를 추가하시겠어요?"에 "아니/없어요/됐어요"로 답했을 때도 결제를 시작한다.
+    # 요청 cart는 비어 올 수 있어서 서버 장바구니 기준(has_items)으로 본다.
+    wants_checkout = bool(_CHECKOUT_INTENT.search(text)) or is_decline_more_menu(text, get_last_bot_text())
     if (screen in ("cart", "menu") and (cart or has_items) and not _has(actions, "start_checkout")
-            and "start_checkout" not in snapshot_before and _CHECKOUT_INTENT.search(text)):
+            and "start_checkout" not in snapshot_before and wants_checkout):
         if screen != "cart" and not _has(actions, "navigate"):
             added.append({"type": "navigate", "screen": "cart"})
         added.append({"type": "start_checkout"})

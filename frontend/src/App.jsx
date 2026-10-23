@@ -23,6 +23,8 @@ import { useExitKioskTaps } from './hooks/useExitKioskTaps'
 import { GestureUIProvider } from './contexts/GestureUIContext'
 // import NumberSpeechTest from './components/NumberSpeechTest'   // [테스트용] 주문번호 낭독 테스트 — 다시 쓰려면 이 줄과 아래 <NumberSpeechTest />의 주석을 푼다
 import { findMenuOption } from './services/menuOptions'
+import { fetchKioskSettings, loadCachedKioskSettings, subscribeKioskSettings, applyKioskSettingsToRuntime } from './services/settingsService'
+import KioskSettingsPage from './admin/pages/KioskSettingsPage'
 
 // 제스처 키 → 표시 문자열 (컴포넌트 외부 상수)
 const GESTURE_LABELS = {
@@ -222,6 +224,29 @@ function AppContent() {
   // (App은 제스처 HUD로 자주 리렌더) 카메라/WebSocket이 계속 끊겼다 재연결됨.
   const [approachSuspended,   setApproachSuspended]   = useState(false)
   const [approachUnavailable, setApproachUnavailable] = useState(false)
+  const [kioskSettings, setKioskSettings] = useState(() => loadCachedKioskSettings())
+  const [debugPageOpen, setDebugPageOpen] = useState(false)
+  useEffect(() => {
+    const sync = () => {
+      fetchKioskSettings().then(res => {
+        if (res?.settings) {
+          setKioskSettings(res.settings)
+          applyKioskSettingsToRuntime(res.settings, false)
+        }
+      }).catch(() => {})
+    }
+    sync()
+    // 대시보드 기기와 키오스크 기기가 분리된 환경에서도 디버깅 모드 ON/OFF 및 감도 변경이 즉시 동기화되도록 주기 조회
+    const timer = setInterval(sync, 3000)
+    const unsub = subscribeKioskSettings(next => setKioskSettings(next))
+    return () => {
+      clearInterval(timer)
+      unsub()
+    }
+  }, [])
+  useEffect(() => {
+    if (!kioskSettings?.debug_mode) setDebugPageOpen(false)
+  }, [kioskSettings?.debug_mode])
   const playApproachDingDongs = useCallback(() => {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext
     const playDingDong = (context) => {
@@ -325,8 +350,9 @@ function AppContent() {
   // 물리 카메라가 1대뿐이라 접근 감지와 제스처 인식이 동시에 getUserMedia를 열면
   // 나중에 연 쪽이 NotReadableError로 실패한다. 대기 화면에서는 접근 감지만,
   // 주문에 들어가면 제스처 인식만 카메라를 잡도록 단계를 나눈다.
-  const approachActive = APPROACH_DETECTION && screen === 'start' && !chatOpen && !approachSuspended && !approachUnavailable
-  const gestureControlOn = gestureEnabled && !approachActive
+  const approachEnabled = (kioskSettings?.approach?.enabled ?? APPROACH_DETECTION)
+  const approachActive = approachEnabled && screen === 'start' && !chatOpen && !approachSuspended && !approachUnavailable && !debugPageOpen
+  const gestureControlOn = gestureEnabled && !approachActive && !debugPageOpen
   const cameraControlOn = pipEnabled && gestureControlOn
   const handleGestureToggle = () => {
     rearmStartIdleTimerRef.current?.()
@@ -361,6 +387,7 @@ function AppContent() {
   }
   const { notifyUserInput } = useApproachDetector({
     enabled: approachActive,
+    frameIntervalMs: kioskSettings?.approach?.frame_interval_ms ?? 500,
     onModeAction: handleApproachModeAction,
     onUnavailable: handleApproachUnavailable,
   })
@@ -1267,6 +1294,24 @@ function AppContent() {
           {/* 화면 영역 — 채팅창이 열리면 자동으로 줄어듦 */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
             {screens[screen] ?? screens.start}
+            {debugPageOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 800,
+                  background: '#f5f5f5',
+                  overflowY: 'auto',
+                  padding: '24px 28px',
+                  userSelect: 'text',
+                }}
+              >
+                <KioskSettingsPage
+                  isKioskOverlay
+                  onClose={() => setDebugPageOpen(false)}
+                />
+              </div>
+            )}
           </div>
 
           {/* 채팅 패널 — 항상 마운트(백그라운드 모델 프리로드), CSS로 열고 닫음 */}
@@ -1343,6 +1388,14 @@ function AppContent() {
               onClick={serialRequestPermission}
               ko={`시리얼 ${serialPortCount}개`}
               en={`Serial ${serialPortCount}`}
+            />
+          )}
+          {kioskSettings?.debug_mode && (
+            <ControlText
+              onClick={() => setDebugPageOpen(o => !o)}
+              on={debugPageOpen}
+              ko="디버깅 페이지"
+              en="Debug"
             />
           )}
         </div>}

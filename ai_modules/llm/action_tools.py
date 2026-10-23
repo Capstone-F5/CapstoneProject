@@ -333,6 +333,27 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
     except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
         menu = None
 
+    # 0) 거절·종료 답변("아니", "아니요", "없어요", "됐어요")에서는 절대 담지 않는다 (2026-10-23 실제 로그:
+    # "그릴드 비프 버거 세트를 담았습니다. 다른 메뉴를 추가하시겠어요?" → "아니."에 직전 세트를 한 번 더 담은 사고)
+    if guards.has_hangul(user) and guards.is_refusal_only(user):
+        msg = guards.block(
+            "refusal_add", f"「{user[:30]}」 거절/종료 답변인데 {name} 담기 시도",
+            "오류: 손님이 '아니요/없어요/됐어요'라고 거절·종료 의사를 답했습니다. 장바구니에 메뉴를 다시 담지 마세요. "
+            "직전에 '다른 메뉴를 추가하시겠어요?'라고 물었다면 navigate('cart')와 ui_action(action='start_checkout')으로 결제를 시작하세요.")
+        if msg:
+            return msg, item, quantity
+
+    # 0-2) 직전 안내에서 이미 메뉴 담기를 완료했는데("담았습니다"), 이번 발화에 메뉴 이름·추가 요청·주문 동사가 없으면 중복 담기다
+    if guards.has_hangul(user) and guards.claims_add(last_bot) and menu:
+        spoken_menus = _named_menus(re.sub(r"\s+", "", user), list({i["name_ko"] for i in menu}))
+        if not spoken_menus and not _ADD_MORE.search(user) and not guards._ORDER_VERB.search(user):
+            msg = guards.block(
+                "repeat_add_after_completed",
+                f"「{user[:30]}」 직전 턴에 이미 담았는데 새 주문 표현 없이 {name} 중복 담기 시도",
+                f"오류: 직전 안내에서 이미 담기를 완료했습니다. 손님이 추가 주문을 말하지 않았으므로 '{name}'을(를) 중복해서 담지 마세요.")
+            if msg:
+                return msg, item, quantity
+
     # 1) 메뉴 일치 — 직전 턴의 menu_item_id 재사용
     found = _mentions_other_menu(user, item, last_bot, upgrade_to_set, menu, recent)
     if found:

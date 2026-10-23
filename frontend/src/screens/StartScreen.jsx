@@ -72,25 +72,6 @@ export default function StartScreen({ nav }) {
         />
       ))}
 
-      {/* 회원가입 — 키오스크 주문 SPA와 완전히 분리된 별도 페이지(signup.html)로 실제 이동.
-          내부 nav() 화면 전환이 아니라 브라우저 페이지 전환이므로 세션/카트 상태와 무관하다. */}
-      <button
-        onClick={e => { e.stopPropagation(); window.location.href = './signup.html' }}
-        style={{
-          position: 'absolute', top: 20, right: 20, zIndex: 1,
-          background: 'rgba(0,0,0,0.35)',
-          border: '1.5px solid rgba(255,255,255,0.6)',
-          borderRadius: 20,
-          color: '#fff',
-          fontSize: 15,
-          fontWeight: 700,
-          padding: '9px 18px',
-          cursor: 'pointer',
-        }}
-      >
-        회원가입
-      </button>
-
       {/* 주문 시작 버튼 */}
       <button
         onClick={e => { e.stopPropagation(); nav('orderType') }}

@@ -6,6 +6,10 @@ import { getCachedAudio } from '../utils/ttsCache'
 import { stopTTS } from '../utils/tts'
 import { isBargeInEnabled, useBargeInEnabled, startBargeWatch, tapOutput } from '../utils/bargeIn'
 import { classifyQuickReply } from '../utils/quickReply'
+import { AudioEnergyGate, installMicAgcGuard, loadGateOverrides } from '../utils/audioGate'
+
+// MicVAD 초기화 전에 브라우저 자동 이득 제어(AGC)가 원거리 소음·음악을 증폭하지 못하도록 가드 설치
+installMicAgcGuard()
 
 // ── 음성 응답 지연 계측 ──────────────────────────────────────────────────────
 // 한 턴(발화 종료 → 첫 오디오 재생)의 단계별 소요 시간을 콘솔과 백엔드(logs/voice_timing.log)에 남긴다.
@@ -163,6 +167,10 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const bargeConfirmedRef  = useRef(false)   // 판정기가 그 소리를 사용자 말로 확인했다
   const externalTtsRef     = useRef(false)   // 화면 안내음(utils/tts.js)이 재생 중이다
   const handleBargeRef     = useRef(null)
+  const audioGateRef       = useRef(null)    // 음향 에너지(RMS·SNR·충격음) 게이트
+  if (!audioGateRef.current) {
+    audioGateRef.current = new AudioEnergyGate(loadGateOverrides())
+  }
 
   useEffect(() => { isTypingRef.current = isTyping }, [isTyping])
 
@@ -176,11 +184,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
   const vad = useMicVAD({
     // startOnLoad: false — 앱 시작 시 모델만 미리 로드, 마이크는 채팅 열 때만 시작
     startOnLoad: false,
-    positiveSpeechThreshold: 0.75, // 더 확실한 음성만 시작으로 인정 (0.7→0.75, 노이즈 트리거 감소)
-    negativeSpeechThreshold: 0.35, // 말 끝 판정 (0.3→0.35)
+    positiveSpeechThreshold: Number(loadGateOverrides().vadPositiveThreshold ?? 0.80), // 배경 음악·주변 대화 오발동 억제 (0.75→0.80)
+    negativeSpeechThreshold: Number(loadGateOverrides().vadNegativeThreshold ?? 0.45), // 배경 소음에 말 끝이 늘어지지 않도록 상향 (0.35→0.45)
     minSpeechFrames: 2,            // "네", "매장" 등 짧은 단어가 misfire로 버려지지 않게
-    preSpeechPadFrames: 8,         // 첫 음절 잘림 방지 (~256ms 선행 패딩, 5→8)
-    redemptionFrames: 12,          // 짧은 끊김에 말 끝 조기 종료 방지
+    preSpeechPadFrames: 8,         // 첫 음절 잘림 방지 및 배경 소음 바닥 측정용 패딩
+    redemptionFrames: Number(loadGateOverrides().vadRedemptionFrames ?? 8),           // 말 끝 대기 단축으로 주변 소음 꼬리 유입 감소 (12→8)
     workletURL: '/vad.worklet.bundle.min.js',
     modelURL: '/silero_vad.onnx',
     onSpeechStart: () => {
@@ -257,6 +265,19 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     // isTypingRef(LLM 생성 중)는 여기서 차단하지 않음 — STT 후 pendingTextRef에 큐잉
     if (isProcessingRef.current) return
 
+    // 1단계: 음향 에너지(RMS · SNR · 지속시간) 게이트 — 원거리 주변 대화·배경 음악·충격음을 STT 호출 전에 차단
+    audioGateRef.current.configure(loadGateOverrides())
+    const gateRes = audioGateRef.current.evaluate(audio)
+    if (typeof window !== 'undefined') window.__sttGateDebug = gateRes
+    if (!gateRes.pass) {
+      console.info(`[voice:gate-drop] reason=${gateRes.reason}`, JSON.stringify(gateRes.metrics))
+      fetch('/api/diagnostics/voice-timing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'gate_drop', reason: gateRes.reason, ...gateRes.metrics }), keepalive: true,
+      }).catch(() => {})
+      return
+    }
+
     // 지연 계측 — 이 턴의 시작(발화 종료 확정) 시각과 발화 길이(16kHz 샘플 수 → ms)
     const turn = { t0: performance.now(), speechMs: Math.round(audio.length / 16) }
 
@@ -311,8 +332,6 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
       if (text) {
         turn.textLen = text.length
-        window.dispatchEvent(new Event('gesture-activity'))  // idle 타이머 리셋
-        setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
 
         // 빠른 응답 경로: "네/응/그래/아니요" 같은 짧은 긍정·부정이고 현재 화면이 예/아니오를
         // 기다리는 중이면(화면이 true를 반환) LLM 왕복 없이 바로 처리한다. 화면이 처리하지 않으면
@@ -320,6 +339,8 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         const quick = classifyQuickReply(text)
         const quickHandled = quick ? onQuickReplyRef.current?.(quick) : false
         if (quick && quickHandled) {
+          window.dispatchEvent(new Event('gesture-activity'))  // idle 타이머 리셋
+          setMessages(prev => [...prev, { id: Date.now(), role: 'user', text }])
           turn.quick = true
           turn.tAction = performance.now()
           reportVoiceTurn(turn, 'quick')
@@ -337,16 +358,13 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         }
         voiceTurnRef.current = turn
 
-        // 시작 화면에서 뭔 말을 하든 → 주문 화면으로 자동 이동
-        if (screenRef2.current === 'start') {
-          onActionRef.current?.({ type: 'navigate', screen: 'orderType' })
-        }
-
         // STT 완료 시점에 LLM이 이미 다른 응답을 생성 중이면 큐에 저장
         if (isTypingRef.current) {
           pendingTextRef.current = text   // 최신 발화 1개 보관 (이전 대기 발화는 덮어씀)
         } else {
-          handleBotReply(text)  // handleBotReply가 isTypingRef를 즉시 true로 설정
+          const userMsgId = `user-${Date.now()}`
+          setMessages(prev => [...prev, { id: userMsgId, role: 'user', text }])
+          handleBotReply(text, userMsgId)  // handleBotReply가 isTypingRef를 즉시 true로 설정
         }
       }
     } catch (e) {
@@ -572,7 +590,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
 
   // ─── LLM: SSE 스트리밍 ───────────────────────────────────────────────────────
 
-  async function handleBotReply(userText) {
+  async function handleBotReply(userText, userMsgId = null) {
     const requestGeneration = sessionGenerationRef.current
     const controller = new AbortController()
     activeLlmRequestRef.current = controller
@@ -580,7 +598,6 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     clearTtsQueue()
     setIsTyping(true)
     isTypingRef.current = true
-    window.dispatchEvent(new Event('gesture-activity'))
     vadRef.current?.pause()   // LLM 생성 중 VAD 일시 정지
 
     const msgId = `bot-${Date.now()}`
@@ -592,6 +609,15 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     if (turn) { turn.tLlm = performance.now(); _activeTurn = turn }
 
     let replyText = ''
+    let startNavigated = false
+    const ensureStartNavigation = () => {
+      if (startNavigated) return
+      startNavigated = true
+      window.dispatchEvent(new Event('gesture-activity'))
+      if (screenRef2.current === 'start') {
+        onActionRef.current?.({ type: 'navigate', screen: 'orderType' })
+      }
+    }
     try {
       const res = await fetch('/ai_modules/llm/stream', {
         method: 'POST',
@@ -634,7 +660,15 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
           if (!line.startsWith('data: ')) continue
           try {
             const data = JSON.parse(line.slice(6))
+            // 배경 소음·음악·주변 대화로 판정된 경우: 말풍선·TTS·화면전환 없이 조용히 무시 (Silent Drop)
+            if (data.ignored) {
+              console.info('[voice:noise-ignored] 도메인 무관 발화로 판단해 조용히 무시:', userText)
+              if (_activeTurn === turn) _activeTurn = null
+              setMessages(prev => prev.filter(m => m.id !== msgId && m.id !== userMsgId))
+              break
+            }
             if (data.token) {
+              ensureStartNavigation()
               if (turn && turn.tTok == null) turn.tTok = performance.now()
               replyText += data.token
               ttsBufRef.current += data.token   // ← 토큰을 TTS 버퍼에 누적
@@ -644,9 +678,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
               )
             }
             if (data.action && requestGeneration === sessionGenerationRef.current) {
+              ensureStartNavigation()
               onActionRef.current?.(data.action)
             }
             if (data.done && data.output) {
+              ensureStartNavigation()
               if (turn) {
                 turn.tLlmDone = performance.now()
                 // 오디오가 끝내 안 나오는 경우(TTS 실패 등)에도 기록이 남도록 5초 뒤 강제 보고
@@ -701,12 +737,13 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const pending = pendingTextRef.current
     if (pending) {
       pendingTextRef.current = null
+      const pendingUserMsgId = `user-${Date.now()}`
       setMessages(prev => {
         // 이미 메시지 목록에 있는지 확인 (중복 방지)
         const exists = prev.some(m => m.role === 'user' && m.text === pending)
-        return exists ? prev : [...prev, { id: Date.now(), role: 'user', text: pending }]
+        return exists ? prev : [...prev, { id: pendingUserMsgId, role: 'user', text: pending }]
       })
-      handleBotReply(pending)
+      handleBotReply(pending, pendingUserMsgId)
     }
     // TTS는 drainTtsQueue()가 비동기로 처리
   }

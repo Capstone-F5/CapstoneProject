@@ -34,9 +34,21 @@ if not _quality.handlers:
 
 def _log_quality(kind: str, result: dict) -> None:
     p = result.get("no_speech_prob")
-    _quality.info("kind=%s no_speech_prob=%s filtered=%s text_len=%d lang=%s duration=%s", kind,
-                  "-" if p is None else f"{p:.3f}", result.get("filtered"), len(result.get("text") or ""),
-                  result.get("language"), result.get("duration"))
+    lp = result.get("avg_logprob")
+    cr = result.get("compression_ratio")
+    reason = result.get("drop_reason") or "-"
+    _quality.info(
+        "kind=%s no_speech_prob=%s avg_logprob=%s comp_ratio=%s filtered=%s reason=%s text_len=%d lang=%s duration=%s",
+        kind,
+        "-" if p is None else f"{p:.3f}",
+        "-" if lp is None else f"{lp:.3f}",
+        "-" if cr is None else f"{cr:.2f}",
+        result.get("filtered"),
+        reason,
+        len(result.get("text") or ""),
+        result.get("language"),
+        result.get("duration"),
+    )
 
 
 @router.post("/stt")

@@ -1,8 +1,9 @@
-"""접근 감지 상태 머신 검증(모델·API 없음): 연속 프레임 확정, 모드 선택, 재시작 잠금."""
+"""접근 감지 상태 머신 및 키오스크 개발자 설정 연동 검증(모델·API 없음)."""
 import unittest
 
 from core import approach_service as svc
 from core.approach_service import ApproachSession, process_frame_result
+from core.kiosk_settings import get_kiosk_settings, reset_kiosk_settings, update_kiosk_settings
 
 
 def frame(session, cane=False, wheel=False):
@@ -10,6 +11,12 @@ def frame(session, cane=False, wheel=False):
 
 
 class ApproachConfirm(unittest.TestCase):
+    def setUp(self):
+        reset_kiosk_settings()
+
+    def tearDown(self):
+        reset_kiosk_settings()
+
     def test_single_frame_does_not_trigger(self):
         self.assertFalse(frame(ApproachSession(), wheel=True)["mode_on"])
 
@@ -43,6 +50,22 @@ class ApproachConfirm(unittest.TestCase):
         for _ in range(svc.CONFIRM_WINDOW + svc.REARM_ABSENT_FRAMES):
             frame(s)
         self.assertFalse(s.latched)                        # 대상이 사라지면 해제
+
+    def test_developer_settings_override_confirm_hits_and_mic(self):
+        """대시보드 개발자 설정에서 confirm_hits=2로 낮추면 2프레임 연속 감지 시 즉시 확정된다."""
+        updated = update_kiosk_settings({
+            "mic": {"min_speech_rms": 0.025, "snr_margin": 2.6, "auto_gain_control": False},
+            "approach": {"confirm_window": 3, "confirm_hits": 2, "min_box_h": 0.22},
+        })
+        self.assertEqual(updated["mic"]["min_speech_rms"], 0.025)
+        self.assertEqual(updated["approach"]["min_box_h"], 0.22)
+        self.assertEqual(get_kiosk_settings()["approach"]["confirm_hits"], 2)
+
+        s = ApproachSession()
+        self.assertFalse(frame(s, wheel=True)["mode_on"])
+        r2 = frame(s, wheel=True)
+        self.assertTrue(r2["mode_on"])
+        self.assertEqual(r2["mode_action"], "gesture")
 
 
 if __name__ == "__main__":
