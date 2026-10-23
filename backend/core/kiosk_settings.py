@@ -40,7 +40,10 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
     "approach": {
         "preset": "standard",                  # near | standard | far | custom
         "enabled": True,                       # 대기 화면 접근 감지 활성화 여부
-        "confidence_threshold": 0.50,          # TFLite 모델 객체 인식 최소 신뢰도 (0.20 ~ 0.90)
+        "confidence_threshold": 0.50,          # (기본값) TFLite 모델 객체 인식 최소 신뢰도 (0.20 ~ 0.90)
+        "wheelchair_confidence": 0.50,         # 휠체어 인식 최소 신뢰도 (0.15 ~ 0.95)
+        "person_confidence": 0.50,             # 일반 사람(보행자) 인식 최소 신뢰도 (0.15 ~ 0.95)
+        "white_cane_confidence": 0.50,         # 흰 지팡이 인식 최소 신뢰도 (0.15 ~ 0.95)
         "min_box_h": 0.15,                     # 화면 높이 대비 최소 박스 높이 비율 (0.05 ~ 0.50, 클수록 근거리만 인식)
         "frame_interval_ms": 500,              # 카메라 프레임 추론 주기 ms (200 ~ 2000, 기본 500ms = 2fps)
         "confirm_window": 4,                   # 연속 감지 판정 윈도우 프레임 수 (1 ~ 10)
@@ -103,7 +106,11 @@ def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
 
     a = s["approach"]
     a["enabled"] = bool(a.get("enabled", True))
-    a["confidence_threshold"] = round(max(0.15, min(0.95, float(a.get("confidence_threshold", 0.50)))), 2)
+    default_conf = round(max(0.15, min(0.95, float(a.get("confidence_threshold", 0.50)))), 2)
+    a["confidence_threshold"] = default_conf
+    a["wheelchair_confidence"] = round(max(0.15, min(0.95, float(a.get("wheelchair_confidence", default_conf)))), 2)
+    a["person_confidence"] = round(max(0.15, min(0.95, float(a.get("person_confidence", default_conf)))), 2)
+    a["white_cane_confidence"] = round(max(0.15, min(0.95, float(a.get("white_cane_confidence", default_conf)))), 2)
     a["min_box_h"] = round(max(0.03, min(0.70, float(a.get("min_box_h", 0.15)))), 2)
     a["frame_interval_ms"] = int(max(150, min(3000, int(a.get("frame_interval_ms", 500)))))
     a["confirm_window"] = int(max(1, min(15, int(a.get("confirm_window", 4)))))

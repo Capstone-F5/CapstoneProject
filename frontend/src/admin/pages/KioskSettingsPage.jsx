@@ -103,6 +103,9 @@ const APPROACH_PRESETS = {
       preset: 'near',
       enabled: true,
       confidence_threshold: 0.58,
+      wheelchair_confidence: 0.60,
+      person_confidence: 0.60,
+      white_cane_confidence: 0.55,
       min_box_h: 0.22,
       frame_interval_ms: 500,
       confirm_window: 5,
@@ -119,6 +122,9 @@ const APPROACH_PRESETS = {
       preset: 'standard',
       enabled: true,
       confidence_threshold: 0.50,
+      wheelchair_confidence: 0.50,
+      person_confidence: 0.50,
+      white_cane_confidence: 0.50,
       min_box_h: 0.15,
       frame_interval_ms: 500,
       confirm_window: 4,
@@ -135,6 +141,9 @@ const APPROACH_PRESETS = {
       preset: 'far',
       enabled: true,
       confidence_threshold: 0.40,
+      wheelchair_confidence: 0.40,
+      person_confidence: 0.40,
+      white_cane_confidence: 0.40,
       min_box_h: 0.10,
       frame_interval_ms: 400,
       confirm_window: 3,
@@ -440,6 +449,9 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
   const gateInstanceRef = useRef(new AudioEnergyGate())
   const latestMicCfgRef = useRef(settings.mic)
   latestMicCfgRef.current = settings.mic
+  const latestSettingsRef = useRef(settings)
+  latestSettingsRef.current = settings
+  const lastGestureResultsRef = useRef(null)
 
   // 실시간 카메라 확인 상태 (접근 감지 vs 온디바이스 제스처)
   const [camMode, setCamMode] = useState('approach') // 'approach' | 'gesture'
@@ -792,29 +804,52 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     })
   }, [])
 
+  const redrawGestureCanvas = useCallback(() => {
+    const canvas = gestureCanvasRef.current
+    const video = camVideoRef.current
+    if (!canvas || !video || video.readyState < 2) return
+    const g = latestSettingsRef.current?.gesture || {}
+    const minPalm = Number(g.min_palm_size) || 0.08
+    const margins = {
+      l: Number(g.margin_left ?? g.margin_x) || 0.20,
+      r: Number(g.margin_right ?? g.margin_x) || 0.20,
+      top: Number(g.margin_top) || 0.25,
+      bot: Number(g.margin_bottom ?? g.margin_bot) || 0.10,
+    }
+    const metrics = drawGestureFrame(video, canvas, lastGestureResultsRef.current, minPalm, margins)
+    setGestureLive(prev => ({
+      ...prev,
+      ...metrics,
+      fps: gesturePerfRef.current.fps || Number(g.target_fps) || 15,
+    }))
+  }, [])
+
   const startGestureLoop = useCallback(async (video) => {
     stopGestureLoop()
     if (!video) return
     try {
       const { Hands } = await import('@mediapipe/hands')
       const hands = new Hands({ locateFile: (f) => `/mediapipe-hands/${f}` })
+      const gInit = latestSettingsRef.current?.gesture || {}
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 0,
-        minDetectionConfidence: Number(settings.gesture?.detection_confidence) || 0.65,
-        minTrackingConfidence: Number(settings.gesture?.tracking_confidence) || 0.50,
+        minDetectionConfidence: Number(gInit.detection_confidence) || 0.65,
+        minTrackingConfidence: Number(gInit.tracking_confidence) || 0.50,
       })
       gestureHandsRef.current = hands
 
       hands.onResults((results) => {
+        lastGestureResultsRef.current = results
         const canvas = gestureCanvasRef.current
         if (!canvas || !video) return
-        const minPalm = Number(settings.gesture?.min_palm_size) || 0.08
+        const g = latestSettingsRef.current?.gesture || {}
+        const minPalm = Number(g.min_palm_size) || 0.08
         const margins = {
-          l: Number(settings.gesture?.margin_left ?? settings.gesture?.margin_x) || 0.20,
-          r: Number(settings.gesture?.margin_right ?? settings.gesture?.margin_x) || 0.20,
-          top: Number(settings.gesture?.margin_top) || 0.25,
-          bot: Number(settings.gesture?.margin_bottom ?? settings.gesture?.margin_bot) || 0.10,
+          l: Number(g.margin_left ?? g.margin_x) || 0.20,
+          r: Number(g.margin_right ?? g.margin_x) || 0.20,
+          top: Number(g.margin_top) || 0.25,
+          bot: Number(g.margin_bottom ?? g.margin_bot) || 0.10,
         }
         const metrics = drawGestureFrame(video, canvas, results, minPalm, margins)
 
@@ -829,17 +864,17 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
 
         setGestureLive({
           ...metrics,
-          fps: p.fps || Number(settings.gesture?.target_fps) || 15,
+          fps: p.fps || Number(g.target_fps) || 15,
         })
       })
 
       await hands.initialize()
 
-      const targetFps = Math.max(8, Number(settings.gesture?.target_fps) || 15)
       let lastSend = 0
-
       const loop = () => {
         if (!camStreamRef.current) return
+        const g = latestSettingsRef.current?.gesture || {}
+        const targetFps = Math.max(8, Number(g.target_fps) || 15)
         const now = performance.now()
         if (!gestureInflightRef.current && video.readyState >= 2 && now - lastSend >= 1000 / targetFps) {
           gestureInflightRef.current = true
@@ -854,19 +889,37 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     } catch (e) {
       console.warn('[KioskSettingsPage] 제스처 모델 구동 실패:', e)
     }
+  }, [stopGestureLoop])
+
+  // 제스처 마진 또는 최소 손 크기 조절 시 실시간 뷰파인더 캔버스 즉시 리드로우 (F5 새로고침 불필요)
+  useEffect(() => {
+    if (camTesting && camMode === 'gesture') {
+      redrawGestureCanvas()
+    }
   }, [
-    settings.gesture?.detection_confidence,
-    settings.gesture?.tracking_confidence,
-    settings.gesture?.min_palm_size,
-    settings.gesture?.target_fps,
+    camTesting,
+    camMode,
     settings.gesture?.margin_left,
     settings.gesture?.margin_right,
     settings.gesture?.margin_top,
     settings.gesture?.margin_bottom,
     settings.gesture?.margin_x,
     settings.gesture?.margin_bot,
-    stopGestureLoop,
+    settings.gesture?.min_palm_size,
+    redrawGestureCanvas,
   ])
+
+  // 온디바이스 MediaPipe 손 감지/추적 신뢰도 옵션 변경 시 런타임 즉시 적용
+  useEffect(() => {
+    if (gestureHandsRef.current) {
+      try {
+        gestureHandsRef.current.setOptions({
+          minDetectionConfidence: Number(settings.gesture?.detection_confidence) || 0.65,
+          minTrackingConfidence: Number(settings.gesture?.tracking_confidence) || 0.50,
+        })
+      } catch {}
+    }
+  }, [settings.gesture?.detection_confidence, settings.gesture?.tracking_confidence])
 
   const stopCamTest = useCallback(() => {
     stopApproachWs()
@@ -1305,29 +1358,43 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
                   <>
                     <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>흰 지팡이 (음성 안내)</span>
-                        <span className={`badge ${camStatus?.confirmed?.white_cane ? 'badge-active' : 'badge-inactive'}`}>
-                          {camStatus?.confirmed?.white_cane ? '감지 확정' : '대기'}
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>휠체어 (제스처 안내)</span>
+                        <span className={`badge ${camStatus?.confirmed?.wheelchair ? 'badge-active' : (camStatus?.wheelchair_detected ? 'badge-cooking' : 'badge-inactive')}`}>
+                          {camStatus?.confirmed?.wheelchair ? '감지 확정' : (camStatus?.wheelchair_detected ? '감지 중' : '대기')}
                         </span>
                       </div>
                       <div style={{ fontSize: 12, color: '#666' }}>
-                        신뢰도 {((camStatus?.white_cane_confidence ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.confidence_threshold * 100)}%)
+                        신뢰도 {((camStatus?.wheelchair_confidence ?? 0) * 100).toFixed(1)}% (기준 {Math.round((approach.wheelchair_confidence ?? approach.confidence_threshold ?? 0.50) * 100)}%)
                         {' · '}
-                        높이 {((camStatus?.white_cane_box_h ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.min_box_h * 100)}%)
+                        높이 {((camStatus?.wheelchair_box_h ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.min_box_h * 100)}%)
                       </div>
                     </div>
 
                     <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>휠체어 (제스처 안내)</span>
-                        <span className={`badge ${camStatus?.confirmed?.wheelchair ? 'badge-active' : 'badge-inactive'}`}>
-                          {camStatus?.confirmed?.wheelchair ? '감지 확정' : '대기'}
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>일반 손님 (사람 감지)</span>
+                        <span className={`badge ${camStatus?.person_detected ? 'badge-active' : 'badge-inactive'}`}>
+                          {camStatus?.person_detected ? '정면 감지' : '미감지'}
                         </span>
                       </div>
                       <div style={{ fontSize: 12, color: '#666' }}>
-                        신뢰도 {((camStatus?.wheelchair_confidence ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.confidence_threshold * 100)}%)
+                        신뢰도 {((camStatus?.person_confidence ?? 0) * 100).toFixed(1)}% (기준 {Math.round((approach.person_confidence ?? approach.confidence_threshold ?? 0.50) * 100)}%)
                         {' · '}
-                        높이 {((camStatus?.wheelchair_box_h ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.min_box_h * 100)}%)
+                        높이 {((camStatus?.person_box_h ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.min_box_h * 100)}%)
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>흰 지팡이 (음성 안내)</span>
+                        <span className={`badge ${camStatus?.confirmed?.white_cane ? 'badge-active' : (camStatus?.white_cane_detected ? 'badge-cooking' : 'badge-inactive')}`}>
+                          {camStatus?.confirmed?.white_cane ? '감지 확정' : (camStatus?.white_cane_detected ? '감지 중' : '대기')}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        신뢰도 {((camStatus?.white_cane_confidence ?? 0) * 100).toFixed(1)}% (기준 {Math.round((approach.white_cane_confidence ?? approach.confidence_threshold ?? 0.50) * 100)}%)
+                        {' · '}
+                        높이 {((camStatus?.white_cane_box_h ?? 0) * 100).toFixed(1)}% (기준 {Math.round(approach.min_box_h * 100)}%)
                       </div>
                     </div>
 
@@ -1478,13 +1545,33 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
           />
 
           <SliderRow
-            label="객체 인식 최소 신뢰도"
-            hint="모델의 추론 점수가 이 값 이상일 때만 유효 감지로 인정합니다. (기본 0.50)"
-            value={approach.confidence_threshold}
-            min={0.25}
+            label="휠체어 인식 최소 신뢰도"
+            hint="휠체어 감지 최소 신뢰도입니다. 낮출수록 원거리나 측면 휠체어를 민감하게 포착합니다. (기본 0.50)"
+            value={approach.wheelchair_confidence ?? approach.confidence_threshold ?? 0.50}
+            min={0.20}
             max={0.85}
             step={0.05}
-            onChange={v => updateApproach({ confidence_threshold: v })}
+            onChange={v => updateApproach({ wheelchair_confidence: v })}
+          />
+
+          <SliderRow
+            label="일반 손님(사람) 인식 최소 신뢰도"
+            hint="키오스크 정면에 선 일반 손님(보행자) 감지 최소 신뢰도입니다. (기본 0.50)"
+            value={approach.person_confidence ?? approach.confidence_threshold ?? 0.50}
+            min={0.20}
+            max={0.85}
+            step={0.05}
+            onChange={v => updateApproach({ person_confidence: v })}
+          />
+
+          <SliderRow
+            label="흰 지팡이 인식 최소 신뢰도"
+            hint="시각장애인 흰 지팡이 감지 최소 신뢰도입니다. (기본 0.50)"
+            value={approach.white_cane_confidence ?? approach.confidence_threshold ?? 0.50}
+            min={0.20}
+            max={0.85}
+            step={0.05}
+            onChange={v => updateApproach({ white_cane_confidence: v })}
           />
 
           <SliderRow

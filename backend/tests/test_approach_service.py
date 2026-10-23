@@ -55,10 +55,20 @@ class ApproachConfirm(unittest.TestCase):
         """대시보드 개발자 설정에서 confirm_hits=2로 낮추면 2프레임 연속 감지 시 즉시 확정된다."""
         updated = update_kiosk_settings({
             "mic": {"min_speech_rms": 0.025, "snr_margin": 2.6, "auto_gain_control": False},
-            "approach": {"confirm_window": 3, "confirm_hits": 2, "min_box_h": 0.22},
+            "approach": {
+                "confirm_window": 3,
+                "confirm_hits": 2,
+                "min_box_h": 0.22,
+                "wheelchair_confidence": 0.45,
+                "person_confidence": 0.55,
+                "white_cane_confidence": 0.40,
+            },
         })
         self.assertEqual(updated["mic"]["min_speech_rms"], 0.025)
         self.assertEqual(updated["approach"]["min_box_h"], 0.22)
+        self.assertEqual(updated["approach"]["wheelchair_confidence"], 0.45)
+        self.assertEqual(updated["approach"]["person_confidence"], 0.55)
+        self.assertEqual(updated["approach"]["white_cane_confidence"], 0.40)
         self.assertEqual(get_kiosk_settings()["approach"]["confirm_hits"], 2)
 
         s = ApproachSession()

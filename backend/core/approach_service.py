@@ -98,6 +98,8 @@ def process_frame_result(
     white_cane_confidence: float,
     wheelchair_detected: bool,
     wheelchair_confidence: float,
+    person_detected: bool = False,
+    person_confidence: float = 0.0,
 ) -> dict:
     """
     프레임 추론 결과와 세션 상태를 기반으로 시나리오 로직 실행.
@@ -140,6 +142,8 @@ def process_frame_result(
 
     active_trigger = session.trigger_type
     return {
+        "person_detected": person_detected,
+        "person_confidence": round(person_confidence, 4),
         "white_cane_detected": white_cane_detected,
         "white_cane_confidence": round(white_cane_confidence, 4),
         "wheelchair_detected": wheelchair_detected,

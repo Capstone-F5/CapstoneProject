@@ -105,7 +105,10 @@ async def approach_ws(websocket: WebSocket) -> None:
                     detection["white_cane_confidence"],
                     detection["wheelchair_detected"],
                     detection["wheelchair_confidence"],
+                    detection.get("person_detected", False),
+                    detection.get("person_confidence", 0.0),
                 )
+                result["person_box_h"] = round(float(detection.get("person_box_h", 0.0)), 4)
                 result["white_cane_box_h"] = round(float(detection.get("white_cane_box_h", 0.0)), 4)
                 result["wheelchair_box_h"] = round(float(detection.get("wheelchair_box_h", 0.0)), 4)
                 _log_detection(detection, result, prev_mode)

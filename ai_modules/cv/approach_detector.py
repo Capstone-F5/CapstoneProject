@@ -36,17 +36,25 @@ MODEL_PATH = Path(__file__).parent / "models" / "best_int8.tflite"
 PT_MODEL_PATH = Path(__file__).parent / "models" / "best.pt"
 
 
-def _get_approach_thresholds() -> tuple[float, float]:
-    """키오스크 개발자 설정에서 실시간 신뢰도/박스높이 임계값을 조회한다."""
+def _get_approach_thresholds() -> dict[str, float]:
+    """키오스크 개발자 설정에서 실시간 클래스별 신뢰도 및 박스높이 임계값을 조회한다."""
     try:
         from core.kiosk_settings import get_kiosk_settings
         cfg = get_kiosk_settings().get("approach", {})
-        return (
-            float(cfg.get("confidence_threshold", CONFIDENCE_THRESHOLD)),
-            float(cfg.get("min_box_h", MIN_BOX_H)),
-        )
+        default_conf = float(cfg.get("confidence_threshold", CONFIDENCE_THRESHOLD))
+        return {
+            "wheelchair": float(cfg.get("wheelchair_confidence", default_conf)),
+            "person": float(cfg.get("person_confidence", default_conf)),
+            "white_cane": float(cfg.get("white_cane_confidence", default_conf)),
+            "min_box_h": float(cfg.get("min_box_h", MIN_BOX_H)),
+        }
     except Exception:
-        return CONFIDENCE_THRESHOLD, MIN_BOX_H
+        return {
+            "wheelchair": CONFIDENCE_THRESHOLD,
+            "person": CONFIDENCE_THRESHOLD,
+            "white_cane": CONFIDENCE_THRESHOLD,
+            "min_box_h": MIN_BOX_H,
+        }
 
 
 class ApproachDetector:
@@ -98,6 +106,7 @@ class ApproachDetector:
         scores = out[:, 4:]
         if scores.size == 0:
             return {
+                "person_detected": False, "person_confidence": 0.0, "person_box_h": 0.0,
                 "white_cane_detected": False, "white_cane_confidence": 0.0, "white_cane_box_h": 0.0,
                 "wheelchair_detected": False, "wheelchair_confidence": 0.0, "wheelchair_box_h": 0.0,
             }
@@ -113,16 +122,21 @@ class ApproachDetector:
             i = int(np.flatnonzero(mask)[np.argmax(confidences[mask])])
             return float(confidences[i]), float(out[i, 3])
 
+        person_conf, person_h = best_for(PERSON_CLASS_ID)
         white_cane_conf, white_cane_h = best_for(WHITE_CANE_CLASS_ID)
         wheelchair_conf, wheelchair_h = best_for(WHEELCHAIR_CLASS_ID)
-        conf_thresh, min_box_h = _get_approach_thresholds()
+        t = _get_approach_thresholds()
+        min_box_h = t["min_box_h"]
 
         # 멀리 있는 대상(박스가 작음)은 감지로 보지 않는다 — 키오스크 앞에 선 사람만 대상.
         return {
-            "white_cane_detected": white_cane_conf > conf_thresh and white_cane_h >= min_box_h,
+            "person_detected": person_conf > t["person"] and person_h >= min_box_h,
+            "person_confidence": person_conf,
+            "person_box_h": person_h,
+            "white_cane_detected": white_cane_conf > t["white_cane"] and white_cane_h >= min_box_h,
             "white_cane_confidence": white_cane_conf,
             "white_cane_box_h": white_cane_h,
-            "wheelchair_detected": wheelchair_conf > conf_thresh and wheelchair_h >= min_box_h,
+            "wheelchair_detected": wheelchair_conf > t["wheelchair"] and wheelchair_h >= min_box_h,
             "wheelchair_confidence": wheelchair_conf,
             "wheelchair_box_h": wheelchair_h,
         }
@@ -135,6 +149,7 @@ class ApproachDetector:
                 raise ValueError("JPEG 디코딩 실패")
             img_h = float(img.shape[0]) or 1.0
             res = self._yolo_model.predict(img, imgsz=640, conf=0.05, device="cpu", verbose=False)[0]
+            person_conf, person_h = 0.0, 0.0
             white_cane_conf, white_cane_h = 0.0, 0.0
             wheelchair_conf, wheelchair_h = 0.0, 0.0
             for box in res.boxes:
@@ -142,16 +157,22 @@ class ApproachDetector:
                 conf = float(box.conf)
                 xyxy = box.xyxy[0].tolist()
                 box_h = max(0.0, min(1.0, (xyxy[3] - xyxy[1]) / img_h))
-                if cls_id == WHITE_CANE_CLASS_ID and conf > white_cane_conf:
+                if cls_id == PERSON_CLASS_ID and conf > person_conf:
+                    person_conf, person_h = conf, box_h
+                elif cls_id == WHITE_CANE_CLASS_ID and conf > white_cane_conf:
                     white_cane_conf, white_cane_h = conf, box_h
                 elif cls_id == WHEELCHAIR_CLASS_ID and conf > wheelchair_conf:
                     wheelchair_conf, wheelchair_h = conf, box_h
-            conf_thresh, min_box_h = _get_approach_thresholds()
+            t = _get_approach_thresholds()
+            min_box_h = t["min_box_h"]
             return {
-                "white_cane_detected": white_cane_conf > conf_thresh and white_cane_h >= min_box_h,
+                "person_detected": person_conf > t["person"] and person_h >= min_box_h,
+                "person_confidence": person_conf,
+                "person_box_h": person_h,
+                "white_cane_detected": white_cane_conf > t["white_cane"] and white_cane_h >= min_box_h,
                 "white_cane_confidence": white_cane_conf,
                 "white_cane_box_h": white_cane_h,
-                "wheelchair_detected": wheelchair_conf > conf_thresh and wheelchair_h >= min_box_h,
+                "wheelchair_detected": wheelchair_conf > t["wheelchair"] and wheelchair_h >= min_box_h,
                 "wheelchair_confidence": wheelchair_conf,
                 "wheelchair_box_h": wheelchair_h,
             }
