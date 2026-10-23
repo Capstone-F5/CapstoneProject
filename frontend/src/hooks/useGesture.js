@@ -19,6 +19,9 @@ export function getActiveGestureSettings() {
       target_fps: 15,
       cam_width: 640,
       cam_height: 480,
+      margin_x: 0.20,
+      margin_top: 0.25,
+      margin_bot: 0.10,
     }
   }
   if (window.__kioskGestureConfig) {
@@ -35,6 +38,9 @@ export function getActiveGestureSettings() {
     target_fps: 15,
     cam_width: 640,
     cam_height: 480,
+    margin_x: 0.20,
+    margin_top: 0.25,
+    margin_bot: 0.10,
   }
 }
 
@@ -251,10 +257,16 @@ function _isPinching(lm, alreadyPinching = false) {
 }
 
 // 카메라 활성 구역 마진 (손바닥 중심 기준 → 손가락 끝 오프셋 보정 포함)
-const CAM_MARGIN_L   = 0.20   // 좌: 손 측면 오프셋 보정
-const CAM_MARGIN_R   = 0.20   // 우: 손 측면 오프셋 보정
-const CAM_MARGIN_TOP = 0.25   // 상: 기본 10% + 손가락 끝↔손바닥 중심 차이 15%
-const CAM_MARGIN_BOT = 0.10
+export const DEFAULT_CAM_MARGINS = {
+  l: 0.20,
+  r: 0.20,
+  top: 0.25,
+  bot: 0.10,
+}
+const CAM_MARGIN_L   = DEFAULT_CAM_MARGINS.l
+const CAM_MARGIN_R   = DEFAULT_CAM_MARGINS.r
+const CAM_MARGIN_TOP = DEFAULT_CAM_MARGINS.top
+const CAM_MARGIN_BOT = DEFAULT_CAM_MARGINS.bot
 const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
 const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
 
@@ -487,8 +499,8 @@ const HAND_CONNECTIONS = [
   [0,17],[5,9],[9,13],[13,17],       // 손바닥
 ]
 
-// PiP 캔버스에 영상 + 랜드마크를 그린다 (미러 반전 포함)
-function _drawPip(canvas, video, lms, handed) {
+// PiP 캔버스에 영상 + 랜드마크를 그린다 (미러 반전 포함 및 모서리 활성 영역 가이드라인)
+function _drawPip(canvas, video, lms, handed, margins = DEFAULT_CAM_MARGINS) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const vw = video.videoWidth, vh = video.videoHeight
@@ -502,6 +514,30 @@ function _drawPip(canvas, video, lms, handed) {
   ctx.translate(vw, 0)
   ctx.scale(-1, 1)
   ctx.drawImage(video, 0, 0)
+  ctx.restore()
+
+  // 모서리 마진 가이드 (활성 영역 사각형 및 마진 영역 반투명 음영)
+  const ml = (margins?.l ?? CAM_MARGIN_L) * vw
+  const mr = (margins?.r ?? CAM_MARGIN_R) * vw
+  const mt = (margins?.top ?? CAM_MARGIN_TOP) * vh
+  const mb = (margins?.bot ?? CAM_MARGIN_BOT) * vh
+  const aw = Math.max(0, vw - ml - mr)
+  const ah = Math.max(0, vh - mt - mb)
+
+  ctx.save()
+  // 마진 영역 반투명 음영 마스크
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)'
+  ctx.fillRect(0, 0, vw, mt)             // 상단 마진
+  ctx.fillRect(0, vh - mb, vw, mb)       // 하단 마진
+  ctx.fillRect(0, mt, ml, ah)            // 좌측 마진
+  ctx.fillRect(vw - mr, mt, mr, ah)      // 우측 마진
+
+  // 활성 영역 테두리
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)'
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 3])
+  ctx.strokeRect(ml, mt, aw, ah)
+  ctx.setLineDash([])
   ctx.restore()
 
   // 각 손 랜드마크
@@ -582,6 +618,11 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let currentTargetFps = Number(gestureCfg.target_fps) || MAX_FPS_DEFAULT
     let currentDetectionConf = Number(gestureCfg.detection_confidence) || 0.65
     let currentTrackingConf = Number(gestureCfg.tracking_confidence) || 0.50
+    let currentMarginX = Number(gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.l
+    let currentMarginTop = Number(gestureCfg.margin_top) || DEFAULT_CAM_MARGINS.top
+    let currentMarginBot = Number(gestureCfg.margin_bot) || DEFAULT_CAM_MARGINS.bot
+    let currentActiveX = Math.max(0.1, 1.0 - currentMarginX * 2)
+    let currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
 
     let stream   = null
     let video    = null
@@ -602,6 +643,11 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (typeof cfg.target_fps === 'number') currentTargetFps = cfg.target_fps
       if (typeof cfg.detection_confidence === 'number') currentDetectionConf = cfg.detection_confidence
       if (typeof cfg.tracking_confidence === 'number') currentTrackingConf = cfg.tracking_confidence
+      if (typeof cfg.margin_x === 'number') currentMarginX = cfg.margin_x
+      if (typeof cfg.margin_top === 'number') currentMarginTop = cfg.margin_top
+      if (typeof cfg.margin_bot === 'number') currentMarginBot = cfg.margin_bot
+      currentActiveX = Math.max(0.1, 1.0 - currentMarginX * 2)
+      currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
 
       if (hands && typeof hands.setOptions === 'function') {
         try {
@@ -747,8 +793,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
               wasActive = true
 
               // 절대 선형 매핑 — 방향별 마진 개별 적용
-              const normX = _padNorm((px - CAM_MARGIN_L)   / CAM_ACTIVE_X)
-              const normY = _padNorm((py - CAM_MARGIN_TOP) / CAM_ACTIVE_Y)
+              const normX = _padNorm((px - currentMarginX)   / currentActiveX)
+              const normY = _padNorm((py - currentMarginTop) / currentActiveY)
               const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
               perf.pointerFrames++
               pointerRef.current?.({ x: sx, y: sy })
@@ -860,9 +906,16 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         gesture:       dominant,
       })
 
-      // PiP 캔버스에 인식 영상 + 관절 그리기
+      // PiP 캔버스에 인식 영상 + 관절 그리기 (활성 영역 마진 가이드 포함)
       if (pipCanvasRef?.current && video) {
-        try { _drawPip(pipCanvasRef.current, video, lms, handed) } catch {}
+        try {
+          _drawPip(pipCanvasRef.current, video, lms, handed, {
+            l: currentMarginX,
+            r: currentMarginX,
+            top: currentMarginTop,
+            bot: currentMarginBot,
+          })
+        } catch {}
       }
     }
 

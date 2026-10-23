@@ -43,6 +43,9 @@ export const DEFAULT_KIOSK_SETTINGS = {
     target_fps: 15,
     cam_width: 640,
     cam_height: 480,
+    margin_x: 0.20,
+    margin_top: 0.25,
+    margin_bot: 0.10,
   },
 }
 

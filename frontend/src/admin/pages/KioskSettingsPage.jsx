@@ -159,6 +159,9 @@ const GESTURE_PRESETS = {
       target_fps: 15,
       cam_width: 640,
       cam_height: 480,
+      margin_x: 0.20,
+      margin_top: 0.25,
+      margin_bot: 0.10,
     },
   },
   far_reach: {
@@ -173,6 +176,9 @@ const GESTURE_PRESETS = {
       target_fps: 15,
       cam_width: 640,
       cam_height: 480,
+      margin_x: 0.18,
+      margin_top: 0.22,
+      margin_bot: 0.10,
     },
   },
   rpi_eco: {
@@ -187,6 +193,9 @@ const GESTURE_PRESETS = {
       target_fps: 10,
       cam_width: 480,
       cam_height: 360,
+      margin_x: 0.20,
+      margin_top: 0.25,
+      margin_bot: 0.10,
     },
   },
 }
@@ -248,8 +257,8 @@ function ToggleRow({ label, hint, checked, onChange, isLast = false }) {
   )
 }
 
-function drawGestureFrame(video, canvas, results, minPalmSize) {
-  if (!canvas || !video) return { detected: false, label: '미감지', palmSize: 0, action: '대기', isFar: false }
+function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.20, top: 0.25, bot: 0.10 }) {
+  if (!canvas || !video) return { detected: false, label: '미감지', palmSize: 0, action: '대기', isFar: false, pointerX: null, pointerY: null }
   const ctx = canvas.getContext('2d')
   const cw = canvas.width
   const ch = canvas.height
@@ -261,10 +270,55 @@ function drawGestureFrame(video, canvas, results, minPalmSize) {
   ctx.drawImage(video, 0, 0, cw, ch)
   ctx.restore()
 
+  // 2. 모서리 마진 및 화면 매핑 활성 영역(Active Zone) 가이드 그리기
+  const mx = (margins?.x ?? 0.20) * cw
+  const mt = (margins?.top ?? 0.25) * ch
+  const mb = (margins?.bot ?? 0.10) * ch
+  const aw = Math.max(0, cw - mx * 2)
+  const ah = Math.max(0, ch - mt - mb)
+
+  ctx.save()
+  // 모서리 마진(비활성 구역) 반투명 마스크
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.32)'
+  ctx.fillRect(0, 0, cw, mt)          // 상단 마진
+  ctx.fillRect(0, ch - mb, cw, mb)    // 하단 마진
+  ctx.fillRect(0, mt, mx, ah)         // 좌측 마진
+  ctx.fillRect(cw - mx, mt, mx, ah)   // 우측 마진
+
+  // 활성 영역 사각형 (점선 테두리)
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.70)'
+  ctx.lineWidth = 1.2
+  ctx.setLineDash([4, 4])
+  ctx.strokeRect(mx, mt, aw, ah)
+  ctx.setLineDash([])
+
+  // 모서리 L자 코너 브래킷 강조
+  ctx.strokeStyle = '#F5B800'
+  ctx.lineWidth = 2.5
+  const cornerLen = 10
+  // 좌상단
+  ctx.beginPath()
+  ctx.moveTo(mx, mt + cornerLen); ctx.lineTo(mx, mt); ctx.lineTo(mx + cornerLen, mt); ctx.stroke()
+  // 우상단
+  ctx.beginPath()
+  ctx.moveTo(mx + aw - cornerLen, mt); ctx.lineTo(mx + aw, mt); ctx.lineTo(mx + aw, mt + cornerLen); ctx.stroke()
+  // 좌하단
+  ctx.beginPath()
+  ctx.moveTo(mx, mt + ah - cornerLen); ctx.lineTo(mx, mt + ah); ctx.lineTo(mx + cornerLen, mt + ah); ctx.stroke()
+  // 우하단
+  ctx.beginPath()
+  ctx.moveTo(mx + aw - cornerLen, mt + ah); ctx.lineTo(mx + aw, mt + ah); ctx.lineTo(mx + aw, mt + ah - cornerLen); ctx.stroke()
+
+  // 활성 영역 라벨
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+  ctx.font = '10px Pretendard, sans-serif'
+  ctx.fillText('화면 활성 영역', mx + 6, mt + 14)
+  ctx.restore()
+
   const lms = results?.multiHandLandmarks || []
   const handed = results?.multiHandedness || []
   if (!lms.length) {
-    return { detected: false, label: '미감지', palmSize: 0, action: '대기', isFar: false }
+    return { detected: false, label: '미감지', palmSize: 0, action: '대기', isFar: false, pointerX: null, pointerY: null }
   }
 
   const lm = lms[0]
@@ -274,7 +328,7 @@ function drawGestureFrame(video, canvas, results, minPalmSize) {
   const pSize = _palmSize(lm, camAR)
   const isFar = pSize < minPalmSize
 
-  // 2. 스켈레톤 관절 연결선
+  // 3. 스켈레톤 관절 연결선
   ctx.save()
   ctx.lineWidth = 2.5
   ctx.strokeStyle = isFar ? 'rgba(231, 76, 60, 0.9)' : 'rgba(245, 184, 0, 0.95)'
@@ -287,7 +341,7 @@ function drawGestureFrame(video, canvas, results, minPalmSize) {
     ctx.stroke()
   }
 
-  // 3. 관절 점 그리기
+  // 4. 관절 점 그리기
   for (let i = 0; i < 21; i++) {
     const pt = lm[i]
     const x = (1 - pt.x) * cw
@@ -300,9 +354,29 @@ function drawGestureFrame(video, canvas, results, minPalmSize) {
     ctx.fill()
     ctx.stroke()
   }
+
+  // 5. 실제 포인터 타깃 중심점 (손목 0번 ↔ 중지 MCP 9번 중간점)
+  const rawPx = (lm[0].x + lm[9].x) / 2
+  const rawPy = (lm[0].y + lm[9].y) / 2
+  const targetX = (1 - rawPx) * cw
+  const targetY = rawPy * ch
+
+  // 타깃 조준선(Crosshair) 및 동심원
+  ctx.beginPath()
+  ctx.arc(targetX, targetY, 6.5, 0, Math.PI * 2)
+  ctx.strokeStyle = '#00e5ff'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.moveTo(targetX - 9, targetY); ctx.lineTo(targetX + 9, targetY)
+  ctx.moveTo(targetX, targetY - 9); ctx.lineTo(targetX, targetY + 9)
+  ctx.strokeStyle = '#00e5ff'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
   ctx.restore()
 
-  // 4. 간단한 제스처 판정
+  // 6. 간단한 제스처 판정
   const dThumbIndex = Math.hypot((lm[4].x - lm[8].x) * camAR, lm[4].y - lm[8].y)
   const isPinch = dThumbIndex < 0.08
   const dTip = Math.hypot((lm[8].x - lm[0].x) * camAR, lm[8].y - lm[0].y)
@@ -316,12 +390,18 @@ function drawGestureFrame(video, canvas, results, minPalmSize) {
     action = '포인팅 (커서 이동)'
   }
 
+  // 활성 영역 대비 정규화 화면 위치 (0% ~ 100%)
+  const normScreenX = aw > 0 ? Math.round(Math.max(0, Math.min(1, (targetX - mx) / aw)) * 100) : 0
+  const normScreenY = ah > 0 ? Math.round(Math.max(0, Math.min(1, (targetY - mt) / ah)) * 100) : 0
+
   return {
     detected: true,
     label,
     palmSize: Number(pSize.toFixed(3)),
     action,
     isFar,
+    pointerX: normScreenX,
+    pointerY: normScreenY,
   }
 }
 
@@ -717,7 +797,12 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
         const canvas = gestureCanvasRef.current
         if (!canvas || !video) return
         const minPalm = Number(settings.gesture?.min_palm_size) || 0.08
-        const metrics = drawGestureFrame(video, canvas, results, minPalm)
+        const margins = {
+          x: Number(settings.gesture?.margin_x) || 0.20,
+          top: Number(settings.gesture?.margin_top) || 0.25,
+          bot: Number(settings.gesture?.margin_bot) || 0.10,
+        }
+        const metrics = drawGestureFrame(video, canvas, results, minPalm, margins)
 
         const now = performance.now()
         const p = gesturePerfRef.current
@@ -755,7 +840,16 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     } catch (e) {
       console.warn('[KioskSettingsPage] 제스처 모델 구동 실패:', e)
     }
-  }, [settings.gesture?.detection_confidence, settings.gesture?.tracking_confidence, settings.gesture?.min_palm_size, settings.gesture?.target_fps, stopGestureLoop])
+  }, [
+    settings.gesture?.detection_confidence,
+    settings.gesture?.tracking_confidence,
+    settings.gesture?.min_palm_size,
+    settings.gesture?.target_fps,
+    settings.gesture?.margin_x,
+    settings.gesture?.margin_top,
+    settings.gesture?.margin_bot,
+    stopGestureLoop,
+  ])
 
   const stopCamTest = useCallback(() => {
     stopApproachWs()
@@ -1238,6 +1332,11 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
                       <div style={{ fontSize: 12, color: '#666' }}>
                         {gestureLive.label} · 동작: {gestureLive.action} · {gestureLive.fps} FPS
                       </div>
+                      {gestureLive.detected && gestureLive.pointerX !== null && (
+                        <div style={{ fontSize: 11, color: '#00838f', marginTop: 3, fontWeight: 500 }}>
+                          화면 매핑 포인터: X {gestureLive.pointerX}% · Y {gestureLive.pointerY}%
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ background: '#fff', borderRadius: 6, padding: '8px 12px' }}>
@@ -1274,6 +1373,14 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
                             ? '손이 멀어 기준선 미달입니다. 아래 슬라이더에서 기준을 낮춰보세요.'
                             : '정상 인식 거리입니다. 커서 이동 및 선택이 원활합니다.')
                           : '손을 카메라에 비추어 크기(거리)를 확인하세요.'}
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#fff', borderRadius: 6, padding: '6px 12px', fontSize: 11, color: '#666' }}>
+                      <span style={{ fontWeight: 600, color: '#444' }}>화면 매핑 활성 구역 마진:</span>
+                      {' '}좌우 {Math.round((gesture.margin_x ?? 0.20) * 100)}% · 상단 {Math.round((gesture.margin_top ?? 0.25) * 100)}% · 하단 {Math.round((gesture.margin_bot ?? 0.10) * 100)}%
+                      <div style={{ color: '#888', marginTop: 2 }}>
+                        뷰파인더의 노란 코너 점선 안쪽이 실제 키오스크 화면 0~100%에 대응됩니다.
                       </div>
                     </div>
                   </>
@@ -1454,6 +1561,39 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
             step={1}
             unit=" FPS"
             onChange={v => updateGesture({ target_fps: v })}
+          />
+
+          <SliderRow
+            label="카메라 좌우 모서리 마진 (margin_x)"
+            hint="손이 화면 좌우 끝에 닿기 위한 카메라 외곽 여백입니다. 상단 뷰파인더의 활성 구역 사각형 폭이 실시간 조절됩니다. (기본: 20%)"
+            value={Math.round((gesture.margin_x ?? 0.20) * 100)}
+            min={5}
+            max={35}
+            step={1}
+            unit="%"
+            onChange={v => updateGesture({ margin_x: +(v / 100).toFixed(2) })}
+          />
+
+          <SliderRow
+            label="카메라 상단 모서리 마진 (margin_top)"
+            hint="손을 너무 높이 들지 않아도 화면 맨 위 메뉴를 가리킬 수 있도록 상단 여백을 둡니다. (기본: 25%)"
+            value={Math.round((gesture.margin_top ?? 0.25) * 100)}
+            min={5}
+            max={40}
+            step={1}
+            unit="%"
+            onChange={v => updateGesture({ margin_top: +(v / 100).toFixed(2) })}
+          />
+
+          <SliderRow
+            label="카메라 하단 모서리 마진 (margin_bot)"
+            hint="화면 맨 아래 버튼을 터치하기 위한 하단 여백입니다. (기본: 10%)"
+            value={Math.round((gesture.margin_bot ?? 0.10) * 100)}
+            min={5}
+            max={30}
+            step={1}
+            unit="%"
+            onChange={v => updateGesture({ margin_bot: +(v / 100).toFixed(2) })}
           />
 
           <div style={{ padding: '14px 0', borderBottom: '1px solid #f0f0f0' }}>
