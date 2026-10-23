@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { gestureTargetFps, confirmGesture, acceptsPalm, cursorHideDelay, pinchReleased } from '../utils/gestureScheduling.js'
 
 // ── 카메라 및 제스처 런타임 설정 ─────────────────────────────────────────────
 const CAM_W_DEFAULT   = 640
@@ -12,7 +13,7 @@ const CAM_RETRY_DELAY = 1500
 
 export function getActiveGestureSettings() {
   const fallback = {
-    min_palm_size: 0.08,
+    min_palm_size: 0.05,
     detection_confidence: 0.65,
     tracking_confidence: 0.50,
     target_fps: 15,
@@ -165,7 +166,7 @@ function _isValidLandmarks(lm) {
 }
 
 // 손목(0) → 중지 MCP(9) 거리 — 멀수록 작아지는 손 크기 지표
-export const DEFAULT_MIN_PALM_SIZE = 0.08  // 기본값 (설정값에 의해 런타임 동적 조정)
+export const DEFAULT_MIN_PALM_SIZE = 0.05  // 설정값에 의해 런타임 동적 조정
 
 // 정규화 좌표의 x는 화면 비율만큼 압축되어 있다. 보정하지 않으면 손을 옆으로 눕혔을 때
 // 같은 거리에서도 크기가 작게 측정되어, 회전만으로 임계값 아래로 떨어진다.
@@ -289,39 +290,18 @@ function _isOpenForSwipe(lm) {
 }
 
 // FSM debounce
-const G_CONFIRM     = 2
-const G_CONFIRM_OK  = 3
-const G_COOLDOWN    = 800
-const G_COOLDOWN_OK = 600
-
 function makeGestureState() {
-  return { candidate: null, count: 0, lastFire: -Infinity }
+  return { candidate: null, count: 0, since: 0, lastSampleAt: -Infinity, lastFire: -Infinity }
 }
 
 function _confirmStatic(state, gesture) {
-  const now = performance.now()
-  const cooldown = gesture === 'ok' ? G_COOLDOWN_OK : G_COOLDOWN
-  if (now - state.lastFire < cooldown) return null
-  if (gesture !== null && gesture === state.candidate) {
-    state.count++
-  } else {
-    state.candidate = gesture
-    state.count     = gesture ? 1 : 0
-  }
-  const needed = gesture === 'ok' ? G_CONFIRM_OK : G_CONFIRM
-  if (state.count >= needed && gesture !== null) {
-    state.count    = 0
-    state.lastFire = now
-    return gesture
-  }
-  return null
+  return confirmGesture(state, gesture, performance.now())
 }
 
-// 스와이프 파라미터
 const SWIPE_COOLDOWN_MS      = 600   // 같은 방향 / 무관 쿨다운
 const SWIPE_COOLDOWN_REVERSE = 1500  // 직전 반대 방향 쿨다운 (복귀 동작 오인식 방지)
 const SWIPE_WINDOW_MS        = 700   // 버퍼 유지 시간
-const SWIPE_MIN_FRAMES       = 4     // 트림 후 최소 프레임 수
+const SWIPE_MIN_FRAMES       = 3     // 저FPS에서도 3개 이상의 이동 표본을 확인
 const SWIPE_STEP_THRESHOLD   = 0.004 // 프레임 간 이동 최소치 (정지 판정)
 
 // 좌우 — x 변위 최소치 / y 최대 허용 오차
@@ -394,6 +374,14 @@ function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm, camAR) {
     if (total === 0 || Math.max(pos, neg) / total < SWIPE_CONSISTENCY) return null
     candidate = rawDx < 0 ? 'swipe_right' : 'swipe_left'
   } else if (ady > adx && ady >= SWIPE_UD_MIN_Y && adx <= SWIPE_UD_MAX_X) {
+    let consistent = 0, moving = 0
+    for (let i = 1; i < a.length; i++) {
+      const step = a[i].y - a[i-1].y
+      if (Math.abs(step) <= 0.001) continue
+      moving++
+      if (Math.sign(step) === Math.sign(rawDy)) consistent++
+    }
+    if (!moving || consistent / moving < SWIPE_CONSISTENCY) return null
     candidate = rawDy < 0 ? 'swipe_up' : 'swipe_down'
   }
   if (!candidate) return null
@@ -405,7 +393,7 @@ function _detectSwipe(buf, lastSwipeT, lastSwipeDir, lm, camAR) {
 
   // ③ 속도 게이트 (물리 단위)
   const dt = (a[a.length - 1].t - a[0].t) / 1000
-  if (dt < 0.05 || netDist / dt < SWIPE_MIN_SPEED) return null
+  if (dt < 0.10 || netDist / dt < SWIPE_MIN_SPEED) return null
 
   // ④ 직선도 (물리 단위)
   let pathLen = 0
@@ -598,6 +586,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
   const pointerRef   = useRef(onPointer)
   const gestureRef   = useRef(onGesture)
   const landmarksRef = useRef(onLandmarks)
+  const previewRef = useRef(pipCanvasRef)
+  useEffect(() => { previewRef.current = pipCanvasRef }, [pipCanvasRef])
   useEffect(() => { pointerRef.current   = onPointer   }, [onPointer])
   useEffect(() => { gestureRef.current   = onGesture   }, [onGesture])
   useEffect(() => { landmarksRef.current = onLandmarks }, [onLandmarks])
@@ -628,6 +618,11 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let inflight = false
     let lastSent = 0
     let cameraSettings = null
+    let lastHandAt = performance.now()
+    let lastPreviewAt = -Infinity
+    let lastVideoTime = -1
+    let palmTracked = false
+    let pinchAnchor = null
 
     // 설정 실시간 업데이트 구독 (대시보드 또는 키오스크 디버깅 페이지에서 슬라이더 조절 시 즉각 반영)
     const handleGestureConfigChange = (e) => {
@@ -673,6 +668,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       const avgLatency = perf.results ? perf.latencyTotal / perf.results : 0
       const metrics = {
         targetFps: currentTargetFps,
+        effectiveTargetFps: gestureTargetFps(currentTargetFps, now, lastHandAt),
         camera: cameraSettings,
         sentFps: +(perf.sent / seconds).toFixed(1),
         resultFps: +(perf.results / seconds).toFixed(1),
@@ -712,7 +708,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let wasActive   = false
     let wasPointing = false
     let pointerWasPinching = false
-    const CURSOR_HIDE_DELAY_MS = 350
+    let currentHideDelay = 350
     let hideTimer = null
 
     // ── 제스처 상태 ──────────────────────────────────────────────────────────
@@ -722,6 +718,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     const lastSwipeDirs = { Left: null, Right: null }
     // ok 발화 후 손을 한 번 펴야 다음 ok 허용 (같은 자리 연속 발화 방지)
     const okNeedsOpen   = { Left: false, Right: false }
+    const releaseStates = {
+      Left: { since: null, lastAt: -Infinity },
+      Right: { since: null, lastAt: -Infinity },
+    }
     // 핀치 히스테리시스 — 진입/유지 임계를 구분해 각도 변화에서 끊기지 않게 함
     const wasPinching   = { Left: false, Right: false }
 
@@ -733,6 +733,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       inflight = false
       const resultNow = performance.now()
       const latency = perf.sendStarted ? resultNow - perf.sendStarted : 0
+      currentHideDelay = cursorHideDelay(latency)
       perf.results++
       perf.workerTotal += results.inferMs ?? 0
       perf.latencyTotal += latency
@@ -742,6 +743,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       const lms    = results.multiHandLandmarks || []
       const handed = results.multiHandedness     || []
       const hasHand = lms.length > 0
+      if (hasHand) lastHandAt = resultNow
       if (hasHand) perf.handFrames++
       if (perf.prevHand && !hasHand) perf.handLosses++
       perf.prevHand = hasHand
@@ -755,6 +757,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         if (lbl === 'Right' && activeIdx < 0) { activeIdx = i; activeLabel = 'Right' }
       }
 
+      const palmAccepted = activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
+        acceptsPalm(_palmSize(lms[activeIdx], camAR), currentMinPalmSize, palmTracked)
+      palmTracked = palmAccepted
+
       // ── 포인터 ────────────────────────────────────────────────────────────
       // 모든 숨김 경로에 동일한 유예를 준다. 임계값 근처에서 한 프레임만 조건을 벗어나도
       // 즉시 끄면 커서가 깜빡인다.
@@ -763,19 +769,21 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         hideTimer = setTimeout(() => {
           hideTimer = null
           wasActive = false
+          pinchAnchor = null
           pointerRef.current?.(null)
-        }, CURSOR_HIDE_DELAY_MS)
+        }, currentHideDelay)
       }
 
       try {
-        if (activeIdx >= 0 && _isValidLandmarks(lms[activeIdx]) &&
-            _palmSize(lms[activeIdx], camAR) >= currentMinPalmSize) {
+        if (palmAccepted) {
           const lm       = lms[activeIdx]
           // 히스테리시스: 이미 가리키는 중이면 더 관대한 조건으로 유지 → 끊김 감소
-          const pointing = wasPointing
+          // 핀치와 포인팅을 동시에 판정하되 핀치를 우선한다.
+          // 포인팅 유지 조건이 느슨해도 실제 핀치 커서가 꺼지지 않는다.
+          const pinching = _isPinching(lm, pointerWasPinching)
+          const pointing = !pinching && (wasPointing
             ? (_isPointingHold(lm) || _isPointing(lm) || _isThumbIndexOpen(lm))
-            : (_isPointing(lm)     || _isThumbIndexOpen(lm))
-          const pinching = !pointing && _isPinching(lm, pointerWasPinching)
+            : (_isPointing(lm)     || _isThumbIndexOpen(lm)))
           wasPointing        = pointing
           pointerWasPinching = pinching
 
@@ -797,7 +805,10 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
               const normY = _padNorm((py - currentMarginTop) / currentActiveY, currentEdgePad)
               const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
               perf.pointerFrames++
-              pointerRef.current?.({ x: sx, y: sy })
+              // 핀치 중 손 모양 변화로 클릭 위치가 옆 버튼으로 밀리지 않게 한다.
+              if (!pinching) pinchAnchor = null
+              else if (!pinchAnchor) pinchAnchor = { x: sx, y: sy }
+              pointerRef.current?.(pinchAnchor || { x: sx, y: sy })
             } else {
               hidePointerSoon()
             }
@@ -821,6 +832,7 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
           palmBufs[lbl].length  = 0
           lastSwipeDirs[lbl]    = null
           okNeedsOpen[lbl]      = false
+          releaseStates[lbl] = { since: null, lastAt: -Infinity }
         }
       }
       // 커서 히스테리시스는 손이 하나도 없을 때만 리셋한다. 좌우 라벨이 뒤집혔다는
@@ -828,11 +840,12 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (lms.length === 0) {
         wasPointing        = false
         pointerWasPinching = false
+        pinchAnchor = null
       }
 
       // ── 랜드마크 페이로드 (수집 도구용) ───────────────────────────────────
       const handsPayload = []
-      for (let i = 0; i < lms.length; i++) {
+      for (let i = 0; landmarksRef.current && i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
         const flat = new Array(63)
@@ -850,14 +863,17 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       for (let i = 0; i < lms.length; i++) {
         const lm = lms[i]
         if (!_isValidLandmarks(lm)) continue
-        if (_palmSize(lm, camAR) < currentMinPalmSize) continue   // 너무 먼 손 무시
+        if (i === activeIdx ? !palmAccepted :
+            !acceptsPalm(_palmSize(lm, camAR), currentMinPalmSize, false)) continue
         const mpLabel = handed[i]?.label || 'Right'
         const side    = mpLabel === 'Left' ? 'right' : 'left'
 
         // 원시 손바닥 중심 — 앵커 변환 없이 절대 위치 (스와이프 추적용)
         const rpx = (lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 4
         const rpy = (lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 4
-        palmBufs[mpLabel].push({ x: rpx, y: rpy, t: frameNow })
+        // 손을 펴기 전 포인터 이동을 스와이프로 합산하지 않는다.
+        if (!_isOpenForSwipe(lm)) palmBufs[mpLabel].length = 0
+        else palmBufs[mpLabel].push({ x: rpx, y: rpy, t: frameNow })
         const cutoff = frameNow - SWIPE_WINDOW_MS
         while (palmBufs[mpLabel].length && palmBufs[mpLabel][0].t < cutoff)
           palmBufs[mpLabel].shift()
@@ -866,8 +882,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
         const pinching = _isPinching(lm, wasPinching[mpLabel])
         wasPinching[mpLabel] = pinching
 
-        // ok 리셋 플래그: 핀치 해제되면 다시 허용
-        if (!pinching) okNeedsOpen[mpLabel] = false
+        // 손끝을 충분히 벌린 상태가 유지되어야 다음 OK를 허용한다.
+        const ratio = _dist2d(lm[4], lm[8]) / _palmSize(lm)
+        if (pinchReleased(releaseStates[mpLabel], ratio, frameNow)) okNeedsOpen[mpLabel] = false
 
         let gesture = null
         const swipe = _detectSwipe(palmBufs[mpLabel], lastSwipes[mpLabel], lastSwipeDirs[mpLabel], lm, camAR)
@@ -907,9 +924,12 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       })
 
       // PiP 캔버스에 인식 영상 + 관절 그리기 (활성 영역 마진 가이드 포함)
-      if (pipCanvasRef?.current && video) {
+      const previewCanvas = previewRef.current?.current
+      if (previewCanvas && video && previewCanvas.clientWidth > 0 &&
+          previewCanvas.clientHeight > 0 && resultNow - lastPreviewAt >= 100) {
+        lastPreviewAt = resultNow
         try {
-          _drawPip(pipCanvasRef.current, video, lms, handed, {
+          _drawPip(previewCanvas, video, lms, handed, {
             l: currentMarginL,
             r: currentMarginR,
             top: currentMarginTop,
@@ -925,11 +945,14 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     const loop = () => {
       if (!active) return
       const now   = performance.now()
+      const effectiveFps = gestureTargetFps(currentTargetFps, now, lastHandAt)
       const ready = !inflight && video && video.readyState >= 2 && hands &&
-                    now - lastSent >= 1000 / currentTargetFps &&
+                    video.currentTime !== lastVideoTime &&
+                    now - lastSent >= 1000 / effectiveFps &&
                     now >= sendCooldownUntil
       if (ready) {
         inflight = true
+        lastVideoTime = video.currentTime
         lastSent = now
         perf.sent++
         perf.sendStarted = now

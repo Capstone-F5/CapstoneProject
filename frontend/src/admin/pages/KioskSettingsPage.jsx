@@ -172,7 +172,7 @@ const GESTURE_PRESETS = {
     values: {
       preset: 'standard',
       enabled: true,
-      min_palm_size: 0.08,
+      min_palm_size: 0.05,
       detection_confidence: 0.65,
       tracking_confidence: 0.50,
       target_fps: 15,
@@ -868,7 +868,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     const video = camVideoRef.current
     if (!canvas || !video || video.readyState < 2) return
     const g = latestSettingsRef.current?.gesture || {}
-    const minPalm = Number(g.min_palm_size) || 0.08
+    const minPalm = Number(g.min_palm_size) || 0.05
     const margins = {
       l: Number(g.margin_left ?? g.margin_x) || 0.20,
       r: Number(g.margin_right ?? g.margin_x) || 0.20,
@@ -903,7 +903,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
         const canvas = gestureCanvasRef.current
         if (!canvas || !video) return
         const g = latestSettingsRef.current?.gesture || {}
-        const minPalm = Number(g.min_palm_size) || 0.08
+        const minPalm = Number(g.min_palm_size) || 0.05
         const margins = {
           l: Number(g.margin_left ?? g.margin_x) || 0.20,
           r: Number(g.margin_right ?? g.margin_x) || 0.20,
@@ -1068,7 +1068,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
   const rmsBarPct = Math.min(100, Math.round((liveRms / 0.08) * 100))
   const thresholdMarkerPct = Math.min(100, Math.round((mic.min_speech_rms / 0.08) * 100))
   const palmSizeBarPct = Math.min(100, Math.round(((gestureLive.palmSize || 0) / 0.16) * 100))
-  const minPalmMarkerPct = Math.min(100, Math.round(((gesture.min_palm_size || 0.08) / 0.16) * 100))
+  const minPalmMarkerPct = Math.min(100, Math.round(((gesture.min_palm_size || 0.05) / 0.16) * 100))
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1807,7 +1807,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
 
           <SliderRow
             label="원거리 손 인식 최소 크기 (min_palm_size)"
-            hint="손목과 중지 관절 사이의 거리 비율입니다. 손이 멀어 인식이 잘 안 될 때는 0.05~0.06으로 낮추어 보십시오. (기본 0.08)"
+            hint="손목과 중지 관절 사이의 거리 비율입니다. 기본값은 0.05이며, 주변 사람의 손이 인식되면 값을 높여 보십시오. 기존 저장값은 유지됩니다."
             value={gesture.min_palm_size}
             min={0.03}
             max={0.15}

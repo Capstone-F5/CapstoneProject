@@ -732,11 +732,14 @@ function AppContent() {
     // HUD가 숨겨져 있으면(SHOW_GESTURE_HUD=false) 상태를 갱신하지 않는다 — 이 갱신은 제스처 결과가 올 때마다(5~15fps)
     // 새 객체를 만들어 App 전체를 다시 렌더링하게 해서, 화면에 안 보이는데도 Pi의 메인 스레드를 쓰고 있었다.
     if (SHOW_GESTURE_HUD) {
-      setGestureHud({
+      const nextHud = {
         left:  hands?.left  ? `${hands.left.finger_count}개`  : '-',
         right: hands?.right ? `${hands.right.finger_count}개` : '-',
         total: total_fingers ?? 0,
-      })
+      }
+      setGestureHud(previous => previous && previous.left === nextHud.left &&
+        previous.right === nextHud.right && previous.total === nextHud.total
+        ? previous : nextHud)
     }
 
     if (!gesture) return

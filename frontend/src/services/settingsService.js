@@ -43,7 +43,7 @@ export const DEFAULT_KIOSK_SETTINGS = {
   gesture: {
     preset: 'standard',
     enabled: true,
-    min_palm_size: 0.08,
+    min_palm_size: 0.05,
     detection_confidence: 0.65,
     tracking_confidence: 0.50,
     target_fps: 15,

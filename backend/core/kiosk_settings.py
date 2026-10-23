@@ -58,7 +58,7 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
     "gesture": {
         "preset": "standard",                  # standard | far_reach | rpi_eco | custom
         "enabled": True,                       # 온디바이스 제스처 인식 활성화 여부
-        "min_palm_size": 0.08,                 # 손 인식 최소 손바닥 크기 비율 (0.03 ~ 0.18, 낮출수록 원거리 손 인식)
+        "min_palm_size": 0.05,                 # 손 인식 최소 손바닥 크기 비율 (0.03 ~ 0.18, 낮출수록 원거리 손 인식)
         "detection_confidence": 0.65,          # MediaPipe 손 검출 최소 신뢰도 (0.35 ~ 0.85)
         "tracking_confidence": 0.50,           # MediaPipe 관절 랜드마크 추적 신뢰도 (0.30 ~ 0.80)
         "target_fps": 15,                      # 온디바이스 목표 FPS (8 ~ 24, RPi 4B 발열 및 CPU 부하 제어)
@@ -127,7 +127,7 @@ def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
 
     g = s.setdefault("gesture", {})
     g["enabled"] = bool(g.get("enabled", True))
-    g["min_palm_size"] = round(max(0.03, min(0.20, float(g.get("min_palm_size", 0.08)))), 3)
+    g["min_palm_size"] = round(max(0.03, min(0.20, float(g.get("min_palm_size", 0.05)))), 3)
     g["detection_confidence"] = round(max(0.30, min(0.90, float(g.get("detection_confidence", 0.65)))), 2)
     g["tracking_confidence"] = round(max(0.30, min(0.90, float(g.get("tracking_confidence", 0.50)))), 2)
     g["target_fps"] = int(max(8, min(30, int(g.get("target_fps", 15)))))
