@@ -159,8 +159,12 @@ const GESTURE_PRESETS = {
       target_fps: 15,
       cam_width: 640,
       cam_height: 480,
-      margin_x: 0.20,
+      margin_left: 0.20,
+      margin_right: 0.20,
       margin_top: 0.25,
+      margin_bottom: 0.10,
+      edge_pad: 0.05,
+      margin_x: 0.20,
       margin_bot: 0.10,
     },
   },
@@ -176,8 +180,12 @@ const GESTURE_PRESETS = {
       target_fps: 15,
       cam_width: 640,
       cam_height: 480,
-      margin_x: 0.18,
+      margin_left: 0.18,
+      margin_right: 0.18,
       margin_top: 0.22,
+      margin_bottom: 0.10,
+      edge_pad: 0.05,
+      margin_x: 0.18,
       margin_bot: 0.10,
     },
   },
@@ -193,8 +201,12 @@ const GESTURE_PRESETS = {
       target_fps: 10,
       cam_width: 480,
       cam_height: 360,
-      margin_x: 0.20,
+      margin_left: 0.20,
+      margin_right: 0.20,
       margin_top: 0.25,
+      margin_bottom: 0.10,
+      edge_pad: 0.05,
+      margin_x: 0.20,
       margin_bot: 0.10,
     },
   },
@@ -257,7 +269,7 @@ function ToggleRow({ label, hint, checked, onChange, isLast = false }) {
   )
 }
 
-function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.20, top: 0.25, bot: 0.10 }) {
+function drawGestureFrame(video, canvas, results, minPalmSize, margins = { l: 0.20, r: 0.20, top: 0.25, bot: 0.10 }) {
   if (!canvas || !video) return { detected: false, label: '미감지', palmSize: 0, action: '대기', isFar: false, pointerX: null, pointerY: null }
   const ctx = canvas.getContext('2d')
   const cw = canvas.width
@@ -271,10 +283,11 @@ function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.
   ctx.restore()
 
   // 2. 모서리 마진 및 화면 매핑 활성 영역(Active Zone) 가이드 그리기
-  const mx = (margins?.x ?? 0.20) * cw
+  const ml = (margins?.l ?? 0.20) * cw
+  const mr = (margins?.r ?? 0.20) * cw
   const mt = (margins?.top ?? 0.25) * ch
   const mb = (margins?.bot ?? 0.10) * ch
-  const aw = Math.max(0, cw - mx * 2)
+  const aw = Math.max(0, cw - ml - mr)
   const ah = Math.max(0, ch - mt - mb)
 
   ctx.save()
@@ -282,14 +295,14 @@ function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.
   ctx.fillStyle = 'rgba(0, 0, 0, 0.32)'
   ctx.fillRect(0, 0, cw, mt)          // 상단 마진
   ctx.fillRect(0, ch - mb, cw, mb)    // 하단 마진
-  ctx.fillRect(0, mt, mx, ah)         // 좌측 마진
-  ctx.fillRect(cw - mx, mt, mx, ah)   // 우측 마진
+  ctx.fillRect(0, mt, ml, ah)         // 좌측 마진
+  ctx.fillRect(cw - mr, mt, mr, ah)   // 우측 마진
 
   // 활성 영역 사각형 (점선 테두리)
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.70)'
   ctx.lineWidth = 1.2
   ctx.setLineDash([4, 4])
-  ctx.strokeRect(mx, mt, aw, ah)
+  ctx.strokeRect(ml, mt, aw, ah)
   ctx.setLineDash([])
 
   // 모서리 L자 코너 브래킷 강조
@@ -298,21 +311,21 @@ function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.
   const cornerLen = 10
   // 좌상단
   ctx.beginPath()
-  ctx.moveTo(mx, mt + cornerLen); ctx.lineTo(mx, mt); ctx.lineTo(mx + cornerLen, mt); ctx.stroke()
+  ctx.moveTo(ml, mt + cornerLen); ctx.lineTo(ml, mt); ctx.lineTo(ml + cornerLen, mt); ctx.stroke()
   // 우상단
   ctx.beginPath()
-  ctx.moveTo(mx + aw - cornerLen, mt); ctx.lineTo(mx + aw, mt); ctx.lineTo(mx + aw, mt + cornerLen); ctx.stroke()
+  ctx.moveTo(ml + aw - cornerLen, mt); ctx.lineTo(ml + aw, mt); ctx.lineTo(ml + aw, mt + cornerLen); ctx.stroke()
   // 좌하단
   ctx.beginPath()
-  ctx.moveTo(mx, mt + ah - cornerLen); ctx.lineTo(mx, mt + ah); ctx.lineTo(mx + cornerLen, mt + ah); ctx.stroke()
+  ctx.moveTo(ml, mt + ah - cornerLen); ctx.lineTo(ml, mt + ah); ctx.lineTo(ml + cornerLen, mt + ah); ctx.stroke()
   // 우하단
   ctx.beginPath()
-  ctx.moveTo(mx + aw - cornerLen, mt + ah); ctx.lineTo(mx + aw, mt + ah); ctx.lineTo(mx + aw, mt + ah - cornerLen); ctx.stroke()
+  ctx.moveTo(ml + aw - cornerLen, mt + ah); ctx.lineTo(ml + aw, mt + ah); ctx.lineTo(ml + aw, mt + ah - cornerLen); ctx.stroke()
 
   // 활성 영역 라벨
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
   ctx.font = '10px Pretendard, sans-serif'
-  ctx.fillText('화면 활성 영역', mx + 6, mt + 14)
+  ctx.fillText('화면 활성 영역', ml + 6, mt + 14)
   ctx.restore()
 
   const lms = results?.multiHandLandmarks || []
@@ -391,7 +404,7 @@ function drawGestureFrame(video, canvas, results, minPalmSize, margins = { x: 0.
   }
 
   // 활성 영역 대비 정규화 화면 위치 (0% ~ 100%)
-  const normScreenX = aw > 0 ? Math.round(Math.max(0, Math.min(1, (targetX - mx) / aw)) * 100) : 0
+  const normScreenX = aw > 0 ? Math.round(Math.max(0, Math.min(1, (targetX - ml) / aw)) * 100) : 0
   const normScreenY = ah > 0 ? Math.round(Math.max(0, Math.min(1, (targetY - mt) / ah)) * 100) : 0
 
   return {
@@ -798,9 +811,10 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
         if (!canvas || !video) return
         const minPalm = Number(settings.gesture?.min_palm_size) || 0.08
         const margins = {
-          x: Number(settings.gesture?.margin_x) || 0.20,
+          l: Number(settings.gesture?.margin_left ?? settings.gesture?.margin_x) || 0.20,
+          r: Number(settings.gesture?.margin_right ?? settings.gesture?.margin_x) || 0.20,
           top: Number(settings.gesture?.margin_top) || 0.25,
-          bot: Number(settings.gesture?.margin_bot) || 0.10,
+          bot: Number(settings.gesture?.margin_bottom ?? settings.gesture?.margin_bot) || 0.10,
         }
         const metrics = drawGestureFrame(video, canvas, results, minPalm, margins)
 
@@ -845,8 +859,11 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     settings.gesture?.tracking_confidence,
     settings.gesture?.min_palm_size,
     settings.gesture?.target_fps,
-    settings.gesture?.margin_x,
+    settings.gesture?.margin_left,
+    settings.gesture?.margin_right,
     settings.gesture?.margin_top,
+    settings.gesture?.margin_bottom,
+    settings.gesture?.margin_x,
     settings.gesture?.margin_bot,
     stopGestureLoop,
   ])
@@ -1376,11 +1393,75 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
                       </div>
                     </div>
 
-                    <div style={{ background: '#fff', borderRadius: 6, padding: '6px 12px', fontSize: 11, color: '#666' }}>
-                      <span style={{ fontWeight: 600, color: '#444' }}>화면 매핑 활성 구역 마진:</span>
-                      {' '}좌우 {Math.round((gesture.margin_x ?? 0.20) * 100)}% · 상단 {Math.round((gesture.margin_top ?? 0.25) * 100)}% · 하단 {Math.round((gesture.margin_bot ?? 0.10) * 100)}%
-                      <div style={{ color: '#888', marginTop: 2 }}>
-                        뷰파인더의 노란 코너 점선 안쪽이 실제 키오스크 화면 0~100%에 대응됩니다.
+                    <div style={{ background: '#fff', borderRadius: 6, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, color: '#222' }}>화면 매핑 구역 마진 조절</span>
+                        <span style={{ fontSize: 11, color: '#888' }}>슬라이더 조절 시 뷰파인더에 즉시 반영</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 14px' }}>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#555', marginBottom: 2 }}>
+                            <span>좌측 마진</span>
+                            <span style={{ fontWeight: 600, color: '#744032' }}>{Math.round((gesture.margin_left ?? 0.20) * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={2}
+                            max={35}
+                            step={1}
+                            value={Math.round((gesture.margin_left ?? 0.20) * 100)}
+                            onChange={e => updateGesture({ margin_left: Number(e.target.value) / 100, margin_x: Number(e.target.value) / 100 })}
+                            style={{ width: '100%', accentColor: '#744032', cursor: 'pointer', height: 4 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#555', marginBottom: 2 }}>
+                            <span>우측 마진</span>
+                            <span style={{ fontWeight: 600, color: '#744032' }}>{Math.round((gesture.margin_right ?? 0.20) * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={2}
+                            max={35}
+                            step={1}
+                            value={Math.round((gesture.margin_right ?? 0.20) * 100)}
+                            onChange={e => updateGesture({ margin_right: Number(e.target.value) / 100 })}
+                            style={{ width: '100%', accentColor: '#744032', cursor: 'pointer', height: 4 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#555', marginBottom: 2 }}>
+                            <span>상단 마진</span>
+                            <span style={{ fontWeight: 600, color: '#744032' }}>{Math.round((gesture.margin_top ?? 0.25) * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={2}
+                            max={40}
+                            step={1}
+                            value={Math.round((gesture.margin_top ?? 0.25) * 100)}
+                            onChange={e => updateGesture({ margin_top: Number(e.target.value) / 100 })}
+                            style={{ width: '100%', accentColor: '#744032', cursor: 'pointer', height: 4 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#555', marginBottom: 2 }}>
+                            <span>하단 마진</span>
+                            <span style={{ fontWeight: 600, color: '#744032' }}>{Math.round((gesture.margin_bottom ?? 0.10) * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={2}
+                            max={30}
+                            step={1}
+                            value={Math.round((gesture.margin_bottom ?? 0.10) * 100)}
+                            onChange={e => updateGesture({ margin_bottom: Number(e.target.value) / 100, margin_bot: Number(e.target.value) / 100 })}
+                            style={{ width: '100%', accentColor: '#744032', cursor: 'pointer', height: 4 }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                        뷰파인더 내 노란 코너 점선 안쪽이 실제 키오스크 화면 0~100%에 대응됩니다.
                       </div>
                     </div>
                   </>
@@ -1564,21 +1645,32 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
           />
 
           <SliderRow
-            label="카메라 좌우 모서리 마진 (margin_x)"
-            hint="손이 화면 좌우 끝에 닿기 위한 카메라 외곽 여백입니다. 상단 뷰파인더의 활성 구역 사각형 폭이 실시간 조절됩니다. (기본: 20%)"
-            value={Math.round((gesture.margin_x ?? 0.20) * 100)}
-            min={5}
+            label="화면 매핑 좌측 모서리 마진 (margin_left)"
+            hint="손이 화면 왼쪽 끝에 닿기 위한 카메라 좌측 여백입니다. 상단 뷰파인더의 활성 구역 사각형이 실시간 조절됩니다. (기본: 20%)"
+            value={Math.round((gesture.margin_left ?? 0.20) * 100)}
+            min={2}
             max={35}
             step={1}
             unit="%"
-            onChange={v => updateGesture({ margin_x: +(v / 100).toFixed(2) })}
+            onChange={v => updateGesture({ margin_left: +(v / 100).toFixed(2), margin_x: +(v / 100).toFixed(2) })}
           />
 
           <SliderRow
-            label="카메라 상단 모서리 마진 (margin_top)"
+            label="화면 매핑 우측 모서리 마진 (margin_right)"
+            hint="손이 화면 오른쪽 끝에 닿기 위한 카메라 우측 여백입니다. (기본: 20%)"
+            value={Math.round((gesture.margin_right ?? 0.20) * 100)}
+            min={2}
+            max={35}
+            step={1}
+            unit="%"
+            onChange={v => updateGesture({ margin_right: +(v / 100).toFixed(2) })}
+          />
+
+          <SliderRow
+            label="화면 매핑 상단 모서리 마진 (margin_top)"
             hint="손을 너무 높이 들지 않아도 화면 맨 위 메뉴를 가리킬 수 있도록 상단 여백을 둡니다. (기본: 25%)"
             value={Math.round((gesture.margin_top ?? 0.25) * 100)}
-            min={5}
+            min={2}
             max={40}
             step={1}
             unit="%"
@@ -1586,14 +1678,25 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
           />
 
           <SliderRow
-            label="카메라 하단 모서리 마진 (margin_bot)"
+            label="화면 매핑 하단 모서리 마진 (margin_bottom)"
             hint="화면 맨 아래 버튼을 터치하기 위한 하단 여백입니다. (기본: 10%)"
-            value={Math.round((gesture.margin_bot ?? 0.10) * 100)}
-            min={5}
+            value={Math.round((gesture.margin_bottom ?? 0.10) * 100)}
+            min={2}
             max={30}
             step={1}
             unit="%"
-            onChange={v => updateGesture({ margin_bot: +(v / 100).toFixed(2) })}
+            onChange={v => updateGesture({ margin_bottom: +(v / 100).toFixed(2), margin_bot: +(v / 100).toFixed(2) })}
+          />
+
+          <SliderRow
+            label="화면 모서리 도달 가속 패딩 (edge_pad)"
+            hint="손이 활성 구역 끝까지 100% 가지 않아도 화면 모서리 버튼을 쉽게 터치할 수 있도록 패딩을 둡니다. (기본: 5%)"
+            value={Math.round((gesture.edge_pad ?? 0.05) * 100)}
+            min={0}
+            max={15}
+            step={1}
+            unit="%"
+            onChange={v => updateGesture({ edge_pad: +(v / 100).toFixed(2) })}
           />
 
           <div style={{ padding: '14px 0', borderBottom: '1px solid #f0f0f0' }}>

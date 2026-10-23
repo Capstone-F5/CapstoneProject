@@ -58,9 +58,13 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
         "target_fps": 15,                      # 온디바이스 목표 FPS (8 ~ 24, RPi 4B 발열 및 CPU 부하 제어)
         "cam_width": 640,                      # 카메라 입력 가로 해상도 (320 | 480 | 640)
         "cam_height": 480,                     # 카메라 입력 세로 해상도 (240 | 360 | 480)
-        "margin_x": 0.20,                      # 화면 매핑 좌우 모서리 마진 비율 (0.05 ~ 0.35)
-        "margin_top": 0.25,                    # 화면 매핑 상단 모서리 마진 비율 (0.05 ~ 0.40)
-        "margin_bot": 0.10,                    # 화면 매핑 하단 모서리 마진 비율 (0.05 ~ 0.30)
+        "margin_left": 0.20,                   # 화면 매핑 좌측 모서리 마진 비율 (0.02 ~ 0.40)
+        "margin_right": 0.20,                  # 화면 매핑 우측 모서리 마진 비율 (0.02 ~ 0.40)
+        "margin_top": 0.25,                    # 화면 매핑 상단 모서리 마진 비율 (0.02 ~ 0.45)
+        "margin_bottom": 0.10,                 # 화면 매핑 하단 모서리 마진 비율 (0.02 ~ 0.35)
+        "edge_pad": 0.05,                      # 화면 모서리 도달 가속 패딩 (0.00 ~ 0.15)
+        "margin_x": 0.20,                      # 하위 호환용 (좌우 대칭)
+        "margin_bot": 0.10,                    # 하위 호환용 (하단)
     },
 }
 
@@ -120,9 +124,19 @@ def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
     g["cam_height"] = int(g.get("cam_height", 480))
     if g["cam_height"] not in (240, 360, 480):
         g["cam_height"] = 480
-    g["margin_x"] = round(max(0.05, min(0.35, float(g.get("margin_x", 0.20)))), 2)
-    g["margin_top"] = round(max(0.05, min(0.40, float(g.get("margin_top", 0.25)))), 2)
-    g["margin_bot"] = round(max(0.05, min(0.30, float(g.get("margin_bot", 0.10)))), 2)
+    # 마진 및 활성 영역 정제
+    ml = g.get("margin_left", g.get("margin_x", 0.20))
+    mr = g.get("margin_right", g.get("margin_x", 0.20))
+    mt = g.get("margin_top", 0.25)
+    mb = g.get("margin_bottom", g.get("margin_bot", 0.10))
+    g["margin_left"] = round(max(0.02, min(0.40, float(ml))), 2)
+    g["margin_right"] = round(max(0.02, min(0.40, float(mr))), 2)
+    g["margin_top"] = round(max(0.02, min(0.45, float(mt))), 2)
+    g["margin_bottom"] = round(max(0.02, min(0.35, float(mb))), 2)
+    g["edge_pad"] = round(max(0.00, min(0.15, float(g.get("edge_pad", 0.05)))), 2)
+    # 하위 호환 필드 동기화
+    g["margin_x"] = g["margin_left"]
+    g["margin_bot"] = g["margin_bottom"]
     return s
 
 

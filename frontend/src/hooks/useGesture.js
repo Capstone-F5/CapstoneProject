@@ -11,37 +11,28 @@ const CAM_RETRY_COUNT = 4
 const CAM_RETRY_DELAY = 1500
 
 export function getActiveGestureSettings() {
-  if (typeof window === 'undefined') {
-    return {
-      min_palm_size: 0.08,
-      detection_confidence: 0.65,
-      tracking_confidence: 0.50,
-      target_fps: 15,
-      cam_width: 640,
-      cam_height: 480,
-      margin_x: 0.20,
-      margin_top: 0.25,
-      margin_bot: 0.10,
-    }
-  }
-  if (window.__kioskGestureConfig) {
-    return window.__kioskGestureConfig
-  }
-  try {
-    const raw = window.localStorage.getItem('kioskGestureConfig')
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return {
+  const fallback = {
     min_palm_size: 0.08,
     detection_confidence: 0.65,
     tracking_confidence: 0.50,
     target_fps: 15,
     cam_width: 640,
     cam_height: 480,
-    margin_x: 0.20,
+    margin_left: 0.20,
+    margin_right: 0.20,
     margin_top: 0.25,
+    margin_bottom: 0.10,
+    edge_pad: 0.05,
+    margin_x: 0.20,
     margin_bot: 0.10,
   }
+  if (typeof window === 'undefined') return fallback
+  if (window.__kioskGestureConfig) return { ...fallback, ...window.__kioskGestureConfig }
+  try {
+    const raw = window.localStorage.getItem('kioskGestureConfig')
+    if (raw) return { ...fallback, ...JSON.parse(raw) }
+  } catch {}
+  return fallback
 }
 
 // ── 손 인식 엔진 (Web Worker + MediaPipe Tasks HandLandmarker) ───────────────
@@ -262,6 +253,7 @@ export const DEFAULT_CAM_MARGINS = {
   r: 0.20,
   top: 0.25,
   bot: 0.10,
+  edgePad: 0.05,
 }
 const CAM_MARGIN_L   = DEFAULT_CAM_MARGINS.l
 const CAM_MARGIN_R   = DEFAULT_CAM_MARGINS.r
@@ -270,13 +262,14 @@ const CAM_MARGIN_BOT = DEFAULT_CAM_MARGINS.bot
 const CAM_ACTIVE_X   = 1.0 - CAM_MARGIN_L - CAM_MARGIN_R     // 0.60
 const CAM_ACTIVE_Y   = 1.0 - CAM_MARGIN_TOP - CAM_MARGIN_BOT // 0.65
 
-// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 5% 앞에서 커서가 화면 끝에 닿는다.
-// 카메라 가장자리에서는 랜드마크 인식이 불안정해 모서리 도달이 어렵기 때문.
+// 활성 구역 가장자리 패딩: 손이 구역 끝까지 가지 않아도 패딩 앞에서 커서가 화면 끝에 닿는다.
 const CAM_EDGE_PAD = 0.05
 
 // 활성 구역 내 0~1 좌표를 패딩만큼 잘라내고 다시 0~1로 늘린다.
-function _padNorm(v) {
-  return Math.max(0, Math.min(1, (v - CAM_EDGE_PAD) / (1 - 2 * CAM_EDGE_PAD)))
+function _padNorm(v, pad = CAM_EDGE_PAD) {
+  if (pad <= 0) return Math.max(0, Math.min(1, v))
+  const denom = Math.max(0.01, 1 - 2 * pad)
+  return Math.max(0, Math.min(1, (v - pad) / denom))
 }
 
 // ── 클라이언트 사이드 제스처 인식 ────────────────────────────────────────────
@@ -618,10 +611,12 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
     let currentTargetFps = Number(gestureCfg.target_fps) || MAX_FPS_DEFAULT
     let currentDetectionConf = Number(gestureCfg.detection_confidence) || 0.65
     let currentTrackingConf = Number(gestureCfg.tracking_confidence) || 0.50
-    let currentMarginX = Number(gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.l
+    let currentMarginL = Number(gestureCfg.margin_left ?? gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.l
+    let currentMarginR = Number(gestureCfg.margin_right ?? gestureCfg.margin_x) || DEFAULT_CAM_MARGINS.r
     let currentMarginTop = Number(gestureCfg.margin_top) || DEFAULT_CAM_MARGINS.top
-    let currentMarginBot = Number(gestureCfg.margin_bot) || DEFAULT_CAM_MARGINS.bot
-    let currentActiveX = Math.max(0.1, 1.0 - currentMarginX * 2)
+    let currentMarginBot = Number(gestureCfg.margin_bottom ?? gestureCfg.margin_bot) || DEFAULT_CAM_MARGINS.bot
+    let currentEdgePad = Number(gestureCfg.edge_pad ?? DEFAULT_CAM_MARGINS.edgePad)
+    let currentActiveX = Math.max(0.1, 1.0 - currentMarginL - currentMarginR)
     let currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
 
     let stream   = null
@@ -643,10 +638,15 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (typeof cfg.target_fps === 'number') currentTargetFps = cfg.target_fps
       if (typeof cfg.detection_confidence === 'number') currentDetectionConf = cfg.detection_confidence
       if (typeof cfg.tracking_confidence === 'number') currentTrackingConf = cfg.tracking_confidence
-      if (typeof cfg.margin_x === 'number') currentMarginX = cfg.margin_x
+      if (typeof cfg.margin_left === 'number') currentMarginL = cfg.margin_left
+      else if (typeof cfg.margin_x === 'number') currentMarginL = cfg.margin_x
+      if (typeof cfg.margin_right === 'number') currentMarginR = cfg.margin_right
+      else if (typeof cfg.margin_x === 'number') currentMarginR = cfg.margin_x
       if (typeof cfg.margin_top === 'number') currentMarginTop = cfg.margin_top
-      if (typeof cfg.margin_bot === 'number') currentMarginBot = cfg.margin_bot
-      currentActiveX = Math.max(0.1, 1.0 - currentMarginX * 2)
+      if (typeof cfg.margin_bottom === 'number') currentMarginBot = cfg.margin_bottom
+      else if (typeof cfg.margin_bot === 'number') currentMarginBot = cfg.margin_bot
+      if (typeof cfg.edge_pad === 'number') currentEdgePad = cfg.edge_pad
+      currentActiveX = Math.max(0.1, 1.0 - currentMarginL - currentMarginR)
       currentActiveY = Math.max(0.1, 1.0 - currentMarginTop - currentMarginBot)
 
       if (hands && typeof hands.setOptions === 'function') {
@@ -792,9 +792,9 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
               if (!wasActive) resetPointerState(pointerState)
               wasActive = true
 
-              // 절대 선형 매핑 — 방향별 마진 개별 적용
-              const normX = _padNorm((px - currentMarginX)   / currentActiveX)
-              const normY = _padNorm((py - currentMarginTop) / currentActiveY)
+              // 절대 선형 매핑 — 방향별 마진 및 가장자리 도달 패딩 개별 적용
+              const normX = _padNorm((px - currentMarginL)   / currentActiveX, currentEdgePad)
+              const normY = _padNorm((py - currentMarginTop) / currentActiveY, currentEdgePad)
               const [sx, sy] = smoothPointer(pointerState, normX, normY, performance.now() / 1000)
               perf.pointerFrames++
               pointerRef.current?.({ x: sx, y: sy })
@@ -910,8 +910,8 @@ export function useGesture({ onPointer, onGesture, onLandmarks, videoRef, pipCan
       if (pipCanvasRef?.current && video) {
         try {
           _drawPip(pipCanvasRef.current, video, lms, handed, {
-            l: currentMarginX,
-            r: currentMarginX,
+            l: currentMarginL,
+            r: currentMarginR,
             top: currentMarginTop,
             bot: currentMarginBot,
           })
