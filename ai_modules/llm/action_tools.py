@@ -1068,8 +1068,14 @@ def ui_action(
         # 전화번호는 10~11자리여야 한다. 모자란 번호를 그대로 화면에 보내면 잘못된 번호로 조회·적립된다.
         phone_digits = "".join(ch for ch in (value or "") if ch.isdigit())
         # 모델이 들은 자릿수가 모자랄 때 번호를 지어내 채우는 일이 재현되므로, 손님 발화에서 읽힌 숫자와도 맞춰 본다.
-        heard = _spoken_digits(get_user_input())
-        if heard and heard != phone_digits:
+        heard = _spoken_digits(get_user_input()) or _spoken_digits(get_recent_user_text())
+        if not heard:
+            # 손님이 번호를 말한 적이 없는데 모델이 번호를 지어낸 경우(검증 실행 R40: "카드로 할게요"에 11자리를 채워 결제 수단까지 진행)
+            return (
+                "오류: 손님이 전화번호를 말하지 않았습니다. 번호를 지어내지 말고 액션을 보내지 말고, "
+                "'전화번호를 말씀해 주세요'라고 안내하세요."
+            )
+        if heard != phone_digits:
             phone_digits = heard
         if len(phone_digits) not in (10, 11):
             return (

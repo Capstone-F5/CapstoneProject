@@ -231,6 +231,38 @@ class ServerCartFallbackTests(unittest.IsolatedAsyncioTestCase):
             api_client.get_cart = saved
 
 
+class PointsPhoneInventedTests(unittest.TestCase):
+    """검증 실행 R40: 손님이 번호를 말하지 않았는데 모델이 11자리 번호를 지어내 points_phone과 payment_method까지 보냈다."""
+
+    def setUp(self):
+        C.reset_actions()
+        C.set_recent_user_text("")
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("phone-test")
+
+    def _call(self, user, value="01012345678"):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.ui_action.func(action="points_phone", value=value) if hasattr(T.ui_action, "func") else T.ui_action(action="points_phone", value=value)
+
+    def test_invented_number_is_rejected(self):
+        out = self._call("카드로 할게요")
+        self.assertIn("오류", out)
+        self.assertEqual(C.get_actions(), [])
+
+    def test_spoken_number_is_accepted_and_overrides_model_value(self):
+        out = self._call("저기 01006751802", value="01099999999")
+        self.assertNotIn("오류", out)
+        self.assertEqual(C.get_actions(), [{"type": "points_phone", "phone": "01006751802"}])
+
+    def test_number_given_in_previous_turn_counts(self):
+        C.set_recent_user_text("포인트 적립할게요 ¦ 공일공 일이삼사 오육칠팔")
+        C.reset_actions()
+        C.set_user_input("네 그걸로요")
+        out = T.ui_action.func(action="points_phone", value="01012345678") if hasattr(T.ui_action, "func") else T.ui_action(action="points_phone", value="01012345678")
+        self.assertNotIn("오류", out)
+
+
 class NavigateTests(unittest.TestCase):
     def setUp(self):
         C.reset_actions()

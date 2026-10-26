@@ -8,6 +8,14 @@ from ai_modules.llm.guards import (
 )
 
 
+class CartQuestionIsNotNoiseTests(unittest.TestCase):
+    def test_natural_cart_questions_pass_the_domain_guard(self):
+        """검증 실행에서 "지금 뭐 담겼어?"가 노이즈로 막혀 "잘 못 들었어요"가 나왔다."""
+        for t in ["지금 뭐 담겼어?", "지금 담긴 거 뭐야", "뭐 담겨 있어요?", "내가 뭐 담았지?"]:
+            self.assertFalse(is_noise(t, screen="menu"), t)
+        self.assertTrue(is_noise("어제 걔가 그래서 내가 그랬잖아", screen="menu"))
+
+
 class FixScreenReplyTests(unittest.TestCase):
     def test_already_on_cart_screen(self):
         from ai_modules.llm.guards import fix_screen_reply
