@@ -188,6 +188,9 @@ class Ctx:
         self.rng, self.menu, self.hard, self.human = rng, menu, hard, human
         # 말투 변형 전용 난수: 기본 난수열을 소비하지 않고 같은 시드에서 파생시켜, human 값이 달라도 시나리오의 뼈대(조작·메뉴·기대값)는 같다
         self.hrng = random.Random(repr(rng.getstate()[1][:8]))
+        # 사람처럼 티어에서만 켠다(기존 시드의 시나리오가 바뀌지 않게): 이미 단품이 담긴 버거에 "세트로 하나 줘"라고 하는 것처럼
+        # 사람도 해석이 갈리는 말은 만들지 않는다 — "세트로 바꿔 달라"로 읽혀 기존 줄이 세트가 돼도 서버 오류가 아니다(음성 검증 R50).
+        self.safe_ask = False
         self.cart = RefCart()
         self.steps: list[dict] = []
         self.ops: list[str] = []
@@ -288,6 +291,10 @@ def op_add_set_oneshot(c: Ctx):
 
 def op_add_set_ask(c: Ctx):
     b = c.pick_burger()
+    if c.safe_ask and c.cart.find(b, False) and not c.cart.find(b, True):
+        alternatives = [x for x in c.burgers if not c.cart.find(x)]
+        if alternatives:
+            b = c.rng.choice(alternatives)
     info = c.menu.burger(b)
     side, drink = c.rng.choice(info["sides"]), c.rng.choice(info["drinks"])
     c.say_unchanged(f"{_spoken(b)} 세트로 하나 줘", "add_set_ask")
@@ -673,6 +680,7 @@ def payment(c: Ctx, accidents: bool = False) -> str:
 def build_one(rng: random.Random, menu: MenuData, tier: str, sid: str, category: str, human: int = 0):
     ops_list, (lo, hi), hard = TIERS[tier]
     c = Ctx(rng, menu, hard, human)
+    c.safe_ask = tier == "사람처럼"
     c.last_op = None
     intro_kind = intro(c)
     n = rng.randint(lo, hi)

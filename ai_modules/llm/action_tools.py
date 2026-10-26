@@ -652,10 +652,25 @@ def remove_item(cart_item_id: str | None = None) -> str:
         cart_item_id = cart_item["cart_item_id"]
         user = get_user_input()
         if guards.has_hangul(user):
-            if not guards.has_remove_intent(user):
+            # "바꿔줘/변경"은 삭제 의사가 아니다 — "F버거 세트 5개로 바꿔줘"에 모델이 무관한 줄을 지운 사고(음성 검증 R15).
+            # 교체("A 말고 B로")는 삭제 후 담기이므로 말고/대신이 있으면 허용한다.
+            if not guards.has_remove_intent(user) or (not guards.has_pure_remove_intent(user) and not guards.has_replace_words(user)):
                 msg = guards.block(
                     "remove_no_intent", f"「{user[:30]}」 삭제 의사 없이 {cart_item.get('name_ko')} 삭제 시도",
-                    "오류: 손님이 삭제·취소를 말하지 않았습니다. 장바구니에서 지우지 말고 손님이 원하는 것을 다시 확인하세요.")
+                    "오류: 손님이 삭제·취소를 말하지 않았습니다. 장바구니에서 지우지 말고 손님이 원하는 것을 다시 확인하세요. "
+                    "수량을 바꾸라는 말이면 update_item_options(quantity=...)를 쓰세요.")
+                if msg:
+                    return msg
+            try:
+                menu = _run(api_client.fetch_menu_items())
+            except Exception:  # noqa: BLE001 - 가드 때문에 삭제가 막히면 안 된다
+                menu = None
+            wrong = _target_mismatch(user, cart_item.get("name_ko", ""), menu)
+            if wrong:
+                msg = guards.block(
+                    "remove_wrong_target", f"「{user[:30]}」 말한 메뉴={wrong} / 삭제 대상={cart_item.get('name_ko')}",
+                    f"오류: 손님이 말한 메뉴는 '{wrong}'인데 삭제하려는 줄은 '{cart_item.get('name_ko')}'입니다. "
+                    f"다른 줄을 지우지 말고, 장바구니에서 '{wrong}'의 cart_item_id를 찾아 다시 호출하세요.")
                 if msg:
                     return msg
             elif cart_item.get("quantity", 1) > 1 and guards.wants_reduce_one(user):

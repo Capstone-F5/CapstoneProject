@@ -45,6 +45,10 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from suite_metrics import (counts_from_cart, counts_from_expected, diff, format_summary, is_soft_replace,   # noqa: E402
+                           new_discrepancy, scenario_status, summarize)
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -867,6 +871,33 @@ REGRESSION_SCENARIOS: list[Scenario] = [
         state(M, D),
         say("치즈버거 세트로 하나 줘. 사이드는 감자튀김 음료는 콜라", cart=[line("치즈 버거", 1, set=True)]),
         say("지금 장바구니에 뭐 있어?", unchanged=True, out_none=["x1", "(", ")"], out_any=["하나"]),
+        say("지금 뭐 담겼어?", unchanged=True, out_none=["잘 못 들었어요"], out_any=["치즈"]),
+    ]),
+    # ── 음성 검증 50개(seed 20261026)에서 나온 약점 ──
+    Scenario("G10", "회귀", "교체 '아니 A 말고 B 단품으로 바꿔줘' — A만 지우고 되묻거나 중복 담기던 문제", [
+        state(M, D),
+        say("데리버거 단품 하나 줘", cart=[line("데리버거", 1)]),
+        say("아니 데리버거 단품 말고 새우버거 단품으로 바꿔줘", cart=[line("새우 버거", 1)], lines=1),
+    ]),
+    Scenario("G11", "회귀", "교체 'A 취소하고 B 단품으로 줘' + 다른 줄은 그대로", [
+        state(M, D),
+        say("불고기버거 단품 두 개 줘", cart=[line("불고기 버거", 2)]),
+        say("콜라 한 잔 줘", cart=[line("불고기 버거", 2), line("콜라", 1)]),
+        say("아 불고기버거 단품 취소하고 치즈버거 단품으로 줘", cart=[line("치즈 버거", 2), line("콜라", 1)], lines=2),
+    ]),
+    Scenario("G12", "회귀", "'F버거 5개로 바꿔줘'에 무관한 줄이 삭제됨(데이터 손실)", [
+        state(M, D),
+        say("새우버거 단품 하나 줘", cart=[line("새우 버거", 1)]),
+        say("F버거 단품 하나 줘", cart=[line("새우 버거", 1), line("F 버거", 1)]),
+        say("F버거 5개로 바꿔줘", cart=[line("새우 버거", 1), line("F 버거", 5)], lines=2),
+    ]),
+    Scenario("G13", "회귀", "번호를 말했는데 points_phone 액션이 빠짐", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("포인트 적립할게요", actions=["points"]),
+        say("음 공일공 일이삼사 오육칠팔", actions=["points_phone"]),
+        say("카드로 할게요", actions=["payment_method"]),
     ]),
 ]
 SCENARIOS += REGRESSION_SCENARIOS
@@ -905,6 +936,7 @@ class Menu:
 class Result:
     scenario: Scenario
     ok: bool = True
+    status: str = "PASS"   # 이어가기 판정: PASS / SOFT / FAIL (suite_metrics 참고) — ok는 예전 엄격 판정
     turns: list = field(default_factory=list)   # [{text, output, actions, fails, ms}]
     error: str | None = None
     elapsed: float = 0.0
@@ -1002,6 +1034,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
     res = Result(sc)
     sid = f"vt-{sc.id.lower()}-{uuid.uuid4().hex[:6]}"
     st = {"screen": M, "order_type": None, "modal": None}
+    d_prev: dict = {}   # 앞 턴까지 쌓인 (실제 − 기대) 장바구니 불일치. 새로 생긴 불일치만 이번 턴의 실패로 센다
     t_start = time.time()
     try:
         for step in sc.steps:
@@ -1078,10 +1111,11 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 for t in c.get("no_actions", []):
                     if t in types:
                         turn["fails"].append(f"금지 액션 {t} 발생")
+                cart_msg = None
                 if c.get("cart_exact") is not None:
-                    f = cart_exact_fail(after, c["cart_exact"])
-                    if f:
-                        turn["fails"].append(f)
+                    cart_msg = cart_exact_fail(after, c["cart_exact"])
+                    if cart_msg:
+                        turn["fails"].append(cart_msg)
                 for exp in c.get("cart", []):
                     f = cart_expect_fail(after, exp)
                     if f:
@@ -1103,6 +1137,17 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                     turn["fails"].append(f"응답 언어가 {c['lang_only']} 단일이 아님")
                 if c.get("reply_lang") and not reply_lang_is(out, c["reply_lang"]):
                     turn["fails"].append(f"응답 문장 언어가 {c['reply_lang']}이(가) 아님: {out[:60]!r}")
+                other = [x for x in turn["fails"] if x != cart_msg]
+                new_err = soft = False
+                if c.get("cart_exact") is not None:
+                    got = counts_from_cart(after)
+                    d_new = diff(got, counts_from_expected(c["cart_exact"]))
+                    new_err = new_discrepancy(d_new, d_prev) if cart_msg else False
+                    soft = new_err and step.get("op") == "change_mind" and is_soft_replace(
+                        counts_from_cart(before), got, types, out)
+                    d_prev = d_new
+                turn["real_fail"] = bool(other) or (new_err and not soft)
+                turn["soft_fail"] = (not other) and new_err and soft
                 if turn["fails"]:
                     res.ok = False
     except Exception as e:  # noqa: BLE001
@@ -1115,6 +1160,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
         except Exception:  # noqa: BLE001
             pass
     res.elapsed = time.time() - t_start
+    res.status = "FAIL" if res.error else scenario_status(res.turns)
     return res
 
 
@@ -1184,7 +1230,8 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         results = list(ex.map(lambda s: run_scenario(args.url, menu, s), scs))
     for r in results:
-        print(f"{'PASS' if r.ok else 'FAIL'} {r.scenario.id} {r.scenario.title} ({r.elapsed:.1f}s)")
+        label = "PASS" if r.ok else ("SOFT" if r.status == "SOFT" else ("FAIL" if r.status == "FAIL" else "연쇄"))
+        print(f"{label} {r.scenario.id} {r.scenario.title} ({r.elapsed:.1f}s)")
         if not r.ok:
             if r.error:
                 print(f"   ! {r.error}")
@@ -1193,6 +1240,7 @@ def main() -> int:
                     print(f"   - 「{t['text'][:40]}」 {f}")
     ok = sum(r.ok for r in results)
     print(f"\n통과 {ok}/{len(results)}  ({time.time() - t0:.0f}s)")
+    print("\n" + format_summary(summarize([{"ok": r.ok, "status": r.status, "turns": r.turns} for r in results])))
     # 전체 흐름 시나리오는 어떤 조작에서 자주 틀리는지 보여 준다
     per_op: dict[str, list[int]] = {}
     for r in results:
@@ -1231,7 +1279,7 @@ def main() -> int:
         write_report(results, Path(args.report), args.url)
     if args.json:
         Path(args.json).write_text(json.dumps([{
-            "id": r.scenario.id, "ok": r.ok, "error": r.error, "turns": r.turns} for r in results],
+            "id": r.scenario.id, "ok": r.ok, "status": r.status, "error": r.error, "turns": r.turns} for r in results],
             ensure_ascii=False, indent=1), encoding="utf-8")
     return 0 if ok == len(results) else 1
 

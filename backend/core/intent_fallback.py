@@ -149,6 +149,18 @@ def ensure_actions(
             checkout_progress.mark_done(session_id, "points")
             checkout_progress.mark_done(session_id, "points_yes")
 
+    # 3-3) 전화번호 — 적립하겠다고 했는데 번호를 말한 턴에 모델이 points_phone을 안 보낸 경우(말로는 "확인했습니다"라며 액션을 빼먹음).
+    # 손님이 이번 말에서 010으로 시작하는 10~11자리를 실제로 말했을 때만 직접 보낸다(번호를 지어내지 않는다).
+    said_yes = ("points_yes" in snapshot_before or any(a.get("type") == "points" and a.get("value") == "yes" for a in added))
+    if (screen == "cart" and said_yes and "points_phone" not in snapshot_before
+            and not _has(actions, "points_phone") and not _has(actions, "payment_method")):
+        from ai_modules.llm.action_tools import _spoken_digits
+        digits = _spoken_digits(text)
+        if len(digits) in (10, 11) and digits.startswith("01"):
+            added.append({"type": "points_phone", "phone": digits})
+            checkout_progress.mark_done(session_id, "points")
+            checkout_progress.mark_done(session_id, "points_phone")
+
     # 4) 장바구니 열기 — "장바구니 보여줘"에 모델이 화면 설명만 하고 navigate를 빼먹는 경우
     if (screen not in ("cart", "payment") and cart and not _has(actions, "navigate")
             and _CART_OPEN_RE.search(text) and not _CART_CONTENT_Q_RE.search(text)):

@@ -166,6 +166,19 @@ def has_remove_intent(text: str) -> bool:
     return bool(_REMOVE_INTENT.search(text or ""))
 
 
+_PURE_REMOVE = re.compile(r"빼|삭제|지워|지우|없애|제거|취소|그만|안\s*할|안할|필요\s*없|됐")
+_REPLACE_WORDS = re.compile(r"말고|대신|아니고|아니라")
+
+
+def has_pure_remove_intent(text: str) -> bool:
+    """삭제·취소를 직접 말했는가. has_remove_intent는 "바꿔줘/변경"까지 포함해 "F버거 세트 5개로 바꿔줘"도 삭제 의사로 읽는다."""
+    return bool(_PURE_REMOVE.search(text or ""))
+
+
+def has_replace_words(text: str) -> bool:
+    return bool(_REPLACE_WORDS.search(text or ""))
+
+
 def is_refusal_only(text: str) -> bool:
     """"아니", "아니요", "없어요", "됐어요", "그만"처럼 다른 메뉴나 동작 언급 없이 거절·종료만 답한 발화인가."""
     return bool(_REFUSAL_ONLY.match((text or "").strip()))
@@ -211,17 +224,21 @@ _CLAIM_ADD = re.compile(r"담았(?:습니다|어요|죠)|추가했(?:습니다|�
 _CLAIM_REMOVE = re.compile(r"삭제했(?:습니다|어요)|삭제되었(?:습니다|어요)|뺐(?:습니다|어요)|제거했(?:습니다|어요)|취소했(?:습니다|어요)|취소되었(?:습니다|어요)|지웠(?:습니다|어요)")
 _CLAIM_CHANGE = re.compile(r"변경했(?:습니다|어요)|변경되었(?:습니다|어요)|바꿨(?:습니다|어요)|바꿔\s*드렸")
 _CLAIM_ORDER_COMPLETE = re.compile(r"(?:주문|결제)이\s*완료되었(?:습니다|어요)")
+# "전화번호를 입력/확인했습니다"라고 하는데 points_phone 액션이 없는 경우(음성 검증: pay_phone 5/19) — 화면은 번호를 못 받았다
+_CLAIM_PHONE = re.compile(r"전화번호[^.?!]{0,20}(?:입력|확인|저장|적립)(?:했|되었|이\s*완료)")
 
 _FULFILL = {
     "add": {"add_item", "update_item"},
     "remove": {"remove_item", "clear_cart", "update_item"},
     "change": None,   # 변경 계열은 종류가 많아(옵션·수량·결제수단·주문유형·언어 …) 어떤 액션이든 있으면 이행으로 본다
+    "phone": {"points_phone"},
 }
 _UNFULFILLED = {
     "add": "죄송합니다, 아직 장바구니에 담지 못했어요. 메뉴를 한 번 더 말씀해 주세요.",
     "remove": "죄송합니다, 아직 장바구니에서 빼지 못했어요. 어떤 메뉴인지 한 번 더 말씀해 주세요.",
     "change": "죄송합니다, 아직 변경하지 못했어요. 어떻게 바꿀지 한 번 더 말씀해 주세요.",
     "order_complete": "더 추가하실 메뉴가 없으시면 결제를 도와드릴까요?",
+    "phone": "전화번호를 아직 받지 못했어요. 번호를 처음부터 다시 말씀해 주세요.",
 }
 
 
@@ -241,7 +258,7 @@ def correct_reply(output: str, action_types: list[str]) -> str | None:
     if _CLAIM_ORDER_COMPLETE.search(output):
         return _UNFULFILLED["order_complete"]
     have = set(action_types)
-    for kind, pattern in (("add", _CLAIM_ADD), ("remove", _CLAIM_REMOVE), ("change", _CLAIM_CHANGE)):
+    for kind, pattern in (("add", _CLAIM_ADD), ("remove", _CLAIM_REMOVE), ("change", _CLAIM_CHANGE), ("phone", _CLAIM_PHONE)):
         fulfill = _FULFILL[kind]
         if pattern.search(output) and not (have if fulfill is None else have & fulfill):
             return _UNFULFILLED[kind]

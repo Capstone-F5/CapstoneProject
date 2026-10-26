@@ -263,6 +263,120 @@ class PointsPhoneInventedTests(unittest.TestCase):
         self.assertNotIn("오류", out)
 
 
+class PhoneFallbackTests(unittest.TestCase):
+    """음성 검증: 번호를 말했는데 모델이 말로만 "확인했습니다"라 하고 points_phone을 안 보냄(pay_phone 5/19)."""
+
+    CART = [{"name": "버거", "qty": 1}]
+
+    def setUp(self):
+        C.reset_actions()
+        os.environ["GUARD_MODE"] = "enforce"
+
+    def _ensure(self, text, snapshot):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        checkout_progress.reset("phone-fb")
+        return ensure_actions("phone-fb", text, "cart", self.CART, frozenset(snapshot), True)
+
+    def test_spoken_number_after_points_yes_is_sent(self):
+        added = self._ensure("저기 01006751802", {"start_checkout", "points", "points_yes"})
+        self.assertEqual(added, [{"type": "points_phone", "phone": "01006751802"}])
+
+    def test_korean_digit_reading(self):
+        added = self._ensure("공일공 일이삼사 오육칠팔", {"start_checkout", "points", "points_yes"})
+        self.assertEqual(added, [{"type": "points_phone", "phone": "01012345678"}])
+
+    def test_number_in_same_utterance_as_yes(self):
+        added = self._ensure("네 적립할게요 01096693041", {"start_checkout"})
+        self.assertEqual([a["type"] for a in added], ["points", "points_phone"])
+        self.assertEqual(added[1]["phone"], "01096693041")
+
+    def test_nothing_invented_or_duplicated(self):
+        snap = {"start_checkout", "points", "points_yes"}
+        self.assertEqual(self._ensure("카드로 할게요", snap), [])                 # 번호 없음
+        self.assertEqual(self._ensure("0100677", snap), [])                       # 자릿수 부족
+        self.assertEqual(self._ensure("02012345678", snap), [])                   # 휴대폰 번호가 아님
+        self.assertEqual(self._ensure("01006751802", {"start_checkout", "points"}), [])   # 적립하겠다고 한 적 없음
+        self.assertEqual(self._ensure("01006751802", snap | {"points_phone"}), [])         # 이미 받음
+        C.reset_actions()
+        C.push_action({"type": "points_phone", "phone": "01006751802"})
+        from core.intent_fallback import ensure_actions
+        self.assertEqual(ensure_actions("phone-fb", "01006751802", "cart", self.CART, frozenset(snap), True), [])   # 모델이 보냄
+
+    def test_reply_claiming_phone_without_action_is_corrected(self):
+        from ai_modules.llm import guards
+        out = "전화번호는 01006751802로 확인했습니다. 결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?"
+        self.assertEqual(guards.correct_reply(out, []), guards._UNFULFILLED["phone"])
+        self.assertIsNone(guards.correct_reply(out, ["points_phone"]))
+        self.assertIsNone(guards.correct_reply("전화번호를 말씀해 주세요.", []))
+        self.assertIsNone(guards.correct_reply("전화번호를 입력해 주세요.", []))
+
+
+class RemoveGuardTests(unittest.TestCase):
+    """음성 검증 R15: "F버거 세트 5개로 바꿔줘"에 모델이 무관한 줄(치킨 가슴살 버거)을 삭제했다."""
+
+    def setUp(self):
+        C.reset_guards()
+        os.environ["GUARD_MODE"] = "enforce"
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("remove-test")
+        self.cart = {"items": [
+            {"cart_item_id": "c-chicken", "name_ko": "치킨 가슴살 버거", "quantity": 1, "selected_options": []},
+            {"cart_item_id": "c-f", "name_ko": "F 버거", "quantity": 1, "selected_options": []},
+        ]}
+        self.removed = []
+        cart, menu, removed = self.cart, MENU + [it(9, "치킨 가슴살 버거")], self.removed
+
+        def fake_run(coro):
+            name = coro.cr_code.co_name
+            coro.close()
+            if name == "remove_cart_item":
+                removed.append(1)
+                return None
+            return {"get_cart": cart, "fetch_menu_items": menu}[name]
+        # 다른 테스트가 api_client 함수를 람다로 바꿔 두므로(전역 오염) 이 테스트가 쓰는 세 함수를 코루틴 함수로 덮어쓴다
+        async def get_cart(session_id):
+            return None
+
+        async def fetch_menu_items():
+            return None
+
+        async def remove_cart_item(session_id, cart_item_id):
+            return None
+        self._saved = (T._run, T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item)
+        T._run = fake_run
+        T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item = get_cart, fetch_menu_items, remove_cart_item
+
+    def tearDown(self):
+        T._run, T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item = self._saved
+
+    def _remove(self, user, cart_item_id):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.remove_item.func(cart_item_id=cart_item_id)
+
+    def test_change_quantity_request_does_not_delete_anything(self):
+        out = self._remove("F버거 세트 5개로 바꿔줘", "c-chicken")
+        self.assertIn("오류", out)
+        self.assertEqual((self.removed, C.get_actions()), ([], []))
+        self.assertEqual(C.get_guard_hits()[0]["rule"], "remove_no_intent")
+
+    def test_deleting_a_line_other_than_the_named_one_is_blocked(self):
+        out = self._remove("F버거 빼줘", "c-chicken")
+        self.assertIn("오류", out)
+        self.assertEqual(self.removed, [])
+        self.assertEqual(C.get_guard_hits()[0]["rule"], "remove_wrong_target")
+
+    def test_legitimate_removals_still_work(self):
+        for user, cid in [("F버거 빼줘", "c-f"), ("치킨 가슴살 버거 취소해줘", "c-chicken"),
+                          ("F버거 말고 치킨가슴살버거로 바꿔줘", "c-f")]:
+            self.removed.clear()
+            C.reset_guards()
+            out = self._remove(user, cid)
+            self.assertNotIn("오류", out, user)
+            self.assertEqual(len(self.removed), 1, user)
+
+
 class NavigateTests(unittest.TestCase):
     def setUp(self):
         C.reset_actions()

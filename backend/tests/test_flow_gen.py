@@ -143,6 +143,23 @@ class FlowGeneratorTests(unittest.TestCase):
                         self.assertNotIn("결재", fixed, st["text"])
         self.assertGreater(seen, 3)
 
+    def test_human_tier_never_asks_for_a_set_of_a_burger_already_in_cart_as_single(self):
+        """"세트로 하나 줘"는 장바구니에 같은 버거 단품이 있으면 "세트로 바꿔 달라"로도 읽힌다 — 사람처럼 티어는 그런 말을 만들지 않는다."""
+        checked = 0
+        for sc in self._all_human():
+            prev = []
+            for st in sc["steps"]:
+                if st["kind"] != "say":
+                    continue
+                if st["op"] == "add_set_ask" and "세트로 하나 줘" in st["text"]:
+                    spoken = next((b["name"] for b in self.menu.burgers if gen._spoken(b["name"]) in st["text"]), None)
+                    singles = [e["name"] for e in prev if "세트 업그레이드" not in e["opts"]]
+                    self.assertNotIn(spoken, singles, f"{sc['id']} {st['text']}")
+                    checked += 1
+                if st["checks"].get("cart_exact") is not None:
+                    prev = st["checks"]["cart_exact"]
+        self.assertGreater(checked, 0)
+
     def test_human_tier_covers_new_behaviours(self):
         ops = set()
         titles = []
