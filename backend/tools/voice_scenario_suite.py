@@ -813,6 +813,65 @@ FLOW_SCENARIOS: list[Scenario] = [
 SCENARIOS += FLOW_SCENARIOS
 
 
+# ── 회귀: 실제 대화 로그(logs/conversations)에서 나온 실패 사례 ──────────────────────
+# 각 시나리오는 로그의 날짜와 증상을 제목에 적었다. 고친 뒤 다시 깨지지 않는지 본다.
+REGRESSION_SCENARIOS: list[Scenario] = [
+    Scenario("G01", "회귀", "10-13 '그냥 결제해줘'에 단품이 또 담김(세트 담은 직후)", [
+        state(M, D),
+        say("비건버거 하나 해줘", no_actions=["add_item"]),
+        say("세트로 해줘", no_actions=["add_item"]),
+        say("치즈스틱", no_actions=["add_item"]),
+        say("콜라", cart=[line("비건 버거", 1, set=True)], lines=1),
+        say("아니, 그냥 결제해줘.", actions=["start_checkout"], cart=[line("비건 버거", 1, set=True)], lines=1),
+    ]),
+    Scenario("G02", "회귀", "10-13 '정립할게'(적립 오인식) 뒤 전화번호 없이 결제 수단으로 넘어감", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("정립할게.", actions=["points"]),
+        say("카드로 결제할게.", no_actions=["payment_method"]),
+        say("공일공 일이삼사 오육칠팔", actions=["points_phone"]),
+        say("카드로 할게요", actions=["payment_method"]),
+    ]),
+    Scenario("G03", "회귀", "10-26 '대전에서 먹을게'(매장 오인식)가 무응답으로 끝남", [
+        state("start", None),
+        say("안녕하세요", no_actions=["add_item"], out_any=["매장", "포장"]),
+        say("대전에서 먹을게.", actions=["order_type"]),
+    ]),
+    Scenario("G04", "회귀", "10-26 시작 화면에서 '좋은 시작!'에 결제 안내가 나옴", [
+        state("start", None),
+        say("좋은 시작!", no_actions=["start_checkout", "payment_method"], out_none=["결제", "장바구니"]),
+    ]),
+    Scenario("G05", "회귀", "10-26 결제 화면에서 '철제.'(취소 오인식)가 무응답으로 끝남", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("철제.", no_actions=["payment_method", "add_item"], out_any=["다시"]),
+    ]),
+    Scenario("G06", "회귀", "10-26 이미 결제 화면인데 '결제페이지 이동해줘'가 간편결제로 읽힘", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("결제페이지 이동해줘", no_actions=["payment_method", "navigate"]),
+    ]),
+    Scenario("G07", "회귀", "알레르기 '없다'를 있다로 읽어 새우 버거 주문을 막음", [
+        state(M, D),
+        say("갑각류 알레르기 없어요", no_actions=["add_item"], unchanged=True),
+        say("새우버거 단품 하나 줘", actions=["add_item"], cart=[line("새우 버거", 1)], lines=1),
+    ]),
+    Scenario("G08", "회귀", "10-06 갑각류 알레르기 질의에 '갑각류 버거는 없다'고 틀리게 답함", [
+        state(M, D),
+        say("갑각류 알레르기 있으면 먹으면 안되는 햄버거가 있어?", out_any=["새우"], out_none=["없습니다"], unchanged=True),
+    ]),
+    Scenario("G09", "회귀", "장바구니 안내가 글을 읽는 말투('x1', 괄호)로 나옴", [
+        state(M, D),
+        say("치즈버거 세트로 하나 줘. 사이드는 감자튀김 음료는 콜라", cart=[line("치즈 버거", 1, set=True)]),
+        say("지금 장바구니에 뭐 있어?", unchanged=True, out_none=["x1", "(", ")"], out_any=["하나"]),
+    ]),
+]
+SCENARIOS += REGRESSION_SCENARIOS
+
+
 # ── 실행기 ──────────────────────────────────────────────────────────────────
 def norm(s: str) -> str:
     return re.sub(r"[\s()（）]", "", s or "").lower()
@@ -1093,6 +1152,8 @@ def main() -> int:
     ap.add_argument("--json", default=None)
     ap.add_argument("--random", type=int, default=0, help="랜덤 전체 흐름 시나리오 N개를 만들어 실행")
     ap.add_argument("--seed", type=int, default=1, help="--random의 시드(같은 시드는 같은 시나리오)")
+    ap.add_argument("--human", type=int, default=0, choices=[0, 1, 2], help="--random의 말투 변형 강도(0=없음, 1=군말, 2=오인식·말투 혼용)")
+    ap.add_argument("--tier", nargs="*", help="--random에 쓸 티어(예: 사람처럼). 기본은 사람처럼을 뺀 4개")
     ap.add_argument("--dry-run", action="store_true", help="LLM을 부르지 않고 발화와 기대 장바구니만 출력")
     ap.add_argument("--save-failed", default=None, help="실패한 랜덤 시나리오를 이 JSON 파일에 저장(고정 세트에 추가용)")
     args = ap.parse_args()
@@ -1102,7 +1163,7 @@ def main() -> int:
     generated: dict[str, dict] = {}
     pool = list(SCENARIOS)
     if args.random:
-        for d in gen.generate_random(gen.fetch_menu(args.url), args.random, args.seed):
+        for d in gen.generate_random(gen.fetch_menu(args.url), args.random, args.seed, args.human, args.tier):
             generated[d["id"]] = d
         pool = [Scenario(d["id"], d["category"], d["title"], d["steps"]) for d in generated.values()]
     else:

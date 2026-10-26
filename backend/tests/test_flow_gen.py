@@ -4,12 +4,18 @@ from tools import flow_scenarios_gen as gen
 from tools.voice_scenario_suite import cart_exact_fail
 
 
+_ALLERGENS = {"SOY": "대두", "SHRIMP": "새우", "MILK": "우유", "WHEAT": "밀"}
+_BURGER_ALLERGENS = {"치즈 버거": ["WHEAT", "MILK"], "더블 치즈 버거": ["WHEAT", "MILK"], "새우 버거": ["WHEAT", "SHRIMP"],
+                     "불고기 버거": ["WHEAT", "SOY"], "데리버거": ["WHEAT", "SOY"], "F 버거": ["WHEAT", "SOY"]}
+
+
 def _burger(name, excls):
     opts = [{"option_group": "SET_UPGRADE", "name_ko": "세트 업그레이드"}]
     opts += [{"option_group": "SET_SIDE", "name_ko": n} for n in ("감자튀김", "치즈스틱", "치킨너겟", "양념감자튀김")]
     opts += [{"option_group": "SET_DRINK", "name_ko": n} for n in ("콜라", "제로콜라", "사이다", "제로사이다", "생수")]
     opts += [{"option_group": "EXCLUDE", "name_ko": n} for n in excls]
-    return {"name_ko": name, "options": opts}
+    return {"name_ko": name, "options": opts,
+            "allergens": [{"code": c, "name_ko": _ALLERGENS[c]} for c in _BURGER_ALLERGENS.get(name, [])]}
 
 
 FAKE_MENU = {"menu_items": {
@@ -48,10 +54,22 @@ class FlowGeneratorTests(unittest.TestCase):
         self.assertEqual([s["id"] for s in a][:2], ["W001", "W002"])
         self.assertEqual(a, gen.generate_fixed(self.menu))
 
+    def _all_human(self):
+        out = []
+        for seed in range(1, 41):
+            out += gen.generate_random(self.menu, 10, seed, human=2, tiers=["사람처럼"])
+        return out
+
     def test_expected_carts_are_always_valid(self):
+        self._assert_carts_valid(self._all())
+
+    def test_expected_carts_are_valid_in_human_tier(self):
+        self._assert_carts_valid(self._all_human())
+
+    def _assert_carts_valid(self, scenarios):
         burgers = {b["name"]: b for b in self.menu.burgers}
         singles = set(self.menu.sides) | set(self.menu.drinks)
-        for sc in self._all():
+        for sc in scenarios:
             prev = None
             for st in sc["steps"]:
                 if st["kind"].startswith("touch"):
@@ -84,6 +102,89 @@ class FlowGeneratorTests(unittest.TestCase):
                     # 담지 않아야 하는 턴(되묻기·질문)은 직전 기대 장바구니와 같아야 한다
                     self.assertEqual(exp, prev, msg=f"{sc['id']} {st['text']}")
                 prev = exp
+
+    def test_default_generation_is_unchanged_by_new_features(self):
+        """사람처럼 티어·말투 변형을 넣어도 human=0 기본 생성(고정 100개 포함)의 시나리오는 그대로여야 한다."""
+        base = gen.generate_random(self.menu, 20, 9)
+        self.assertEqual(base, gen.generate_random(self.menu, 20, 9, human=0, tiers=None))
+        self.assertTrue(all("사람처럼" not in s["title"] for s in base))
+        self.assertTrue(all(" · H" not in s["title"] for s in base))
+
+    def test_human_levels_keep_the_skeleton(self):
+        """말투 변형은 문장만 바꾼다: 같은 시드에서 조작·액션 검사·기대 장바구니·숫자와 메뉴 이름은 human 0/1/2에서 같다."""
+        import re
+        for seed in range(1, 15):
+            a = gen.generate_random(self.menu, 6, seed, human=0)
+            for level in (1, 2):
+                b = gen.generate_random(self.menu, 6, seed, human=level)
+                for x, y in zip(a, b):
+                    self.assertEqual(len(x["steps"]), len(y["steps"]))
+                    for sx, sy in zip(x["steps"], y["steps"]):
+                        self.assertEqual(sx["kind"], sy["kind"])
+                        self.assertEqual(sx.get("checks"), sy.get("checks"))
+                        if sx["kind"] == "say":
+                            self.assertEqual(re.findall(r"\d+", sx["text"]), re.findall(r"\d+", sy["text"]))
+        changed = sum(1 for seed in range(1, 15) for x, y in zip(gen.generate_random(self.menu, 6, seed),
+                                                                 gen.generate_random(self.menu, 6, seed, human=2))
+                      for sx, sy in zip(x["steps"], y["steps"]) if sx["kind"] == "say" and sx["text"] != sy["text"])
+        self.assertGreater(changed, 20)   # 변형이 실제로 일어난다
+
+    def test_injected_stt_errors_are_ones_the_server_corrects(self):
+        """오인식을 넣은 발화는 서버 교정(fix_stt)을 거치면 원래 말이 돼야 한다 — 교정 못 하는 오인식을 넣으면 거짓 실패가 난다."""
+        from ai_modules.llm.guards import fix_stt
+        seen = 0
+        for seed in range(1, 60):
+            for sc in gen.generate_random(self.menu, 8, seed, human=2):
+                for st in sc["steps"]:
+                    if st["kind"] == "say" and any(w in st["text"] for w in ("단풍", "결재")):
+                        seen += 1
+                        fixed = fix_stt(st["text"])
+                        self.assertNotIn("단풍", fixed, st["text"])
+                        self.assertNotIn("결재", fixed, st["text"])
+        self.assertGreater(seen, 3)
+
+    def test_human_tier_covers_new_behaviours(self):
+        ops = set()
+        titles = []
+        for sc in self._all_human():
+            ops |= {s["op"] for s in sc["steps"] if s.get("op")}
+            titles.append(sc["title"])
+        for needed in ("noise_turn", "ask_mid_order", "change_mind", "allergy_have", "pay_accident"):
+            self.assertIn(needed, ops)
+        self.assertTrue(all(t.startswith("[사람처럼]") and t.endswith(" · H2") for t in titles))
+
+    def test_noise_and_questions_never_expect_cart_changes(self):
+        for sc in self._all_human():
+            prev = None
+            for st in sc["steps"]:
+                if st["kind"] != "say":
+                    prev = None
+                    continue
+                exp = st["checks"].get("cart_exact")
+                if st["op"] in ("noise_turn", "ask_mid_order") and prev is not None:
+                    self.assertEqual(exp, prev, sc["id"])
+                    self.assertIn("add_item", st["checks"]["no_actions"])
+                if exp is not None:
+                    prev = exp
+
+    def test_allergy_steps_use_the_menu_allergens(self):
+        """allergy_have: 말한 성분이 없는 버거를 주문 / allergy_none: 그 성분이 든 버거를 주문."""
+        by_name = {b["name"]: b for b in self.menu.burgers}
+        checked = {"allergy_have": 0, "allergy_none": 0}
+        for sc in self._all_human():
+            steps = sc["steps"]
+            for i, st in enumerate(steps):
+                if st.get("op") in checked and st["kind"] == "say" and "알레르기" in st["text"]:
+                    nxt = steps[i + 1]
+                    ordered = nxt["checks"]["cart_exact"]
+                    names = [n for n in sorted({n for b in by_name.values() for n in b["allergens"].values()}) if n in st["text"]]
+                    self.assertEqual(len(names), 1, st["text"])
+                    last_line = next(e for e in reversed(ordered) if e["name"] in nxt["text"].replace(" ", "") or e["name"].replace(" ", "") in nxt["text"].replace(" ", ""))
+                    has = names[0] in by_name[last_line["name"]]["allergens"].values()
+                    self.assertEqual(has, st["op"] == "allergy_none", f"{st['text']} → {nxt['text']}")
+                    checked[st["op"]] += 1
+        self.assertGreater(checked["allergy_have"], 0)
+        self.assertGreater(checked["allergy_none"], 0)
 
     def test_checkout_always_has_items(self):
         for sc in self._all():
