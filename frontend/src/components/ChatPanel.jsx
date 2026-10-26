@@ -24,7 +24,7 @@ function reportVoiceTurn(turn, reason) {
   const summary = {
     kind: 'turn',
     reason,                                  // audio | quick | timeout
-    path: turn.quick ? 'quick' : 'llm',
+    path: turn.quick ? 'quick' : (turn.serverPath || 'llm'),   // 서버가 done에 실어 준 경로(noise/allergy/cart_query/direct/checkout/error)
     speechMs: turn.speechMs,
     textLen: turn.textLen ?? null,
     sttMs: d('tSend', 'tStt'),               // 업로드 + 전사
@@ -684,6 +684,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
             if (data.done && data.output) {
               ensureStartNavigation()
               if (turn) {
+                if (data.path) turn.serverPath = data.path
                 turn.tLlmDone = performance.now()
                 // 오디오가 끝내 안 나오는 경우(TTS 실패 등)에도 기록이 남도록 5초 뒤 강제 보고
                 setTimeout(() => { if (_activeTurn === turn) { _activeTurn = null; reportVoiceTurn(turn, 'timeout') } }, 5000)

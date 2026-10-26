@@ -10,6 +10,10 @@ _MENU_ITEM_LOAD_OPTS = (
     selectinload(MenuItem.allergen_links).selectinload(MenuItemAllergen.allergen),
 )
 
+async def get_all_allergens(db: AsyncSession) -> list[Allergen]:
+    result = await db.execute(select(Allergen).order_by(Allergen.display_order))
+    return result.scalars().all()
+
 async def get_all_categories(db: AsyncSession) -> list[Category]:
     result = await db.execute(
         select(Category)

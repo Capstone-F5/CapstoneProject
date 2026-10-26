@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import SystemMessage
@@ -21,9 +22,9 @@ from core.cart_context import (
 from ai_modules.llm.action_context import (
     get_actions, push_action, reset_actions, set_cart, set_user_input, set_checkout_snapshot, set_last_bot_text,
     get_last_bot_text, set_stt_original, set_recent_user_text, set_recent_turns, get_recent_turns, get_checkout_snapshot,
-    reset_guards, record_guard, get_guard_hits,
+    reset_guards, record_guard, get_guard_hits, set_screen,
 )
-from ai_modules.llm import guards, order_parser, checkout_progress
+from ai_modules.llm import allergy, guards, order_parser, checkout_progress
 from ai_modules.llm.guards import NOISE_REPLY, correct_reply, fix_stt, guard_mode, is_noise
 from ai_modules.llm.agent import get_agent_executor
 from ai_modules.llm import cart_history
@@ -161,9 +162,13 @@ async def _complete_missing_order(user_input: str, output: str) -> str | None:
     직전 안내가 버거 하나를 가리킬 때 그 버거를 담는다."""
     if guard_mode() != "enforce" or not guards.has_hangul(user_input):
         return None
+    from ai_modules.llm.action_context import get_last_bot_text, get_recent_user_text
+    # 결제 의사를 말한 턴은 주문 보충 대상이 아니다. "아니, 그냥 결제해줘"의 "그냥"을 단품 신호로 읽어 직전 버거를
+    # 단품으로 또 담던 사고(2026-10-13 로그: 비건 버거 세트 + 단품 15,600원)를 막는다.
+    if _CHECKOUT_INTENT.search(user_input) or is_decline_more_menu(user_input, get_last_bot_text()):
+        return None
     actions = get_actions()
     from ai_modules.llm import api_client
-    from ai_modules.llm.action_context import get_last_bot_text, get_recent_user_text
     # "단품/세트?"라는 질문에 "단품으로 줘"라고만 답했는데 담기 액션이 없는 경우(모델이 기존 줄을 "단품으로 변경"했다며
     # 수정만 하는 사고 포함)는 응답 문구와 상관없이 담지 못한 것이다
     prev = [t for t in get_recent_user_text().split("¦") if t.strip()][-1:]
@@ -243,6 +248,16 @@ def _align_reply_with_actions(output: str) -> str:
     enforcing = guard_mode() == "enforce"
     record_guard("reply_without_action", f"응답 「{output[:40]}」에 맞는 액션 없음", blocked=enforcing)
     return fixed if enforcing else output
+
+
+def _fix_screen_reply(output: str, screen: str | None) -> str:
+    if guard_mode() != "enforce":
+        return output
+    fixed = guards.fix_screen_reply(output, screen, [a.get("type") for a in get_actions()])
+    if not fixed:
+        return output
+    record_guard("screen_reply_mismatch", f"화면={screen} 응답 「{output[:40]}」 → 문맥에 맞게 교체", blocked=False, fixed=True)
+    return fixed
 
 
 async def _server_cart_has_items(session_id: str, user_input: str) -> bool:
@@ -535,6 +550,82 @@ def _context_message(cart: list, screen: str | None, order_type: str | None = No
     return "\n".join(parts)
 
 
+_ALLERGY_ORDER_RE = re.compile(r"담아|담을|담기|추가|주문(?:할|해)|시킬|시켜")
+
+
+async def _allergy_llm_ask(prompt: str) -> str:
+    """알레르기 발화를 성분 코드로 바꾸는 짧은 LLM 호출(규칙이 못 정한 경우에만). 느리면 포기한다."""
+    import os
+    from langchain_openai import ChatOpenAI
+    llm = ChatOpenAI(model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"), temperature=0, api_key=os.getenv("OPENAI_API_KEY"),
+                     timeout=float(os.getenv("OPENAI_ALLERGY_TIMEOUT", "8")), max_retries=0)
+    return (await llm.ainvoke(prompt)).content
+
+
+async def _allergy_reply(session_id: str, user_input: str) -> str | None:
+    """"갑각류 알레르기 있는 사람이 못 먹는 메뉴는?" 같은 질의를 메뉴 DB의 알레르기 정보로 직접 답한다. 주문·변경 요청이 섞였거나
+    성분을 못 알아들으면 None(모델에 맡긴다). 밝힌 성분은 세션에 기억해 이후 담기를 막는 데 쓴다."""
+    if guard_mode() != "enforce" or not guards.has_hangul(user_input):
+        return None
+    from ai_modules.llm import api_client
+    try:
+        master = {a["code"]: a["name_ko"] for a in await api_client.fetch_allergens()}   # DB의 알레르기 마스터
+    except Exception:  # noqa: BLE001
+        return None
+    codes = await allergy.resolve(user_input, master, _allergy_llm_ask)
+    if not codes or _ALLERGY_ORDER_RE.search(user_input) or guards.has_change_verb(user_input) or guards.has_remove_intent(user_input):
+        return None
+    try:
+        menu = await api_client.fetch_menu_items()
+    except Exception:  # noqa: BLE001
+        return None
+    # "알레르기 없는 걸로 추천해 줘"의 "줘"는 주문이 아니다. 메뉴 이름을 말하며 줘/주세요라고 하면 주문이므로 모델과 담기 가드에 맡긴다.
+    if guards.has_add_verb(user_input) and order_parser.named_menus("".join(user_input.split()), [i["name_ko"] for i in menu]):
+        return None
+    if not any(i.get("allergens") for i in menu):
+        return None   # 알레르기 정보가 안 실려 오면 지어내지 않는다
+    allergy.remember(session_id, codes)
+    record_guard("allergy_from_db", f"「{user_input[:30]}」 알레르기 질의를 메뉴 DB로 답함 ({','.join(sorted(codes))})",
+                 blocked=False, fixed=True)
+    return allergy.build_reply(menu, allergy.recall(session_id), master)
+
+
+async def _cart_for_status_reply(session_id: str, cart: list | None) -> list:
+    """장바구니 조회 질의에 쓸 장바구니. 요청의 cart가 비어 오면(방금 담은 항목이 아직 안 실린 경우 등) 서버 장바구니로 대신한다.
+    실제 로그: 직전 턴에 F 버거 세트를 안내했는데 다음 턴에 "장바구니에 담긴 메뉴가 없습니다"(2026-09-28)."""
+    if cart:
+        return cart
+    from ai_modules.llm import api_client
+    try:
+        server_cart = await api_client.get_cart(session_id)
+    except Exception:  # noqa: BLE001
+        return cart or []
+    converted = []
+    for it in server_cart.get("items") or []:
+        opts = it.get("selected_options") or []
+        names = lambda group: [o.get("name") for o in opts if o.get("option_group") == group and o.get("name")]  # noqa: E731
+        converted.append({
+            "name": it.get("name_ko"),
+            "item_type": "set" if names("SET_UPGRADE") or any(o.get("option_group") == "SET_UPGRADE" for o in opts) else "single",
+            "quantity": it.get("quantity", 1),
+            "unit_price": it.get("unit_price", 0),
+            "side": ", ".join(names("SET_SIDE")),
+            "drink": ", ".join(names("SET_DRINK")),
+            "exclusions": names("EXCLUDE"),
+            "special_note": it.get("special_note"),
+        })
+    return converted
+
+
+# 노이즈로 판정돼도 재질문하는 화면과 발화 길이 상한(공백 제외 글자 수). 긴 발화는 주변 대화일 가능성이 커서 계속 무시한다.
+_REPROMPT_SCREENS = frozenset({"orderType", "menu", "cart", "payment"})
+_REPROMPT_MAX_CHARS = 14
+
+
+def _should_reprompt_noise(user_input: str, screen: str | None) -> bool:
+    return screen in _REPROMPT_SCREENS and 0 < len("".join((user_input or "").split())) <= _REPROMPT_MAX_CHARS
+
+
 def _is_domain_guard_enabled() -> bool:
     try:
         from core.kiosk_settings import get_kiosk_settings
@@ -561,6 +652,7 @@ async def run_agent_stream(
     cart = cart or []
     set_session_id(session_id)
     set_cart(cart)
+    set_screen(screen)
     fixed_input = fix_stt(user_input)   # 알려진 STT 오인식(예: "내장에서" → "매장에서") 교정
     set_stt_original(user_input if fixed_input != user_input else "")
     user_input = fixed_input
@@ -579,15 +671,39 @@ async def run_agent_stream(
         enforcing = guard_mode() == "enforce"
         record_guard("noise", f"「{user_input[:30]}」 도메인 어휘 없음", blocked=enforcing)
         if enforcing:
+            if _should_reprompt_noise(user_input, screen):
+                # 응답을 기다리는 화면의 짧은 발화는 오인식일 가능성이 높다 — 말없이 버리면 키오스크가 먹통처럼 보인다
+                # (2026-10-26 로그: "대전에서 먹을게", "갑자기 왜 이게 떠?"가 무응답으로 끝남).
+                reprompt = NOISE_REPLY.get(language if language in NOISE_REPLY else "ko", NOISE_REPLY["ko"])
+                log_turn(
+                    session_id=session_id, user_input=user_input, output=reprompt, actions=[],
+                    language=language, screen=screen, order_type=order_type,
+                )
+                yield f"data: {json.dumps({'done': True, 'path': 'noise', 'output': reprompt, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+                return
             log_turn(
                 session_id=session_id, user_input=user_input, output="", actions=[],
                 language=language, screen=screen, order_type=order_type,
             )
-            yield f"data: {json.dumps({'done': True, 'output': '', 'ignored': True, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'path': 'noise', 'output': '', 'ignored': True, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
             return
 
+    allergy_out = await _allergy_reply(session_id, user_input)
+    if allergy_out:
+        try:
+            memory = await get_memory(session_id)
+            await save_and_prune(memory, user_input, allergy_out)
+        except Exception:  # noqa: BLE001
+            pass
+        log_turn(
+            session_id=session_id, user_input=user_input, output=allergy_out, actions=[],
+            language=language, screen=screen, order_type=order_type,
+        )
+        yield f"data: {json.dumps({'done': True, 'path': 'allergy', 'output': allergy_out, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        return
+
     if is_cart_status_query(user_input):
-        output = format_cart_status_reply(cart, language, user_input)
+        output = format_cart_status_reply(await _cart_for_status_reply(session_id, cart), language, user_input)
         try:
             memory = await get_memory(session_id)
             await save_and_prune(memory, user_input, output)
@@ -597,14 +713,14 @@ async def run_agent_stream(
             session_id=session_id, user_input=user_input, output=output, actions=[],
             language=language, screen=screen, order_type=order_type,
         )
-        yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'path': 'cart_query', 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
         return
 
     direct = await _direct_command(session_id, user_input, language, screen, order_type)
     if direct:
         for action in get_actions():
             yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'done': True, 'output': direct, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'path': 'direct', 'output': direct, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
         return
 
     # 파서가 확신하는 단순 주문은 힌트를 주고 필요하면 재질의해야 하므로(토큰이 이미 나간 뒤에는 못 한다) 내부적으로 비스트림으로
@@ -616,7 +732,7 @@ async def run_agent_stream(
         for action in res["actions"]:
             yield f"data: {json.dumps({'action': action}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'token': res['output']}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'done': True, 'output': res['output'], 'guards': res['guards']}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'path': 'checkout', 'output': res['output'], 'guards': res['guards']}, ensure_ascii=False)}\n\n"
         return
 
     output_parts: list[str] = []
@@ -651,7 +767,7 @@ async def run_agent_stream(
                 session_id=session_id, user_input=user_input, output=declined_out, actions=get_actions(),
                 language=language, screen=screen, order_type=order_type,
             )
-            yield f"data: {json.dumps({'done': True, 'output': declined_out, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'path': 'checkout', 'output': declined_out, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
             return
 
         # 현재 화면 + 주문 유형 + 팝업 상태 + 장바구니 요약을 chat_history 앞에 SystemMessage 로 주입
@@ -700,7 +816,7 @@ async def run_agent_stream(
             language=language, screen=screen, order_type=order_type, error=str(stream_error),
         )
         # 이번 턴 저장은 건너뛴다 — 부분 응답을 히스토리에 남기면 다음 턴이 더 헷갈릴 수 있다.
-        yield f"data: {json.dumps({'done': True, 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'path': 'error', 'output': output, 'guards': get_guard_hits()}, ensure_ascii=False)}\n\n"
         return
 
     # LLM이 말로만 처리하고 도구를 빼먹은 핵심 동작(주문 유형·결제 시작·결제 수단)을 규칙으로 보완
@@ -711,6 +827,7 @@ async def run_agent_stream(
     if completed:
         output = completed
     output = _align_reply_with_actions(output)
+    output = _fix_screen_reply(output, screen)
     output = await _checkout_summary_reply(session_id, output, language)
     output = _ensure_points_question(output, language)
     output = await _ensure_single_set_question(user_input, output, order_type)
@@ -740,6 +857,7 @@ async def run_agent(
     cart = cart or []
     set_session_id(session_id)
     set_cart(cart)
+    set_screen(screen)
     fixed_input = fix_stt(user_input)   # 알려진 STT 오인식(예: "내장에서" → "매장에서") 교정
     set_stt_original(user_input if fixed_input != user_input else "")
     user_input = fixed_input
@@ -766,8 +884,22 @@ async def run_agent(
             return {"session_id": session_id, "output": output, "ignored": True, "actions": [], "intermediate_steps": [],
                     "guards": get_guard_hits()}
 
+    allergy_out = await _allergy_reply(session_id, user_input)
+    if allergy_out:
+        try:
+            memory = await get_memory(session_id)
+            await save_and_prune(memory, user_input, allergy_out)
+        except Exception:  # noqa: BLE001
+            pass
+        log_turn(
+            session_id=session_id, user_input=user_input, output=allergy_out, actions=[],
+            language=language, screen=screen, order_type=order_type,
+        )
+        return {"session_id": session_id, "output": allergy_out, "actions": [], "intermediate_steps": [],
+                "guards": get_guard_hits()}
+
     if is_cart_status_query(user_input):
-        output = format_cart_status_reply(cart, language, user_input)
+        output = format_cart_status_reply(await _cart_for_status_reply(session_id, cart), language, user_input)
         try:
             memory = await get_memory(session_id)
             await save_and_prune(memory, user_input, output)
@@ -839,6 +971,7 @@ async def run_agent(
     if completed:
         output = completed
     output = _align_reply_with_actions(output)
+    output = _fix_screen_reply(output, screen)
     output = await _checkout_summary_reply(session_id, output, language)
     output = _ensure_points_question(output, language)
     output = await _ensure_single_set_question(user_input, output, order_type)

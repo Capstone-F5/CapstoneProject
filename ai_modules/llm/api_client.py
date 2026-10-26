@@ -27,6 +27,14 @@ async def get_menu() -> list[dict]:
     return items
 
 
+async def fetch_allergens() -> list[dict]:
+    """GET /api/menu/allergens → 알레르기 유발물질 마스터(code, name_ko, name_en)."""
+    async with httpx.AsyncClient() as client:
+        res = await client.get(f"{API_BASE_URL}/api/menu/allergens")
+        res.raise_for_status()
+        return res.json()
+
+
 async def fetch_menu_item_by_id(item_id: str) -> dict | None:
     """
     GET /api/menu/items/{id}

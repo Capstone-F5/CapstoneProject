@@ -58,6 +58,16 @@ class DropNoSpeech(unittest.TestCase):
             res = _filter_segments([seg(word, p=0.25, avg_logprob=-1.18)])
             self.assertIsNone(res["kept_text"], word)   # 버려지지 않음
 
+    def test_short_pass_flag_marks_only_relaxed_passes(self):
+        """완화 기준 덕분에 통과한 구간은 short_pass로 표시해 stt_quality.log에서 센다(임계값 튜닝 근거)."""
+        self.assertTrue(_filter_segments([seg("네.", p=0.25, avg_logprob=-1.18)])["short_pass"])
+        self.assertFalse(_filter_segments([seg("네.", p=0.25, avg_logprob=-0.5)])["short_pass"])
+        self.assertFalse(_filter_segments([seg("오늘 밤 주인공은 나야 나", p=0.2, avg_logprob=-1.25)])["short_pass"])
+
+    def test_configured_short_word_threshold_is_used(self):
+        res = _filter_segments([seg("네.", p=0.25, avg_logprob=-1.18)], short_word_logprob_threshold=-1.1)
+        self.assertEqual(res["kept_text"], "")   # 설정을 -1.1로 조이면 같은 단답도 걸러진다
+
     def test_high_compression_ratio_loop_is_dropped(self):
         """배경 리듬이나 잡음으로 인해 동일 구절이 반복되는 세그먼트(compression_ratio > 2.4)를 제거한다."""
         res = _filter_segments([seg("아 아 아 아 아 아 아 아 아 아", p=0.15, avg_logprob=-0.4, compression_ratio=3.1)])

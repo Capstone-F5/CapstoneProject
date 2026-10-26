@@ -8,6 +8,25 @@ from ai_modules.llm.guards import (
 )
 
 
+class FixScreenReplyTests(unittest.TestCase):
+    def test_already_on_cart_screen(self):
+        from ai_modules.llm.guards import fix_screen_reply
+        self.assertEqual(
+            fix_screen_reply("장바구니 화면으로 이동했습니다. 포인트 적립하시겠어요?", "cart", []),
+            "이미 장바구니 화면이에요. 포인트 적립하시겠어요?")
+        self.assertIsNone(fix_screen_reply("장바구니 화면으로 이동했습니다.", "menu", ["navigate"]))
+        self.assertIsNone(fix_screen_reply("장바구니 화면으로 이동했습니다.", "menu", []))   # 다른 화면에서의 이동은 정상
+        self.assertIsNone(fix_screen_reply("장바구니 화면으로 이동했습니다.", "cart", ["navigate"]))
+
+    def test_start_screen_rejects_checkout_talk(self):
+        from ai_modules.llm.guards import fix_screen_reply, START_SCREEN_REPLY
+        for out in ["담긴 메뉴가 없습니다. 결제 진행할까요?", "장바구니를 확인해 드릴까요?"]:
+            self.assertEqual(fix_screen_reply(out, "start", []), START_SCREEN_REPLY, out)
+        self.assertIsNone(fix_screen_reply("매장에서 드실 건가요, 포장하실 건가요?", "start", []))
+        self.assertIsNone(fix_screen_reply("담긴 메뉴가 없습니다. 결제 진행할까요?", "start", ["order_type"]))
+        self.assertIsNone(fix_screen_reply("담긴 메뉴가 없습니다. 결제 진행할까요?", "menu", []))
+
+
 class FixSttTests(unittest.TestCase):
     def test_corrects_known_misrecognition_only_in_dine_in_context(self):
         cases = {
@@ -84,6 +103,20 @@ class FixSttTests(unittest.TestCase):
         for src, want in cases.items():
             with self.subTest(src=src):
                 self.assertEqual(fix_stt(src), want)
+
+    def test_corrects_jeongrip_and_daejeon_misrecognition(self):
+        """"적립할게" → "정립할게", "매장에서 먹을게" → "대전에서 먹을게"(2026-10-13, 10-26 로그)."""
+        cases = {
+            "정립할게.": "적립할게.",
+            "정립해 줘": "적립해 줘",
+            "대전에서 먹을게.": "매장에서 먹을게.",
+            "대전 에서 식사할게요": "매장 에서 식사할게요",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(fix_stt(src), want)
+        for keep in ("대전 어디예요", "정립이 뭐예요", "대전에 있는 매장이에요"):   # 다른 말은 그대로
+            self.assertEqual(fix_stt(keep), keep, keep)
 
     def test_leaves_other_sentences_untouched(self):
         for src in [

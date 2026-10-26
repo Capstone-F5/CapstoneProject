@@ -155,5 +155,125 @@ class FixAndAddSemanticsTests(unittest.TestCase):
         self.assertEqual(added, [{"type": "navigate", "screen": "cart"}, {"type": "start_checkout"}])
 
 
+class PaymentAndPointsFlowTests(unittest.TestCase):
+    """2026-10-13·10-26 로그: 전화번호 없이 포인트 적립이 선택된 채 결제 수단으로 넘어감 / "결제페이지"가 간편결제로 읽힘."""
+
+    def setUp(self):
+        C.reset_actions()
+        os.environ["GUARD_MODE"] = "enforce"
+
+    def test_payment_page_is_not_easy_pay(self):
+        from core.intent_fallback import _method_from
+        for text in ["결제페이지 이동해줘", "결제 페이지로 가줘", "go to the payment page"]:
+            with self.subTest(text=text):
+                self.assertIsNone(_method_from(text))
+                C.set_user_input(text)
+                self.assertFalse(T._payment_method_supported_by_input("pay"))
+        self.assertEqual(_method_from("카카오페이로 할게요"), "pay")
+        self.assertEqual(_method_from("페이로 할게요"), "pay")
+
+    def test_awaiting_points_phone(self):
+        from ai_modules.llm import checkout_progress as P
+        self.assertTrue(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes"})))
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes", "points_phone"})))
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points"})))   # 적립 안 함
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes"}), True))
+
+    def test_fallback_does_not_pick_payment_before_phone(self):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        sid = "test-session-points-phone"
+        checkout_progress.reset(sid)
+        added = ensure_actions(sid, "카드로 결제할게", "cart", [{"name": "버거", "qty": 1}],
+                               frozenset({"start_checkout", "points", "points_yes"}), True)
+        self.assertEqual(added, [])
+        C.reset_actions()
+        added = ensure_actions(sid, "카드로 결제할게", "cart", [{"name": "버거", "qty": 1}],
+                               frozenset({"start_checkout", "points", "points_yes", "points_phone"}), True)
+        self.assertEqual(added, [{"type": "payment_method", "value": "card"}])
+
+    def test_fallback_records_points_yes(self):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        sid = "test-session-points-yes"
+        checkout_progress.reset(sid)
+        ensure_actions(sid, "적립할게", "cart", [{"name": "버거", "qty": 1}], frozenset({"start_checkout"}), True)
+        self.assertIn("points_yes", checkout_progress.snapshot(sid))
+
+
+class ServerCartFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_request_cart_uses_server_cart(self):
+        """2026-09-28: 방금 F 버거 세트를 안내했는데 요청 cart가 비어 와서 "담긴 메뉴가 없습니다"라고 답했다."""
+        from core import llm_service
+        from core.cart_context import format_cart_status_reply
+
+        async def fake_get_cart(session_id):
+            return {"items": [{"name_ko": "F 버거", "quantity": 1, "unit_price": 6650, "selected_options": [
+                {"name": "세트", "option_group": "SET_UPGRADE"}, {"name": "치킨너겟", "option_group": "SET_SIDE"},
+                {"name": "제로사이다", "option_group": "SET_DRINK"}, {"name": "양파 제외", "option_group": "EXCLUDE"}]}]}
+
+        orig = llm_service.__dict__.get("api_client")
+        from ai_modules.llm import api_client
+        saved = api_client.get_cart
+        api_client.get_cart = fake_get_cart
+        try:
+            cart = await llm_service._cart_for_status_reply("s1", [])
+            self.assertEqual(
+                format_cart_status_reply(cart, "ko"),
+                "현재 장바구니에는 F 버거 세트 하나가 담겨 있어요. 사이드는 치킨너겟, 음료는 제로사이다, 양파 빼고. 합계는 6,650원이에요.")
+            keep = [{"name": "콜라", "quantity": 1}]
+            self.assertIs(await llm_service._cart_for_status_reply("s1", keep), keep)   # 요청 cart가 있으면 그대로
+            async def boom(session_id):
+                raise RuntimeError("down")
+            api_client.get_cart = boom
+            self.assertEqual(await llm_service._cart_for_status_reply("s1", []), [])   # 조회 실패 시 기존 동작
+        finally:
+            api_client.get_cart = saved
+
+
+class NavigateTests(unittest.TestCase):
+    def setUp(self):
+        C.reset_actions()
+
+    def test_same_screen_navigate_is_not_emitted(self):
+        C.set_screen("cart")
+        out = T.navigate("cart")
+        self.assertEqual(C.get_actions(), [])
+        self.assertIn("이미", out)
+
+    def test_other_screen_navigate_is_emitted(self):
+        C.set_screen("menu")
+        T.navigate("cart")
+        self.assertEqual(C.get_actions(), [{"type": "navigate", "screen": "cart"}])
+
+
+class NoiseRepromptTests(unittest.TestCase):
+    def test_short_utterance_on_waiting_screen_is_reprompted(self):
+        from core.llm_service import _should_reprompt_noise
+        self.assertTrue(_should_reprompt_noise("갑자기 왜 이게 떠?", "cart"))
+        self.assertTrue(_should_reprompt_noise("철제.", "orderType"))
+
+    def test_start_screen_long_or_empty_stay_silent(self):
+        from core.llm_service import _should_reprompt_noise
+        self.assertFalse(_should_reprompt_noise("철제.", "start"))
+        self.assertFalse(_should_reprompt_noise("", "cart"))
+        self.assertFalse(_should_reprompt_noise("그래서 내가 어제 말했잖아 그 친구가 그러는데 진짜 웃기더라", "menu"))
+        self.assertFalse(_should_reprompt_noise("철제.", None))
+
+
+class CompleteMissingOrderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_checkout_utterance_does_not_add_item(self):
+        """2026-10-13: 세트를 담은 뒤 "아니, 그냥 결제해줘"에 비건 버거 단품이 또 담겼다(15,600원)."""
+        from core import llm_service
+        C.reset_actions()
+        C.reset_guards()
+        C.set_last_bot_text("비건버거 세트, 사이드 치즈스틱, 음료 콜라로 담았습니다. 다른 메뉴를 더 주문하시겠어요?")
+        C.set_recent_user_text("비건버거 하나 해줘 ¦ 세트로 해줘 ¦ 치즈스틱 ¦ 콜라")
+        for text in ["아니, 그냥 결제해줘.", "그냥 결제할게요"]:
+            with self.subTest(text=text):
+                self.assertIsNone(await llm_service._complete_missing_order(text, "담긴 메뉴는 비건 버거 세트 1개입니다."))
+        self.assertEqual(C.get_actions(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

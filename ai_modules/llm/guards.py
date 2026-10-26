@@ -42,6 +42,8 @@ _STT_FIXES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"내장(?=\s*에서\s*(?:먹|드|식사|할|해|줘|주문))"), "매장"),
     # "매장 식사로 할게요" → "내장 식사로 할게요", "매장이요" → "내장이요"
     (re.compile(r"내장(?=\s*(?:식사|이요|으로\s*(?:할|해|줘|먹)))"), "매장"),
+    # "매장에서 먹을게"가 "대전에서 먹을게"로 들어오는 경우(2026-10-26 로그). 뒤에 식사 어휘가 올 때만.
+    (re.compile(r"대전(?=\s*에서\s*(?:먹|드|식사))"), "매장"),
     # "결제"를 "결재"로 받아 적는 흔한 오타. 키오스크에서 "결재"는 결제 말고는 뜻이 없다. 이대로면 결제 의도로 인식되지 않아
     # "결재할게요"가 결제로 이어지지 않는다(2026-10-04 점검: _CHECKOUT_INTENT가 "결재"를 모름).
     (re.compile(r"결재"), "결제"),
@@ -56,6 +58,8 @@ _STT_FIXES: list[tuple[re.Pattern, str]] = [
     # 의문사("어디로죠", "언제로죠", "누구로죠")는 제외하고 한글/숫자 뒤의 "(으)로죠"가 절·문장 끝에 올 때 "(으)로 줘"로 교정한다.
     (re.compile(r"(?<!어디)(?<!언제)(?<!누구)(?<=[가-힣0-9])(으로|로)\s*죠(?=[.,!?~\s]|$)"), r"\1 줘"),
     # "결제할게"를 "설치할게"로 받아 적는 오인식(실제 로그: "설치할게." 직후 "결제할게." 재발화)
+    # "적립할게"를 "정립할게"로 받아 적는 오인식(2026-10-13 로그). 포인트 적립 흐름이 시작되지 않던 원인.
+    (re.compile(r"(?<![가-힣])정립(?=\s*(?:할게|할래|해\s*줘|해줘|하겠|할께|하고\s*싶|부탁|해\s*주세요|해주세요))"), "적립"),
     (re.compile(r"(?<![가-힣])설치(?=\s*(?:할게|할래|해\s*줘|해줘|하겠|할게요|해주세요|[.,!?~]|$))"), "결제"),
 ]
 
@@ -241,6 +245,28 @@ def correct_reply(output: str, action_types: list[str]) -> str | None:
         fulfill = _FULFILL[kind]
         if pattern.search(output) and not (have if fulfill is None else have & fulfill):
             return _UNFULFILLED[kind]
+    return None
+
+
+_ALREADY_THERE = {"cart": "장바구니", "menu": "메뉴", "payment": "결제"}
+_MOVED_RE = re.compile(r"^(장바구니|메뉴|결제) 화면(?:으로|에) 이동(?:했습니다|합니다|할게요|했어요)[.!]?\s*")
+_START_BLOCKED_REPLY_RE = re.compile(r"담긴 메뉴가 없|장바구니|결제(?:를)? 진행|결제할까요|결제하시겠")
+START_SCREEN_REPLY = "주문을 시작할까요? 매장에서 드실지, 포장하실지 말씀해 주세요."
+
+
+def fix_screen_reply(output: str, screen: str | None, action_types: list[str]) -> str | None:
+    """화면 문맥과 안 맞는 응답을 바로잡는다. 맞는 게 없으면 None.
+    - 이미 그 화면인데 "~화면으로 이동했습니다"라고 하면 "이미 ~ 화면이에요."로 바꾼다(2026-10-26 cart 화면에서 결제페이지 요청).
+    - 시작 화면에서 주문 유형 선택 없이 결제·장바구니 안내가 나오면 주문 시작 안내로 바꾼다(오인식 "좋은 시작!" → "결제 진행할까요?")."""
+    if not output or not has_hangul(output):
+        return None
+    if screen in _ALREADY_THERE:
+        m = _MOVED_RE.match(output)
+        if m and m.group(1) == _ALREADY_THERE[screen] and "navigate" not in action_types:
+            rest = output[m.end():].strip()
+            return f"이미 {_ALREADY_THERE[screen]} 화면이에요." + (f" {rest}" if rest else "")
+    if screen == "start" and "order_type" not in action_types and _START_BLOCKED_REPLY_RE.search(output):
+        return START_SCREEN_REPLY
     return None
 
 

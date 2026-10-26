@@ -89,7 +89,7 @@ def _order_type_from(text: str) -> str | None:
 
 
 def _method_from(text: str) -> str | None:
-    lowered = text.lower()
+    lowered = text.lower().replace("페이지", "").replace("payment", "")   # "결제페이지"의 "페이"는 간편결제가 아니다
     hits = [name for name, kws in _EXPLICIT_METHOD if any(kw.lower() in lowered for kw in kws)]
     if not hits and any(g in lowered for g in _GENERIC_PAY):
         hits = ["pay"]
@@ -131,7 +131,8 @@ def ensure_actions(
 
     # 3) 결제 수단 — 포인트 질문이 이전 턴에 끝난 뒤에만(서버의 순서 규칙을 우회하지 않는다)
     if (screen == "cart" and not _has(actions, "payment_method")
-            and "start_checkout" in snapshot_before and "points" in snapshot_before):
+            and "start_checkout" in snapshot_before and "points" in snapshot_before
+            and not checkout_progress.awaiting_points_phone(snapshot_before, _has(actions, "points_phone"))):
         method = _method_from(text)
         if method:
             added.append({"type": "payment_method", "value": method})
@@ -146,6 +147,7 @@ def ensure_actions(
         elif _POINTS_YES.search(text):
             added.append({"type": "points", "value": "yes"})
             checkout_progress.mark_done(session_id, "points")
+            checkout_progress.mark_done(session_id, "points_yes")
 
     # 4) 장바구니 열기 — "장바구니 보여줘"에 모델이 화면 설명만 하고 navigate를 빼먹는 경우
     if (screen not in ("cart", "payment") and cart and not _has(actions, "navigate")

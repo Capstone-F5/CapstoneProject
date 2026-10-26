@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 import re
 from .action_context import (
     push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text, get_recent_user_text,
-    add_seen_this_turn, get_recent_turns,
+    add_seen_this_turn, get_recent_turns, get_screen,
 )
 from . import guards
 from .order_parser import menu_key as _menu_key, named_menus as _named_menus
@@ -332,6 +332,20 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
         menu = _run(api_client.fetch_menu_items())
     except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
         menu = None
+
+    # 0-0) 손님이 알레르기가 있다고 밝혔고 이 메뉴에 그 성분이 들어 있으면 담지 않는다(2026-10-06: 대두 알레르기 손님에게 F 버거 안내)
+    # 손님이 알면서도 이 메뉴를 고집하는 경우를 위해 이번 발화에 메뉴 이름이 직접 나오면(예: "그래도 F버거 줘") 막지 않는다.
+    from . import allergy
+    try:
+        _codes = allergy.recall(get_session_id())
+    except RuntimeError:   # 세션 ID가 없으면 기억된 알레르기도 없다 — 가드 때문에 주문이 막히면 안 된다
+        _codes = set()
+    if _codes and guards.has_hangul(user):
+        msg = allergy.warning_for_add(item, _codes)
+        if msg and not _named_menus(re.sub(r"\s+", "", user), [name]):
+            msg = guards.block("allergy_conflict", f"알레르기({','.join(sorted(_codes))}) 손님이 {name} 담기 시도", msg)
+            if msg:
+                return msg, item, quantity
 
     # 0) 거절·종료 답변("아니", "아니요", "없어요", "됐어요")에서는 절대 담지 않는다 (2026-10-23 실제 로그:
     # "그릴드 비프 버거 세트를 담았습니다. 다른 메뉴를 추가하시겠어요?" → "아니."에 직전 세트를 한 번 더 담은 사고)
@@ -921,6 +935,7 @@ def check_user_points(phone: str) -> str:
     if len(digits) == 11:
         push_action({"type": "points_phone", "phone": digits})
         checkout_progress.mark_done(get_session_id(), "points")
+        checkout_progress.mark_done(get_session_id(), "points_phone")
 
     if data is None:
         return "등록된 회원 정보가 없습니다. 주문 후 포인트 적립이 가능합니다."
@@ -934,6 +949,9 @@ def check_user_points(phone: str) -> str:
 @tool
 def navigate(screen: str) -> str:
     """화면을 이동한다. Args: screen: 'menu' | 'cart' | 'payment'"""
+    if screen and screen == get_screen():
+        # 이미 그 화면이다 — 이동 액션을 또 보내지 않는다("결제페이지 이동해줘"를 cart 화면에서 말한 경우, 2026-10-26 로그)
+        return f"이미 {screen} 화면입니다. 이동하지 말고 다음 단계만 진행하세요."
     push_action({"type": "navigate", "screen": screen})
     return f"{screen} 화면으로 이동"
 
@@ -973,7 +991,8 @@ _PAYMENT_METHOD_KEYWORDS: dict[str, list[str]] = {
 
 
 def _payment_method_supported_by_input(value: str) -> bool:
-    text = get_user_input().lower()
+    # "결제페이지 이동해줘"의 "페이", "payment page"의 "pay"를 간편결제 언급으로 읽지 않는다(2026-10-26 로그)
+    text = get_user_input().lower().replace("페이지", "").replace("payment", "")
     keywords = _PAYMENT_METHOD_KEYWORDS.get(value, [])
     return any(kw.lower() in text for kw in keywords)
 
@@ -1090,6 +1109,12 @@ def ui_action(
                 "오류: 포인트 적립 여부를 먼저 물어야 합니다. 결제수단을 언급했더라도, 이번 턴에는 "
                 "결제수단을 정하지 말고 '포인트 적립하시겠어요?'를 먼저 물어보세요."
             )
+        if checkout_progress.awaiting_points_phone(
+                get_checkout_snapshot(), any(x.get("type") == "points_phone" for x in get_actions())):
+            return (
+                "오류: 포인트 적립을 선택했지만 전화번호를 아직 받지 못했습니다. 결제수단을 정하지 말고 "
+                "'전화번호를 말씀해 주세요'라고 다시 안내하세요. 고객이 적립을 원하지 않는다고 하면 points(no)를 호출하세요."
+            )
         if not _payment_method_supported_by_input(value):
             return (
                 "오류: 이번 발화에 결제수단이 실제로 언급되지 않았습니다. 카드/현금/간편결제 중 "
@@ -1119,7 +1144,14 @@ def ui_action(
     push_action(payload)
     if action in ("start_checkout", "points"):
         checkout_progress.mark_done(get_session_id(), action)
+        if action == "points":
+            # 적립하겠다고 하면 전화번호를 받을 때까지 결제 수단 단계로 넘어가지 않는다(payment_method 검증 참고)
+            if value == "yes":
+                checkout_progress.mark_done(get_session_id(), "points_yes")
+            else:
+                checkout_progress.unmark(get_session_id(), "points_yes")
     elif action == "points_phone":
+        checkout_progress.mark_done(get_session_id(), "points_phone")
         # points_phone은 고객이 "적립할게"라고 답한 뒤에만 도달하는 단계다. 중간의 points(yes)
         # 툴 호출 자체가 가끔 생략돼도(재현되는 신뢰도 문제) 여기 도달했다는 사실 자체가 포인트
         # 질문에 실제로 답했다는 증거이므로, points 완료로도 함께 기록해 결제수단 단계가

@@ -22,6 +22,8 @@ def build_agent_executor() -> AgentExecutor:
         model=model,
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=float(os.getenv("OPENAI_LLM_TIMEOUT", "30")),   # 기본 10분이면 멈춘 응답을 손님이 끝없이 기다린다
+        max_retries=int(os.getenv("OPENAI_LLM_MAX_RETRIES", "1")),
     )
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(catalog=render_catalog_for_prompt())

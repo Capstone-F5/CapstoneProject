@@ -19,6 +19,15 @@ export const GATE_DEFAULTS = {
   maxNoiseFloor: 0.06,      // 소음 바닥 상한 (큰 발화가 바닥값을 오염시키지 않도록 제한)
   floorAlpha: 0.15,         // 배경 소음 바닥 지수이동평균(EMA) 갱신 계수
   marginWindowCount: 10,    // 선행(preSpeechPad)/후행(redemption) 패딩에서 추출할 주변 배경 윈도우 수(각 300ms)
+  // 충격음으로 걸러질 뻔한 짧은 소리 중 "철회", "응" 같은 짧은 단어일 가능성이 큰 것을 구제한다(2026-10-26 로그:
+  // peakRms 0.035·snrRatio 6·localCrest 7.9인 1.9초 클립이 activeMs 90ms라서 impulse_noise로 버려짐).
+  // ⚠️ 기본값 꺼짐: 박수(30ms, peak 0.11, snr 5.8)도 같은 조건을 통과해서 현재 지표로는 짧은 단어와 구분되지 않는다.
+  // 1건짜리 로그로 켜면 이전에 막은 충격음이 다시 들어오므로, gate_drop 로그가 더 쌓인 뒤 impulseRescue: true로 시험할 것.
+  impulseRescue: false,
+  impulseRescueMinActiveMs: 60,   // 최소 이만큼은 유효 음성 에너지가 있어야 한다
+  impulseRescuePeakRatio: 1.8,    // peakRms >= minSpeechRms * 이 값
+  impulseRescueSnrRatio: 2,       // snrRatio, localCrest >= snrMargin * 이 값 (일정한 배경 소음·음악 제외)
+  impulseRescueMaxDurationMs: 2500,
 }
 
 function clamp(v, lo, hi) {
@@ -142,6 +151,13 @@ export class AudioEnergyGate {
 
     // 판정 1: 짧은 충격음(박수, 식기 달그락, 기침 등 — 순간 피크는 높으나 지속시간이 minActiveMs 미만)
     if (peakRms >= o.minSpeechRms && activeMs > 0 && activeMs < o.minActiveMs) {
+      const looksLikeShortWord = o.impulseRescue
+        && activeMs >= o.impulseRescueMinActiveMs
+        && durationMs <= o.impulseRescueMaxDurationMs
+        && peakRms >= o.minSpeechRms * o.impulseRescuePeakRatio
+        && snrRatio >= o.snrMargin * o.impulseRescueSnrRatio
+        && localCrest >= o.snrMargin * o.impulseRescueSnrRatio
+      if (looksLikeShortWord) return { pass: true, reason: 'short_candidate', metrics }
       return { pass: false, reason: 'impulse_noise', metrics }
     }
 
