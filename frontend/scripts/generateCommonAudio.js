@@ -32,6 +32,7 @@ const PHRASES = {
   'select_menu_order.mp3':  '주문하실 메뉴를 선택해 주세요.',
   'confirm_order_type.mp3': '식사 장소를 확인해 주세요.',
   'ask_points.mp3':         '포인트를 적립하시겠습니까?',
+  'say_phone.mp3':          '음성으로 번호를 불러주세요.',
   'select_payment.mp3':     '결제 수단을 선택해 주세요.',
   // 잘 못 알아들었을 때의 고정 응답(backend/ai_modules/llm/guards.py의 NOISE_REPLY["ko"]와 같은 문장이어야 한다)
   'not_heard.mp3':          '잘 못 들었어요. 다시 한번 말씀해 주세요.',

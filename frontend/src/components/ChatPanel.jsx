@@ -105,7 +105,7 @@ function quickReplyNote(handled, quick, screen) {
     case 'points_no':
       return '알겠습니다. 포인트 적립 없이 진행하겠습니다. 포인트 질문은 끝났고, 이제 결제 수단을 고르실 차례입니다. 결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?'
     case 'points_yes':
-      return '포인트를 적립하겠습니다. 전화번호를 말씀해 주세요.'
+      return '포인트를 적립하겠습니다. 음성으로 번호를 불러주세요. (화면이 번호 입력창을 열고 이 안내를 음성으로 말했습니다)'
     case 'order_type_confirm':
       return '식사 장소를 확인했습니다. 포인트 적립하시겠어요?'
     case 'order_type_cancel':

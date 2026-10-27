@@ -40,6 +40,10 @@ const PAYMENT_IMAGES = {
   payWait:  null, // 간편결제 대기 화면
 }
 
+// 포인트 적립 "예" 뒤 번호 입력창이 열릴 때 음성 모드에서 하는 안내(ttsCache.js COMMON_PHRASES와 같은 문장 — 사전 녹음 say_phone.mp3).
+// 빠른 응답("네")은 LLM을 거치지 않아 아무도 말하지 않아서 입력창만 뜨고 묵음이었다.
+const PHONE_GUIDE_TTS = '음성으로 번호를 불러주세요'
+
 const LIST_PX   = 16
 const CARD_PX   = 16
 const HDR_PX    = LIST_PX + CARD_PX
@@ -222,7 +226,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           // 답변되지 않은 줄 알고 결제 수단을 말할 때마다 포인트를 다시 묻는다(무한 반복).
           if (pointPromptOpenRef.current) {
             setShowPointPrompt(false)
-            if (a.value === 'yes') { setShowPointsPopup(true); return 'points_yes' }
+            if (a.value === 'yes') { setShowPointsPopup(true); playTTS(PHONE_GUIDE_TTS); return 'points_yes' }
             openPayment(); playTTS('결제 수단을 선택해 주세요')
             return 'points_no'
           }
@@ -503,7 +507,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             <ModalBtn label={t('no')} color="#d4d4d4" textColor="#555"
               onClick={() => { setShowPointPrompt(false); openPayment() }} />
             <ModalBtn label={t('yes')} color="#F5B800" textColor="#1a1a1a"
-              onClick={() => { setShowPointPrompt(false); setShowPointsPopup(true) }} />
+              onClick={() => { setShowPointPrompt(false); setShowPointsPopup(true); if (chatOpen) playTTS(PHONE_GUIDE_TTS) }} />
           </div>
         </ModalBase>
       )}
