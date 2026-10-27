@@ -263,6 +263,68 @@ class PointsPhoneInventedTests(unittest.TestCase):
         self.assertNotIn("오류", out)
 
 
+class UpdateNoopTests(unittest.TestCase):
+    """2026-10-26 사용자 세션: 같은 줄을 같은 옵션으로 수정하고 "비건 버거 세트로 변경했습니다"라고 거짓 안내했다."""
+
+    def setUp(self):
+        C.reset_actions()
+        C.reset_guards()
+        os.environ["GUARD_MODE"] = "enforce"
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("noop-test")
+        from ai_modules.llm import cart_history
+        cart_history.reset("noop-test")   # 앞 테스트가 수량을 늘려 "이번 턴에 담은 줄"로 기록해 두면 다음 테스트가 다른 가드에 막힌다
+        self.line = {"cart_item_id": "c1", "menu_item_id": "m1", "name_ko": "그릴드 비프 버거", "quantity": 1,
+                     "selected_options": [{"option_id": "u", "name": "세트 업그레이드"}, {"option_id": "s", "name": "감자튀김"},
+                                          {"option_id": "d", "name": "콜라"}]}
+        self.patched = []
+        cart = {"items": [self.line]}
+        menu_item = {"id": "m1", "name_ko": "그릴드 비프 버거", "options": [
+            {"id": "u", "option_group": "SET_UPGRADE", "name_ko": "세트 업그레이드"},
+            {"id": "s", "option_group": "SET_SIDE", "name_ko": "감자튀김"}, {"id": "s2", "option_group": "SET_SIDE", "name_ko": "치즈스틱"},
+            {"id": "d", "option_group": "SET_DRINK", "name_ko": "콜라"}]}
+        patched = self.patched
+
+        def fake_run(coro):
+            name = coro.cr_code.co_name
+            coro.close()
+            if name == "patch_cart_item":
+                patched.append(1)
+                return None
+            return {"get_cart": cart, "fetch_menu_item_by_id": menu_item, "fetch_menu_items": MENU}[name]
+
+        async def get_cart(session_id): return None
+        async def fetch_menu_item_by_id(i): return None
+        async def fetch_menu_items(): return None
+        async def patch_cart_item(*a): return None
+        self._saved = (T._run, T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item)
+        T._run = fake_run
+        (T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item) = (
+            get_cart, fetch_menu_item_by_id, fetch_menu_items, patch_cart_item)
+
+    def tearDown(self):
+        (T._run, T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item) = self._saved
+
+    def _update(self, user, **kw):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.update_item_options.func(cart_item_id="c1", **kw)
+
+    def test_same_options_update_is_rejected_without_patch_or_action(self):
+        out = self._update("그것만 비건버거 세트로 바꿔달라니까", item_type="set", side="감자튀김", drink="콜라")
+        self.assertIn("오류", out)
+        self.assertIn("remove_item", out)
+        self.assertEqual((self.patched, C.get_actions()), ([], []))
+        self.assertTrue(any(h["rule"] == "update_noop" for h in C.get_guard_hits()))
+
+    def test_real_changes_still_go_through(self):
+        out = self._update("사이드를 치즈스틱으로 바꿔줘", side="치즈스틱")
+        self.assertNotIn("오류", out)
+        self.assertEqual(len(self.patched), 1)
+        out = self._update("세 개로 바꿔줘", quantity=3)
+        self.assertNotIn("오류", out)
+
+
 class PhoneFallbackTests(unittest.TestCase):
     """음성 검증: 번호를 말했는데 모델이 말로만 "확인했습니다"라 하고 points_phone을 안 보냄(pay_phone 5/19)."""
 

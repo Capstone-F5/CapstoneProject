@@ -891,6 +891,20 @@ REGRESSION_SCENARIOS: list[Scenario] = [
         say("F버거 단품 하나 줘", cart=[line("새우 버거", 1), line("F 버거", 1)]),
         say("F버거 5개로 바꿔줘", cart=[line("새우 버거", 1), line("F 버거", 5)], lines=2),
     ]),
+    Scenario("G14", "회귀", "10-26 사용자 세션: 세트 버거를 다른 버거 세트로 — 같은 줄을 수정만 하고 '변경했습니다'라고 거짓 안내", [
+        state(M, D),
+        say("그릴드비프버거 하나 줘", no_actions=["add_item"]),
+        say("세트로 줘. 감자튀김에 콜라.", cart=[line("그릴드 비프 버거", 1, set=True, has=["감자튀김", "콜라"])]),
+        say("그것만 비건버거 세트로 바꿔달라니까.",
+            cart=[line("비건 버거", 1, set=True, has=["감자튀김", "콜라"])], lines=1),
+    ]),
+    Scenario("G15", "회귀", "세트→세트 교체(대상을 말한 형태) + 다른 줄 유지", [
+        state(M, D),
+        say("불고기버거 세트 하나, 사이드는 치즈스틱 음료는 생수로 줘", cart=[line("불고기 버거", 1, set=True)]),
+        say("콜라 한 잔 줘", cart=[line("불고기 버거", 1, set=True), line("콜라", 1)]),
+        say("불고기버거 세트 말고 비건버거 세트로 바꿔줘",
+            cart=[line("비건 버거", 1, set=True, has=["치즈스틱", "생수"]), line("콜라", 1)], lines=2),
+    ]),
     Scenario("G13", "회귀", "번호를 말했는데 points_phone 액션이 빠짐", [
         *_begin(),
         say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),

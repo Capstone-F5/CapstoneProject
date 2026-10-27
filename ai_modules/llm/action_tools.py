@@ -858,6 +858,20 @@ def update_item_options(
 
         payload["selected_options"] = kept + new_selected
 
+    # 바뀌는 내용이 없는 수정은 거절한다. 메뉴(버거 종류) 자체는 이 도구로 바꿀 수 없는데, 모델이 "비건 버거 세트로 바꿔줘"에
+    # 같은 줄을 같은 옵션으로 반복 수정하고 "변경했습니다"라고 거짓 안내를 했다(2026-10-26 11:28~11:31 실제 대화).
+    current_ids = sorted(s["option_id"] for s in cart_item.get("selected_options", []))
+    new_ids = sorted(s["option_id"] for s in payload["selected_options"]) if "selected_options" in payload else current_ids
+    if (new_ids == current_ids and payload.get("quantity") in (None, cart_item.get("quantity"))
+            and ("special_note" not in payload or payload["special_note"] == cart_item.get("special_note"))):
+        msg = guards.block(
+            "update_noop", f"{cart_item.get('name_ko')} 줄을 같은 옵션·수량으로 수정하려는 호출",
+            f"오류: '{cart_item.get('name_ko')}' 줄은 바뀌는 내용이 없습니다(옵션·수량이 이미 같음). 메뉴(버거 종류) 자체는 "
+            "update_item_options로 바꿀 수 없습니다. 다른 메뉴로 바꾸려면 remove_item으로 지운 뒤 add_item으로 새 메뉴를 "
+            "담으세요(세트면 사이드·음료도 함께). 바뀐 것이 없다면 변경했다고 말하지 마세요.")
+        if msg:
+            return msg
+
     try:
         _run(api_client.patch_cart_item(session_id, cart_item_id, payload))
     except Exception as e:

@@ -49,6 +49,11 @@ class ParseCommands(unittest.TestCase):
             "아니 치즈버거 단품 말고 데리버거 단품으로 바꿔줘": "replace",
             "아 불고기버거 단품 취소하고 새우버거 단품으로 줘": "replace",
             "치즈버거 단품 대신 불고기버거 단품 두 개로 줘": "replace",
+            # 2026-10-26 사용자 세션: 세트 버거를 다른 버거 세트로 — 모델이 같은 줄을 같은 옵션으로 수정하고 "변경했습니다"라고 거짓 안내
+            "불고기버거 세트 말고 새우버거 세트로 바꿔줘": "replace",
+            "불고기버거 세트 말고 새우버거로 바꿔줘": "replace",
+            "그것만 새우버거 세트로 바꿔달라니까.": "replace",
+            "새우버거 세트로 바꿔줘": "replace",
             "치즈버거 세트 5개로 바꿔줘": "set_qty",
             "치즈스틱 5개로 바꿔줘": "set_qty",
             "불고기버거 단품 3개로 바꿔줘": "set_qty",
@@ -62,7 +67,8 @@ class ParseCommands(unittest.TestCase):
                      # 교체·수량 변경으로 오인하면 안 되는 말
                      "양파 빼고 치즈버거 단품 줘", "치즈버거 단품 말고 세트로 바꿔줘", "치즈버거 하나 더 줘", "치즈버거 단품 말고 얼마예요?",
                      "치즈버거 말고 데리버거 말고 새우버거 단품으로 줘",
-                     "치즈버거 단품 말고 데리버거 세트 사이드는 치즈스틱 음료는 콜라로 줘"]:
+                     "치즈버거 단품 말고 데리버거 세트 사이드는 치즈스틱 음료는 콜라로 줘",
+                     "햄버거만 다른 걸로 바꿔줘", "새우버거 세트에 감자튀김 콜라로 하나 줘", "새우버거 세트 사이드를 콜라로 바꿔줘 말고"]:
             self.assertIsNone(kind(text), text)
 
     def test_all_fixed_scenarios_have_no_false_positive(self):
@@ -154,6 +160,55 @@ class ExecuteCommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("데리버거 대신 새우 버거 단품 2개", out)
         self.assertEqual(sorted((l["name_ko"], l["quantity"]) for l in api.lines), [("새우 버거", 2), ("콜라(M)", 1)])
         self.assertEqual([a["type"] for a in self.ctx.get_actions()], ["remove_item", "add_item"])
+
+    @staticmethod
+    def set_line(cid, name, side="감자튀김", drink="콜라"):
+        item = mitem(name)
+        opts = [{"option_id": o["id"], "name": o["name_ko"]} for o in item["options"]
+                if (o["option_group"] == "SET_UPGRADE") or (o["option_group"] == "SET_SIDE" and o["name_ko"] == side)
+                or (o["option_group"] == "SET_DRINK" and o["name_ko"] == drink)]
+        return {"cart_item_id": cid, "menu_item_id": item["id"], "name_ko": name, "quantity": 1, "selected_options": opts}
+
+    async def test_set_to_set_replace_carries_side_and_drink(self):
+        """사용자 세션 11:28~11:31: 그릴드 비프 버거 세트를 비건 버거 세트로 — 사이드·음료는 그대로 옮기고 새 줄로 바꾼다."""
+        api = FakeApi([self.set_line("c1", "불고기 버거", "치즈스틱", "생수")])
+        out = await self.run_cmd(api, "불고기버거 세트 말고 새우버거 세트로 바꿔줘")
+        self.assertIn("불고기 버거 세트 대신 새우 버거 세트 1개", out)
+        self.assertIn("사이드는 치즈스틱, 음료는 생수 그대로", out)
+        self.assertEqual([l["name_ko"] for l in api.lines], ["새우 버거"])
+        names = sorted(o["name"] for o in api.lines[0]["selected_options"])
+        self.assertEqual(names, sorted(["세트 업그레이드", "치즈스틱", "생수"]))
+        self.assertEqual([a["type"] for a in self.ctx.get_actions()], ["remove_item", "add_item"])
+        self.assertTrue(self.ctx.get_actions()[-1]["upgrade_to_set"])
+
+    async def test_implicit_target_uses_the_only_burger_line(self):
+        api = FakeApi([self.set_line("c1", "불고기 버거"), line("c2", "콜라(M)", 2)])
+        out = await self.run_cmd(api, "그것만 새우버거 세트로 바꿔달라니까.")
+        self.assertIn("새우 버거 세트 1개", out)
+        self.assertEqual(sorted(l["name_ko"] for l in api.lines), ["새우 버거", "콜라(M)"])
+        self.assertEqual(next(l for l in api.lines if l["name_ko"] == "콜라(M)")["quantity"], 2)   # 다른 줄은 그대로
+
+    async def test_implicit_target_needs_exactly_one_burger_line(self):
+        api = FakeApi([self.set_line("c1", "불고기 버거"), line("c2", "데리버거", 1)])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))
+        self.assertEqual(api.calls, [])
+
+    async def test_same_burger_or_unmovable_options_go_to_llm(self):
+        api = FakeApi([self.set_line("c1", "새우 버거")])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 같은 버거(단품→세트 변경 요청 등)
+        api = FakeApi([line("c1", "불고기 버거", 1)])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 단품 → 세트는 사이드·음료를 정해야 한다
+        api = FakeApi([self.set_line("c1", "불고기 버거")])
+        api.lines[0]["selected_options"].append({"option_id": "x", "name": "양파 제외"})
+        orig = api.fetch_menu_item_by_id
+
+        async def with_exclude(item_id):   # 시험용 메뉴에는 재료 제외 옵션이 없어서 하나 붙여 준다
+            item = dict(await orig(item_id))
+            item["options"] = item["options"] + [{"id": "x", "option_group": "EXCLUDE", "name_ko": "양파 제외"}]
+            return item
+        api.fetch_menu_item_by_id = with_exclude
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 재료 제외가 있으면 되묻는다
+        self.assertEqual(api.calls, [])
 
     async def test_replace_quantity_spoken_wins(self):
         api = FakeApi([line("c1", "치즈 버거", 1)])
