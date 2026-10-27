@@ -11,6 +11,7 @@ import {
 import { AudioEnergyGate, installMicAgcGuard } from '../../utils/audioGate.js'
 import { MotionDetector } from '../../utils/motionDetector.js'
 import { _palmSize } from '../../hooks/useGesture.js'
+import { normalizeLimits, setAudioSpeed, SPEED_BOUNDS } from '../../utils/ttsSpeed.js'
 
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -571,6 +572,28 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     setDirty(true)
   }
 
+  // 음성 배속: 기본·최소·최대가 서로 어긋나지 않게 보정한다(최소를 올리면 기본도 따라 올라가고, 최대를 내리면 기본도 따라 내려간다)
+  const updateTts = (patch) => {
+    setSettings(prev => {
+      const lim = normalizeLimits({ ...prev.tts, ...patch })
+      const next = { ...prev, tts: { default_speed: lim.def, min_speed: lim.min, max_speed: lim.max } }
+      applyKioskSettingsToRuntime(next, true)
+      return next
+    })
+    setDirty(true)
+  }
+
+  // 미리 듣기: 사전 녹음 안내 문구를 지정한 배속으로 재생한다(대화 음성과 같은 방식으로 배속만 바꾼다). 다시 누르면 처음부터.
+  const previewAudioRef = useRef(null)
+  const previewSpeed = (speed) => {
+    try { previewAudioRef.current?.pause() } catch { /* 이미 끝난 소리 */ }
+    const audio = new Audio('/audio/common/select_payment.mp3')
+    previewAudioRef.current = audio
+    setAudioSpeed(audio, speed)
+    audio.play().catch(() => showToast('미리 듣기를 재생하지 못했습니다. 화면을 한 번 누른 뒤 다시 시도해 주세요.', 'error'))
+  }
+  useEffect(() => () => { try { previewAudioRef.current?.pause() } catch { /* 정리 */ } }, [])
+
   const updateApproach = (patch) => {
     setSettings(prev => {
       const next = {
@@ -1064,7 +1087,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
     return <div className="loading-text">설정을 불러오는 중…</div>
   }
 
-  const { mic, approach, gesture = DEFAULT_KIOSK_SETTINGS.gesture } = settings
+  const { mic, approach, gesture = DEFAULT_KIOSK_SETTINGS.gesture, tts = DEFAULT_KIOSK_SETTINGS.tts } = settings
   const rmsBarPct = Math.min(100, Math.round((liveRms / 0.08) * 100))
   const thresholdMarkerPct = Math.min(100, Math.round((mic.min_speech_rms / 0.08) * 100))
   const palmSizeBarPct = Math.min(100, Math.round(((gestureLive.palmSize || 0) / 0.16) * 100))
@@ -1314,6 +1337,60 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
             onChange={v => updateMic({ barge_in_enabled: v })}
             isLast
           />
+        </div>
+
+        {/* 1-2. 음성 안내 속도 (LLM 대화 음성) */}
+        <div className="card">
+          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>음성 대화 속도</div>
+          <div style={{ fontSize: 13, color: '#888', marginBottom: 16 }}>
+            키오스크가 손님과 대화하며 말하는 음성의 배속입니다. 손님은 음성 대화 창에서 아래 최소~최대 범위 안으로 직접 조절할 수 있고,
+            새 손님은 기본 배속으로 시작합니다. 화면 안내 음성·주문번호 낭독은 해당하지 않습니다.
+          </div>
+
+          <SliderRow
+            label="기본 배속"
+            hint="새 손님이 시작하는 속도입니다. 최소~최대 범위 안에서만 정할 수 있습니다."
+            value={tts.default_speed}
+            min={tts.min_speed}
+            max={tts.max_speed}
+            step={0.1}
+            formatValue={v => `${Number(v).toFixed(1)}배속`}
+            onChange={v => updateTts({ default_speed: v })}
+          />
+          <SliderRow
+            label="최소 배속 (가장 느리게)"
+            hint={`손님이 낮출 수 있는 가장 느린 속도입니다. ${SPEED_BOUNDS.minLo.toFixed(1)}~${SPEED_BOUNDS.minHi.toFixed(1)}배속.`}
+            value={tts.min_speed}
+            min={SPEED_BOUNDS.minLo}
+            max={SPEED_BOUNDS.minHi}
+            step={0.1}
+            formatValue={v => `${Number(v).toFixed(1)}배속`}
+            onChange={v => updateTts({ min_speed: v })}
+          />
+          <SliderRow
+            label="최대 배속 (가장 빠르게)"
+            hint={`손님이 올릴 수 있는 가장 빠른 속도입니다. ${SPEED_BOUNDS.maxLo.toFixed(1)}~${SPEED_BOUNDS.maxHi.toFixed(1)}배속. 1.5배속을 넘기면 알아듣기 어려울 수 있습니다.`}
+            value={tts.max_speed}
+            min={SPEED_BOUNDS.maxLo}
+            max={SPEED_BOUNDS.maxHi}
+            step={0.1}
+            formatValue={v => `${Number(v).toFixed(1)}배속`}
+            onChange={v => updateTts({ max_speed: v })}
+            isLast
+          />
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
+            <span style={{ fontSize: 13, color: '#555', fontWeight: 500 }}>미리 듣기</span>
+            <button type="button" className="btn-outline btn-sm" onClick={() => previewSpeed(tts.min_speed)}>
+              최소 ({Number(tts.min_speed).toFixed(1)}배속)
+            </button>
+            <button type="button" className="btn-outline btn-sm" onClick={() => previewSpeed(tts.default_speed)}>
+              기본 ({Number(tts.default_speed).toFixed(1)}배속)
+            </button>
+            <button type="button" className="btn-outline btn-sm" onClick={() => previewSpeed(tts.max_speed)}>
+              최대 ({Number(tts.max_speed).toFixed(1)}배속)
+            </button>
+          </div>
         </div>
 
         {/* 2. 접근 감지 설정 */}

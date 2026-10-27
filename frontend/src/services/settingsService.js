@@ -22,6 +22,12 @@ export const DEFAULT_KIOSK_SETTINGS = {
     domain_guard_enabled: true,
     barge_in_enabled: false,
   },
+  // LLM 대화 음성 배속 — 기본/최소/최대 (utils/ttsSpeed.js, 백엔드 kiosk_settings.py와 같은 범위)
+  tts: {
+    default_speed: 1.0,
+    min_speed: 0.7,
+    max_speed: 1.5,
+  },
   approach: {
     preset: 'standard',
     enabled: true,
@@ -82,6 +88,7 @@ export function applyKioskSettingsToRuntime(settings, broadcast = true) {
     const merged = {
       debug_mode: Boolean(settings.debug_mode ?? DEFAULT_KIOSK_SETTINGS.debug_mode),
       mic: { ...DEFAULT_KIOSK_SETTINGS.mic, ...(settings.mic || {}) },
+      tts: { ...DEFAULT_KIOSK_SETTINGS.tts, ...(settings.tts || {}) },
       approach: { ...DEFAULT_KIOSK_SETTINGS.approach, ...(settings.approach || {}) },
       gesture: { ...DEFAULT_KIOSK_SETTINGS.gesture, ...(settings.gesture || {}) },
     }
@@ -130,6 +137,7 @@ export function loadCachedKioskSettings() {
     return {
       debug_mode: Boolean(parsed.debug_mode ?? DEFAULT_KIOSK_SETTINGS.debug_mode),
       mic: { ...DEFAULT_KIOSK_SETTINGS.mic, ...(parsed.mic || {}) },
+      tts: { ...DEFAULT_KIOSK_SETTINGS.tts, ...(parsed.tts || {}) },
       approach: { ...DEFAULT_KIOSK_SETTINGS.approach, ...(parsed.approach || {}) },
       gesture: { ...DEFAULT_KIOSK_SETTINGS.gesture, ...(parsed.gesture || {}) },
     }

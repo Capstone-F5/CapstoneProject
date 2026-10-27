@@ -6,6 +6,8 @@ import { getCachedAudio } from '../utils/ttsCache'
 import { stopTTS } from '../utils/tts'
 import { isBargeInEnabled, useBargeInEnabled, startBargeWatch, tapOutput } from '../utils/bargeIn'
 import { classifyQuickReply } from '../utils/quickReply'
+import { applySpeed, resetTtsSpeed, subscribeTtsSpeed } from '../utils/ttsSpeed'
+import SpeedControl from './SpeedControl'
 import { AudioEnergyGate, installMicAgcGuard, loadGateOverrides } from '../utils/audioGate'
 
 // MicVAD 초기화 전에 브라우저 자동 이득 제어(AGC)가 원거리 소음·음악을 증폭하지 못하도록 가드 설치
@@ -444,6 +446,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const cached = await getCachedAudio(text)
     if (cached && activeRef.current) {
       audioRef.current = cached
+      applySpeed(cached)  // 대화 음성 배속(관리자 설정 + 손님이 고른 값)
       tapOutput(cached)   // 끼어들기 ON이면 재생 소리의 크기를 분석기에 연결한다(꺼져 있으면 아무것도 안 함)
       await new Promise(resolve => {
         cached.onended = resolve
@@ -475,6 +478,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         const url   = URL.createObjectURL(blob)
         const audio = new Audio(url)
         audioRef.current = audio
+        applySpeed(audio)
         tapOutput(audio)
         await new Promise(resolve => {
           audio.onended = resolve
@@ -492,6 +496,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     audioRef.current  = audio
     const objectUrl   = URL.createObjectURL(mediaSource)
     audio.src         = objectUrl
+    applySpeed(audio)
     tapOutput(audio)
 
     await new Promise((resolve) => {
@@ -839,6 +844,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       isProcessingRef.current = false
       pendingTextRef.current = null
       clearTtsQueue()
+      resetTtsSpeed()   // 앞 손님이 고른 배속이 다음 손님에게 남지 않게 기본 배속으로
       // 새 ID를 먼저 저장해 이후 장바구니 요청과 즉시 같은 세션을 바라보게 한다.
       sessionIdRef.current = newSessionId()
       greetedRef.current = false   // 새 세션이므로 다음에 열 때 인사말을 다시 한다
@@ -854,6 +860,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     window.addEventListener('kiosk-session-reset', handleReset)
     return () => window.removeEventListener('kiosk-session-reset', handleReset)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 음성 배속이 바뀌면(손님 조작·관리자 설정 변경) 지금 읽는 중인 문장에도 바로 적용한다. 다음 문장부터는 playTts가 적용한다.
+  useEffect(() => subscribeTtsSpeed(() => { if (audioRef.current) applySpeed(audioRef.current) }), [])
 
   // ─── 렌더 ─────────────────────────────────────────────────────────────────────
 
@@ -921,11 +930,15 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         )}
       </div>
 
-      {/* 음성 인식 상태 표시 */}
+      {/* 음성 인식 상태 표시 + 음성 배속 조절(오른쪽) */}
       <div style={{
+        position: 'relative', minHeight: 62,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '8px 12px 12px', gap: 10, flexShrink: 0,
       }}>
+        <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }}>
+          <SpeedControl />
+        </div>
         {isVadErrored ? (
           <span style={{ fontSize: 12, color: '#c00' }}>
             오류: {vad.errored?.message ?? String(vad.errored)}
