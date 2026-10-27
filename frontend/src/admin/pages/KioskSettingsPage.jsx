@@ -1343,7 +1343,7 @@ export default function KioskSettingsPage({ isKioskOverlay = false, onClose }) {
         <div className="card">
           <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>음성 대화 속도</div>
           <div style={{ fontSize: 13, color: '#888', marginBottom: 16 }}>
-            키오스크가 손님과 대화하며 말하는 음성의 배속입니다. 손님은 음성 대화 창에서 아래 최소~최대 범위 안으로 직접 조절할 수 있고,
+            키오스크가 손님과 대화하며 말하는 음성의 배속입니다. 손님은 하단 컨트롤 바의 음성 배속 버튼(음성인식이 켜져 있을 때 표시)으로 아래 최소~최대 범위 안으로 직접 조절할 수 있고,
             새 손님은 기본 배속으로 시작합니다. 화면 안내 음성·주문번호 낭독은 해당하지 않습니다.
           </div>
 

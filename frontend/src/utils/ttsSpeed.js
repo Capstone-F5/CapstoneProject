@@ -2,7 +2,7 @@
 //
 // - 관리자 설정(키오스크 설정 → 음성 안내 속도): 기본 배속·최소·최대. localStorage `kioskDevSettings`의 `tts`에서 읽는다
 //   (백엔드 /api/settings/kiosk가 내려주고 settingsService.applyKioskSettingsToRuntime이 저장한다).
-// - 손님이 음성 대화 창에서 고른 배속: localStorage `kioskTtsSpeed`. 항상 [최소, 최대] 안으로 자르고, 새 손님(세션 초기화)이면 지운다.
+// - 손님이 하단 컨트롤 바(음성인식 ON일 때)에서 고른 배속: localStorage `kioskTtsSpeed`. 항상 [최소, 최대] 안으로 자르고, 새 손님(세션 초기화)이면 지운다.
 // - 소리의 높낮이는 그대로 두고 속도만 바꾼다(preservesPitch).
 // 순수 계산(clampSpeed·resolveSpeed·stepSpeed·normalizeLimits)은 DOM 없이 테스트한다(frontend/tests/ttsSpeed.test.js).
 

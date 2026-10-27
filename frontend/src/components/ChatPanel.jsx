@@ -7,7 +7,6 @@ import { stopTTS } from '../utils/tts'
 import { isBargeInEnabled, useBargeInEnabled, startBargeWatch, tapOutput } from '../utils/bargeIn'
 import { classifyQuickReply } from '../utils/quickReply'
 import { applySpeed, resetTtsSpeed, subscribeTtsSpeed } from '../utils/ttsSpeed'
-import SpeedControl from './SpeedControl'
 import { AudioEnergyGate, installMicAgcGuard, loadGateOverrides } from '../utils/audioGate'
 
 // MicVAD 초기화 전에 브라우저 자동 이득 제어(AGC)가 원거리 소음·음악을 증폭하지 못하도록 가드 설치
@@ -930,15 +929,11 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         )}
       </div>
 
-      {/* 음성 인식 상태 표시 + 음성 배속 조절(오른쪽) */}
+      {/* 음성 인식 상태 표시 (음성 배속 조절은 화면 하단 컨트롤 바에 있다 — App.jsx) */}
       <div style={{
-        position: 'relative', minHeight: 62,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '8px 12px 12px', gap: 10, flexShrink: 0,
       }}>
-        <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }}>
-          <SpeedControl />
-        </div>
         {isVadErrored ? (
           <span style={{ fontSize: 12, color: '#c00' }}>
             오류: {vad.errored?.message ?? String(vad.errored)}

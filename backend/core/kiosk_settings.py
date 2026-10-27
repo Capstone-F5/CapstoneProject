@@ -39,8 +39,8 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
     },
     "tts": {
         "default_speed": 1.0,                  # LLM 대화 음성의 기본 배속 (min_speed ~ max_speed 안). 새 손님은 이 값으로 시작
-        "min_speed": 0.7,                      # 음성 대화 창에서 손님이 낮출 수 있는 최저 배속 (0.5 ~ 1.0)
-        "max_speed": 1.5,                      # 음성 대화 창에서 손님이 올릴 수 있는 최고 배속 (1.0 ~ 2.0)
+        "min_speed": 0.7,                      # 하단 컨트롤 바에서 손님이 낮출 수 있는 최저 배속 (0.5 ~ 1.0)
+        "max_speed": 1.5,                      # 하단 컨트롤 바에서 손님이 올릴 수 있는 최고 배속 (1.0 ~ 2.0)
     },
     "approach": {
         "preset": "standard",                  # near | standard | far | custom
