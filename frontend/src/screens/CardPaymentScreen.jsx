@@ -1,3 +1,4 @@
+import Glyph from '../components/Glyph'
 export function PaymentWaitScreen({ title, total, illustration, onCancel, onComplete }) {
   return (
     <div style={{
@@ -88,7 +89,7 @@ function CardIllustration() {
             ))}
           </div>
         </div>
-        <div style={{ fontSize: 40, marginLeft: -4 }}>✋</div>
+        <div style={{ fontSize: 40, marginLeft: -4 }}><Glyph ch="✋" /></div>
       </div>
     </div>
   )

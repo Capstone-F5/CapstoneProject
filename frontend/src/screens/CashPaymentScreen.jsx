@@ -1,4 +1,5 @@
 import { PaymentWaitScreen } from './CardPaymentScreen'
+import Glyph from '../components/Glyph'
 
 function CashIllustration() {
   return (
@@ -34,7 +35,7 @@ function CashIllustration() {
               }} />
             ))}
           </div>
-          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}>✋</div>
+          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}><Glyph ch="✋" /></div>
         </div>
       </div>
     </div>

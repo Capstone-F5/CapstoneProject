@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import Glyph from '../components/Glyph'
 import Logo from '../components/Logo'
 import { playTTS } from '../utils/tts'
 import ReturnToStartDialog from '../components/ReturnToStartDialog'
@@ -390,7 +391,7 @@ export default function MenuScreen({ cart, total, addToCart, updateQty, clearCar
                   filter: active ? 'none' : 'grayscale(1) opacity(0.4)',
                   transform: active ? 'scale(1.1)' : 'scale(1)',
                   transition: 'all 0.18s',
-                }}>{cat.emoji ?? '🍽️'}</span>
+                }}><Glyph ch={cat.emoji ?? '🍽️'} /></span>
               )}
               <span style={{
                 fontSize: 'clamp(18px, 4.8vw, 22px)',
@@ -597,7 +598,7 @@ function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
           borderRadius: 9, objectFit: 'cover', flexShrink: 0,
         }} />
       ) : (
-        <span style={{ fontSize: compact ? 30 : 39, flexShrink: 0 }}>🍔</span>
+        <span style={{ fontSize: compact ? 30 : 39, flexShrink: 0 }}><Glyph ch="🍔" /></span>
       )}
 
       {/* 이름 + 옵션 */}
@@ -629,7 +630,7 @@ function MiniCartItem({ item, updateQty, chatOpen, discountedUnitPrice }) {
               fontSize: btnFs - 6, display: 'flex', alignItems: 'center',
               justifyContent: 'center', cursor: 'pointer', padding: 0, lineHeight: 1,
             }}
-          >🗑</button>
+          ><Glyph ch="🗑" /></button>
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); updateQty(item.cartId, item.qty - 1) }}
@@ -725,7 +726,7 @@ function FoodCard({ badgeNumber, item, onClick, chatOpen, discount }) {
           />
         ) : (
           <span style={{ fontSize: compact ? 'clamp(17px, 4.5vw, 25px)' : 'clamp(21px, 5.6vw, 31px)' }}>
-            {item.emoji ?? '🍔'}
+            <Glyph ch={item.emoji ?? '🍔'} />
           </span>
         )}
           {discount && (

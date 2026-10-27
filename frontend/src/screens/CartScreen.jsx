@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import Glyph from '../components/Glyph'
 import Logo from '../components/Logo'
 import { playTTS } from '../utils/tts'
 import { markCheckoutSteps } from '../services/checkoutService'
@@ -624,7 +625,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               background: '#fafafa', color: '#744032', cursor: 'pointer', marginBottom: 6,
             }}
           >
-            📷 {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
+            <Glyph ch="📷" /> {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
           </button>
           {couponInfo && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 0, marginBottom: 18 }}>
@@ -652,7 +653,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
                 ? <img src={PAYMENT_IMAGES.card} alt="신용카드 / 삼성페이"
                     style={{ width: 96, height: 60, objectFit: 'contain' }} />
                 : <div style={{ display: 'flex', gap: 6 }}>
-                    <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff">💳</PayBadge>
+                    <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff"><Glyph ch="💳" /></PayBadge>
                     <PayBadge bg="#1428A0" color="#fff" small>
                       <span style={{ fontSize: 8, fontWeight: 900, display: 'block', lineHeight: 1 }}>SAMSUNG</span>
                       <span style={{ fontSize: 11, fontWeight: 900 }}>Pay</span>
@@ -669,7 +670,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               {PAYMENT_IMAGES.cash
                 ? <img src={PAYMENT_IMAGES.cash} alt="현금"
                     style={{ width: 96, height: 60, objectFit: 'contain' }} />
-                : <PayBadge bg="#E8F5E9" color="#2e7d32">💵</PayBadge>
+                : <PayBadge bg="#E8F5E9" color="#2e7d32"><Glyph ch="💵" /></PayBadge>
               }
               <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>{t('cash')}</span>
             </button>
@@ -898,7 +899,7 @@ function CardIllustration() {
             {[0,1,2,3].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.5)' }} />)}
           </div>
         </div>
-        <div style={{ fontSize: 40, marginLeft: -4 }}>✋</div>
+        <div style={{ fontSize: 40, marginLeft: -4 }}><Glyph ch="✋" /></div>
       </div>
     </div>
   )
@@ -927,7 +928,7 @@ function CashIllustration() {
           }}>
             {[0,1].map(i => <div key={i} style={{ width: 14, height: 14, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.5)' }} />)}
           </div>
-          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}>✋</div>
+          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}><Glyph ch="✋" /></div>
         </div>
       </div>
     </div>
@@ -968,7 +969,7 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
         }}>
           {item.image
             ? <img src={item.image} alt={item.name} style={{ width: IMG_SIZE, height: IMG_SIZE, borderRadius: 10, objectFit: 'cover', display: 'block' }} />
-            : <span style={{ fontSize: 44 }}>🍔</span>
+            : <span style={{ fontSize: 44 }}><Glyph ch="🍔" /></span>
           }
           <span style={{ fontSize: 14, fontWeight: 700, color: '#333', wordBreak: 'keep-all', textAlign: 'center', width: IMG_SIZE }}>
             {item.name}{item.type === 'set' ? ` ${t('set')}` : ''}
