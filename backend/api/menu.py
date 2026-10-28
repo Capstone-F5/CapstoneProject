@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
-from dao.menu_dao import get_all_categories, get_menu_items_by_category
+from dao.menu_dao import get_all_allergens, get_all_categories, get_menu_items_by_category
 from dao import discount_dao
 from core.pricing import calculate_menu_price
-from schemas.menu_schemas import CategoryOut, MenuItemOut, MenuResponse
+from schemas.menu_schemas import AllergenOut, CategoryOut, MenuItemOut, MenuResponse
 
 router = APIRouter(prefix="/api/menu", tags=["menu"])
 
@@ -30,6 +30,11 @@ async def get_menu(
         categories=[CategoryOut.model_validate(c) for c in categories],
         menu_items=menu_items,
     )
+
+@router.get("/allergens", response_model=list[AllergenOut])
+async def list_allergens(db: AsyncSession = Depends(get_session)):
+    """알레르기 유발물질 마스터(allergens 테이블). 음성 안내가 성분 이름을 DB 기준으로 말하는 데 쓴다."""
+    return [AllergenOut.model_validate(a) for a in await get_all_allergens(db)]
 
 @router.get("/items/{item_id}", response_model=MenuItemOut)
 async def get_menu_item(item_id: str, db: AsyncSession = Depends(get_session)):

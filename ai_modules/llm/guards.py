@@ -42,6 +42,8 @@ _STT_FIXES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"내장(?=\s*에서\s*(?:먹|드|식사|할|해|줘|주문))"), "매장"),
     # "매장 식사로 할게요" → "내장 식사로 할게요", "매장이요" → "내장이요"
     (re.compile(r"내장(?=\s*(?:식사|이요|으로\s*(?:할|해|줘|먹)))"), "매장"),
+    # "매장에서 먹을게"가 "대전에서 먹을게"로 들어오는 경우(2026-10-26 로그). 뒤에 식사 어휘가 올 때만.
+    (re.compile(r"대전(?=\s*에서\s*(?:먹|드|식사))"), "매장"),
     # "결제"를 "결재"로 받아 적는 흔한 오타. 키오스크에서 "결재"는 결제 말고는 뜻이 없다. 이대로면 결제 의도로 인식되지 않아
     # "결재할게요"가 결제로 이어지지 않는다(2026-10-04 점검: _CHECKOUT_INTENT가 "결재"를 모름).
     (re.compile(r"결재"), "결제"),
@@ -56,6 +58,8 @@ _STT_FIXES: list[tuple[re.Pattern, str]] = [
     # 의문사("어디로죠", "언제로죠", "누구로죠")는 제외하고 한글/숫자 뒤의 "(으)로죠"가 절·문장 끝에 올 때 "(으)로 줘"로 교정한다.
     (re.compile(r"(?<!어디)(?<!언제)(?<!누구)(?<=[가-힣0-9])(으로|로)\s*죠(?=[.,!?~\s]|$)"), r"\1 줘"),
     # "결제할게"를 "설치할게"로 받아 적는 오인식(실제 로그: "설치할게." 직후 "결제할게." 재발화)
+    # "적립할게"를 "정립할게"로 받아 적는 오인식(2026-10-13 로그). 포인트 적립 흐름이 시작되지 않던 원인.
+    (re.compile(r"(?<![가-힣])정립(?=\s*(?:할게|할래|해\s*줘|해줘|하겠|할께|하고\s*싶|부탁|해\s*주세요|해주세요))"), "적립"),
     (re.compile(r"(?<![가-힣])설치(?=\s*(?:할게|할래|해\s*줘|해줘|하겠|할게요|해주세요|[.,!?~]|$))"), "결제"),
 ]
 
@@ -162,6 +166,19 @@ def has_remove_intent(text: str) -> bool:
     return bool(_REMOVE_INTENT.search(text or ""))
 
 
+_PURE_REMOVE = re.compile(r"빼|삭제|지워|지우|없애|제거|취소|그만|안\s*할|안할|필요\s*없|됐")
+_REPLACE_WORDS = re.compile(r"말고|대신|아니고|아니라")
+
+
+def has_pure_remove_intent(text: str) -> bool:
+    """삭제·취소를 직접 말했는가. has_remove_intent는 "바꿔줘/변경"까지 포함해 "F버거 세트 5개로 바꿔줘"도 삭제 의사로 읽는다."""
+    return bool(_PURE_REMOVE.search(text or ""))
+
+
+def has_replace_words(text: str) -> bool:
+    return bool(_REPLACE_WORDS.search(text or ""))
+
+
 def is_refusal_only(text: str) -> bool:
     """"아니", "아니요", "없어요", "됐어요", "그만"처럼 다른 메뉴나 동작 언급 없이 거절·종료만 답한 발화인가."""
     return bool(_REFUSAL_ONLY.match((text or "").strip()))
@@ -207,17 +224,21 @@ _CLAIM_ADD = re.compile(r"담았(?:습니다|어요|죠)|추가했(?:습니다|�
 _CLAIM_REMOVE = re.compile(r"삭제했(?:습니다|어요)|삭제되었(?:습니다|어요)|뺐(?:습니다|어요)|제거했(?:습니다|어요)|취소했(?:습니다|어요)|취소되었(?:습니다|어요)|지웠(?:습니다|어요)")
 _CLAIM_CHANGE = re.compile(r"변경했(?:습니다|어요)|변경되었(?:습니다|어요)|바꿨(?:습니다|어요)|바꿔\s*드렸")
 _CLAIM_ORDER_COMPLETE = re.compile(r"(?:주문|결제)이\s*완료되었(?:습니다|어요)")
+# "전화번호를 입력/확인했습니다"라고 하는데 points_phone 액션이 없는 경우(음성 검증: pay_phone 5/19) — 화면은 번호를 못 받았다
+_CLAIM_PHONE = re.compile(r"전화번호[^.?!]{0,20}(?:입력|확인|저장|적립)(?:했|되었|이\s*완료)")
 
 _FULFILL = {
     "add": {"add_item", "update_item"},
     "remove": {"remove_item", "clear_cart", "update_item"},
     "change": None,   # 변경 계열은 종류가 많아(옵션·수량·결제수단·주문유형·언어 …) 어떤 액션이든 있으면 이행으로 본다
+    "phone": {"points_phone"},
 }
 _UNFULFILLED = {
     "add": "죄송합니다, 아직 장바구니에 담지 못했어요. 메뉴를 한 번 더 말씀해 주세요.",
     "remove": "죄송합니다, 아직 장바구니에서 빼지 못했어요. 어떤 메뉴인지 한 번 더 말씀해 주세요.",
     "change": "죄송합니다, 아직 변경하지 못했어요. 어떻게 바꿀지 한 번 더 말씀해 주세요.",
     "order_complete": "더 추가하실 메뉴가 없으시면 결제를 도와드릴까요?",
+    "phone": "전화번호를 아직 받지 못했어요. 번호를 처음부터 다시 말씀해 주세요.",
 }
 
 
@@ -237,10 +258,32 @@ def correct_reply(output: str, action_types: list[str]) -> str | None:
     if _CLAIM_ORDER_COMPLETE.search(output):
         return _UNFULFILLED["order_complete"]
     have = set(action_types)
-    for kind, pattern in (("add", _CLAIM_ADD), ("remove", _CLAIM_REMOVE), ("change", _CLAIM_CHANGE)):
+    for kind, pattern in (("add", _CLAIM_ADD), ("remove", _CLAIM_REMOVE), ("change", _CLAIM_CHANGE), ("phone", _CLAIM_PHONE)):
         fulfill = _FULFILL[kind]
         if pattern.search(output) and not (have if fulfill is None else have & fulfill):
             return _UNFULFILLED[kind]
+    return None
+
+
+_ALREADY_THERE = {"cart": "장바구니", "menu": "메뉴", "payment": "결제"}
+_MOVED_RE = re.compile(r"^(장바구니|메뉴|결제) 화면(?:으로|에) 이동(?:했습니다|합니다|할게요|했어요)[.!]?\s*")
+_START_BLOCKED_REPLY_RE = re.compile(r"담긴 메뉴가 없|장바구니|결제(?:를)? 진행|결제할까요|결제하시겠")
+START_SCREEN_REPLY = "주문을 시작할까요? 매장에서 드실지, 포장하실지 말씀해 주세요."
+
+
+def fix_screen_reply(output: str, screen: str | None, action_types: list[str]) -> str | None:
+    """화면 문맥과 안 맞는 응답을 바로잡는다. 맞는 게 없으면 None.
+    - 이미 그 화면인데 "~화면으로 이동했습니다"라고 하면 "이미 ~ 화면이에요."로 바꾼다(2026-10-26 cart 화면에서 결제페이지 요청).
+    - 시작 화면에서 주문 유형 선택 없이 결제·장바구니 안내가 나오면 주문 시작 안내로 바꾼다(오인식 "좋은 시작!" → "결제 진행할까요?")."""
+    if not output or not has_hangul(output):
+        return None
+    if screen in _ALREADY_THERE:
+        m = _MOVED_RE.match(output)
+        if m and m.group(1) == _ALREADY_THERE[screen] and "navigate" not in action_types:
+            rest = output[m.end():].strip()
+            return f"이미 {_ALREADY_THERE[screen]} 화면이에요." + (f" {rest}" if rest else "")
+    if screen == "start" and "order_type" not in action_types and _START_BLOCKED_REPLY_RE.search(output):
+        return START_SCREEN_REPLY
     return None
 
 
@@ -253,7 +296,7 @@ _DOMAIN = re.compile(
     r"(?<![가-힣])콘(?=\s*(?:샐러드|하나|한|두|세|\d+|개|추가|주|달|이요|요|[.,!?~]|$))|"
     r"(?<![가-힣])물(?=\s*(?:하나|한|두|세|네|다섯|\d+|잔|병|개|주|달|더|빼|말고|로|으로|이요|요|은|는|을|를|도|[.,!?~]|$))|"
     r"불고기|새우|비건|치킨|게살|비프|모짜렐라|데리|더블|F\s*버거|에프\s*버거|양파|피클|양상추|소스|패티|토마토|"
-    r"주문|시작|장바구니|카트|담아|담을|담기|추가|삭제|취소|지워|지우|바꿔|바꾸|변경|수정|"
+    r"주문|시작|장바구니|카트|담아|담을|담기|담겼|담겨|담긴|담았|추가|삭제|취소|지워|지우|바꿔|바꾸|변경|수정|"
     r"빼\s*(?:줘|주세요|주실|달라|갈게|주라)|주세요|주실|드릴|드실|(?<![가-힣])(?:시키|시킬|시켜\s*(?:줘|주|요|먹))|"
     r"(?:하나|둘|셋|넷|다섯|여섯|일곱|여덟|아홉|열|한|두|세|네|\d+)\s*(?:개|잔|병|조각|판|세트)|"
     r"(?:하나|한\s*개|두\s*개|세\s*개)\s*(?:만|더|줘|주|만요)|"

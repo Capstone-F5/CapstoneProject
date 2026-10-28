@@ -155,5 +155,333 @@ class FixAndAddSemanticsTests(unittest.TestCase):
         self.assertEqual(added, [{"type": "navigate", "screen": "cart"}, {"type": "start_checkout"}])
 
 
+class PaymentAndPointsFlowTests(unittest.TestCase):
+    """2026-10-13·10-26 로그: 전화번호 없이 포인트 적립이 선택된 채 결제 수단으로 넘어감 / "결제페이지"가 간편결제로 읽힘."""
+
+    def setUp(self):
+        C.reset_actions()
+        os.environ["GUARD_MODE"] = "enforce"
+
+    def test_payment_page_is_not_easy_pay(self):
+        from core.intent_fallback import _method_from
+        for text in ["결제페이지 이동해줘", "결제 페이지로 가줘", "go to the payment page"]:
+            with self.subTest(text=text):
+                self.assertIsNone(_method_from(text))
+                C.set_user_input(text)
+                self.assertFalse(T._payment_method_supported_by_input("pay"))
+        self.assertEqual(_method_from("카카오페이로 할게요"), "pay")
+        self.assertEqual(_method_from("페이로 할게요"), "pay")
+
+    def test_awaiting_points_phone(self):
+        from ai_modules.llm import checkout_progress as P
+        self.assertTrue(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes"})))
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes", "points_phone"})))
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points"})))   # 적립 안 함
+        self.assertFalse(P.awaiting_points_phone(frozenset({"start_checkout", "points", "points_yes"}), True))
+
+    def test_fallback_does_not_pick_payment_before_phone(self):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        sid = "test-session-points-phone"
+        checkout_progress.reset(sid)
+        added = ensure_actions(sid, "카드로 결제할게", "cart", [{"name": "버거", "qty": 1}],
+                               frozenset({"start_checkout", "points", "points_yes"}), True)
+        self.assertEqual(added, [])
+        C.reset_actions()
+        added = ensure_actions(sid, "카드로 결제할게", "cart", [{"name": "버거", "qty": 1}],
+                               frozenset({"start_checkout", "points", "points_yes", "points_phone"}), True)
+        self.assertEqual(added, [{"type": "payment_method", "value": "card"}])
+
+    def test_fallback_records_points_yes(self):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        sid = "test-session-points-yes"
+        checkout_progress.reset(sid)
+        ensure_actions(sid, "적립할게", "cart", [{"name": "버거", "qty": 1}], frozenset({"start_checkout"}), True)
+        self.assertIn("points_yes", checkout_progress.snapshot(sid))
+
+
+class ServerCartFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_request_cart_uses_server_cart(self):
+        """2026-09-28: 방금 F 버거 세트를 안내했는데 요청 cart가 비어 와서 "담긴 메뉴가 없습니다"라고 답했다."""
+        from core import llm_service
+        from core.cart_context import format_cart_status_reply
+
+        async def fake_get_cart(session_id):
+            return {"items": [{"name_ko": "F 버거", "quantity": 1, "unit_price": 6650, "selected_options": [
+                {"name": "세트", "option_group": "SET_UPGRADE"}, {"name": "치킨너겟", "option_group": "SET_SIDE"},
+                {"name": "제로사이다", "option_group": "SET_DRINK"}, {"name": "양파 제외", "option_group": "EXCLUDE"}]}]}
+
+        orig = llm_service.__dict__.get("api_client")
+        from ai_modules.llm import api_client
+        saved = api_client.get_cart
+        api_client.get_cart = fake_get_cart
+        try:
+            cart = await llm_service._cart_for_status_reply("s1", [])
+            self.assertEqual(
+                format_cart_status_reply(cart, "ko"),
+                "현재 장바구니에는 F 버거 세트 하나가 담겨 있어요. 사이드는 치킨너겟, 음료는 제로사이다, 양파 빼고. 합계는 6,650원이에요.")
+            keep = [{"name": "콜라", "quantity": 1}]
+            self.assertIs(await llm_service._cart_for_status_reply("s1", keep), keep)   # 요청 cart가 있으면 그대로
+            async def boom(session_id):
+                raise RuntimeError("down")
+            api_client.get_cart = boom
+            self.assertEqual(await llm_service._cart_for_status_reply("s1", []), [])   # 조회 실패 시 기존 동작
+        finally:
+            api_client.get_cart = saved
+
+
+class PointsPhoneInventedTests(unittest.TestCase):
+    """검증 실행 R40: 손님이 번호를 말하지 않았는데 모델이 11자리 번호를 지어내 points_phone과 payment_method까지 보냈다."""
+
+    def setUp(self):
+        C.reset_actions()
+        C.set_recent_user_text("")
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("phone-test")
+
+    def _call(self, user, value="01012345678"):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.ui_action.func(action="points_phone", value=value) if hasattr(T.ui_action, "func") else T.ui_action(action="points_phone", value=value)
+
+    def test_invented_number_is_rejected(self):
+        out = self._call("카드로 할게요")
+        self.assertIn("오류", out)
+        self.assertEqual(C.get_actions(), [])
+
+    def test_spoken_number_is_accepted_and_overrides_model_value(self):
+        out = self._call("저기 01006751802", value="01099999999")
+        self.assertNotIn("오류", out)
+        self.assertEqual(C.get_actions(), [{"type": "points_phone", "phone": "01006751802"}])
+
+    def test_number_given_in_previous_turn_counts(self):
+        C.set_recent_user_text("포인트 적립할게요 ¦ 공일공 일이삼사 오육칠팔")
+        C.reset_actions()
+        C.set_user_input("네 그걸로요")
+        out = T.ui_action.func(action="points_phone", value="01012345678") if hasattr(T.ui_action, "func") else T.ui_action(action="points_phone", value="01012345678")
+        self.assertNotIn("오류", out)
+
+
+class UpdateNoopTests(unittest.TestCase):
+    """2026-10-26 사용자 세션: 같은 줄을 같은 옵션으로 수정하고 "비건 버거 세트로 변경했습니다"라고 거짓 안내했다."""
+
+    def setUp(self):
+        C.reset_actions()
+        C.reset_guards()
+        os.environ["GUARD_MODE"] = "enforce"
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("noop-test")
+        from ai_modules.llm import cart_history
+        cart_history.reset("noop-test")   # 앞 테스트가 수량을 늘려 "이번 턴에 담은 줄"로 기록해 두면 다음 테스트가 다른 가드에 막힌다
+        self.line = {"cart_item_id": "c1", "menu_item_id": "m1", "name_ko": "그릴드 비프 버거", "quantity": 1,
+                     "selected_options": [{"option_id": "u", "name": "세트 업그레이드"}, {"option_id": "s", "name": "감자튀김"},
+                                          {"option_id": "d", "name": "콜라"}]}
+        self.patched = []
+        cart = {"items": [self.line]}
+        menu_item = {"id": "m1", "name_ko": "그릴드 비프 버거", "options": [
+            {"id": "u", "option_group": "SET_UPGRADE", "name_ko": "세트 업그레이드"},
+            {"id": "s", "option_group": "SET_SIDE", "name_ko": "감자튀김"}, {"id": "s2", "option_group": "SET_SIDE", "name_ko": "치즈스틱"},
+            {"id": "d", "option_group": "SET_DRINK", "name_ko": "콜라"}]}
+        patched = self.patched
+
+        def fake_run(coro):
+            name = coro.cr_code.co_name
+            coro.close()
+            if name == "patch_cart_item":
+                patched.append(1)
+                return None
+            return {"get_cart": cart, "fetch_menu_item_by_id": menu_item, "fetch_menu_items": MENU}[name]
+
+        async def get_cart(session_id): return None
+        async def fetch_menu_item_by_id(i): return None
+        async def fetch_menu_items(): return None
+        async def patch_cart_item(*a): return None
+        self._saved = (T._run, T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item)
+        T._run = fake_run
+        (T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item) = (
+            get_cart, fetch_menu_item_by_id, fetch_menu_items, patch_cart_item)
+
+    def tearDown(self):
+        (T._run, T.api_client.get_cart, T.api_client.fetch_menu_item_by_id, T.api_client.fetch_menu_items, T.api_client.patch_cart_item) = self._saved
+
+    def _update(self, user, **kw):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.update_item_options.func(cart_item_id="c1", **kw)
+
+    def test_same_options_update_is_rejected_without_patch_or_action(self):
+        out = self._update("그것만 비건버거 세트로 바꿔달라니까", item_type="set", side="감자튀김", drink="콜라")
+        self.assertIn("오류", out)
+        self.assertIn("remove_item", out)
+        self.assertEqual((self.patched, C.get_actions()), ([], []))
+        self.assertTrue(any(h["rule"] == "update_noop" for h in C.get_guard_hits()))
+
+    def test_real_changes_still_go_through(self):
+        out = self._update("사이드를 치즈스틱으로 바꿔줘", side="치즈스틱")
+        self.assertNotIn("오류", out)
+        self.assertEqual(len(self.patched), 1)
+        out = self._update("세 개로 바꿔줘", quantity=3)
+        self.assertNotIn("오류", out)
+
+
+class PhoneFallbackTests(unittest.TestCase):
+    """음성 검증: 번호를 말했는데 모델이 말로만 "확인했습니다"라 하고 points_phone을 안 보냄(pay_phone 5/19)."""
+
+    CART = [{"name": "버거", "qty": 1}]
+
+    def setUp(self):
+        C.reset_actions()
+        os.environ["GUARD_MODE"] = "enforce"
+
+    def _ensure(self, text, snapshot):
+        from core.intent_fallback import ensure_actions
+        from ai_modules.llm import checkout_progress
+        checkout_progress.reset("phone-fb")
+        return ensure_actions("phone-fb", text, "cart", self.CART, frozenset(snapshot), True)
+
+    def test_spoken_number_after_points_yes_is_sent(self):
+        added = self._ensure("저기 01006751802", {"start_checkout", "points", "points_yes"})
+        self.assertEqual(added, [{"type": "points_phone", "phone": "01006751802"}])
+
+    def test_korean_digit_reading(self):
+        added = self._ensure("공일공 일이삼사 오육칠팔", {"start_checkout", "points", "points_yes"})
+        self.assertEqual(added, [{"type": "points_phone", "phone": "01012345678"}])
+
+    def test_number_in_same_utterance_as_yes(self):
+        added = self._ensure("네 적립할게요 01096693041", {"start_checkout"})
+        self.assertEqual([a["type"] for a in added], ["points", "points_phone"])
+        self.assertEqual(added[1]["phone"], "01096693041")
+
+    def test_nothing_invented_or_duplicated(self):
+        snap = {"start_checkout", "points", "points_yes"}
+        self.assertEqual(self._ensure("카드로 할게요", snap), [])                 # 번호 없음
+        self.assertEqual(self._ensure("0100677", snap), [])                       # 자릿수 부족
+        self.assertEqual(self._ensure("02012345678", snap), [])                   # 휴대폰 번호가 아님
+        self.assertEqual(self._ensure("01006751802", {"start_checkout", "points"}), [])   # 적립하겠다고 한 적 없음
+        self.assertEqual(self._ensure("01006751802", snap | {"points_phone"}), [])         # 이미 받음
+        C.reset_actions()
+        C.push_action({"type": "points_phone", "phone": "01006751802"})
+        from core.intent_fallback import ensure_actions
+        self.assertEqual(ensure_actions("phone-fb", "01006751802", "cart", self.CART, frozenset(snap), True), [])   # 모델이 보냄
+
+    def test_reply_claiming_phone_without_action_is_corrected(self):
+        from ai_modules.llm import guards
+        out = "전화번호는 01006751802로 확인했습니다. 결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?"
+        self.assertEqual(guards.correct_reply(out, []), guards._UNFULFILLED["phone"])
+        self.assertIsNone(guards.correct_reply(out, ["points_phone"]))
+        self.assertIsNone(guards.correct_reply("전화번호를 말씀해 주세요.", []))
+        self.assertIsNone(guards.correct_reply("전화번호를 입력해 주세요.", []))
+
+
+class RemoveGuardTests(unittest.TestCase):
+    """음성 검증 R15: "F버거 세트 5개로 바꿔줘"에 모델이 무관한 줄(치킨 가슴살 버거)을 삭제했다."""
+
+    def setUp(self):
+        C.reset_guards()
+        os.environ["GUARD_MODE"] = "enforce"
+        from ai_modules.llm.session_context import set_session_id
+        set_session_id("remove-test")
+        self.cart = {"items": [
+            {"cart_item_id": "c-chicken", "name_ko": "치킨 가슴살 버거", "quantity": 1, "selected_options": []},
+            {"cart_item_id": "c-f", "name_ko": "F 버거", "quantity": 1, "selected_options": []},
+        ]}
+        self.removed = []
+        cart, menu, removed = self.cart, MENU + [it(9, "치킨 가슴살 버거")], self.removed
+
+        def fake_run(coro):
+            name = coro.cr_code.co_name
+            coro.close()
+            if name == "remove_cart_item":
+                removed.append(1)
+                return None
+            return {"get_cart": cart, "fetch_menu_items": menu}[name]
+        # 다른 테스트가 api_client 함수를 람다로 바꿔 두므로(전역 오염) 이 테스트가 쓰는 세 함수를 코루틴 함수로 덮어쓴다
+        async def get_cart(session_id):
+            return None
+
+        async def fetch_menu_items():
+            return None
+
+        async def remove_cart_item(session_id, cart_item_id):
+            return None
+        self._saved = (T._run, T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item)
+        T._run = fake_run
+        T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item = get_cart, fetch_menu_items, remove_cart_item
+
+    def tearDown(self):
+        T._run, T.api_client.get_cart, T.api_client.fetch_menu_items, T.api_client.remove_cart_item = self._saved
+
+    def _remove(self, user, cart_item_id):
+        C.reset_actions()
+        C.set_user_input(user)
+        return T.remove_item.func(cart_item_id=cart_item_id)
+
+    def test_change_quantity_request_does_not_delete_anything(self):
+        out = self._remove("F버거 세트 5개로 바꿔줘", "c-chicken")
+        self.assertIn("오류", out)
+        self.assertEqual((self.removed, C.get_actions()), ([], []))
+        self.assertEqual(C.get_guard_hits()[0]["rule"], "remove_no_intent")
+
+    def test_deleting_a_line_other_than_the_named_one_is_blocked(self):
+        out = self._remove("F버거 빼줘", "c-chicken")
+        self.assertIn("오류", out)
+        self.assertEqual(self.removed, [])
+        self.assertEqual(C.get_guard_hits()[0]["rule"], "remove_wrong_target")
+
+    def test_legitimate_removals_still_work(self):
+        for user, cid in [("F버거 빼줘", "c-f"), ("치킨 가슴살 버거 취소해줘", "c-chicken"),
+                          ("F버거 말고 치킨가슴살버거로 바꿔줘", "c-f")]:
+            self.removed.clear()
+            C.reset_guards()
+            out = self._remove(user, cid)
+            self.assertNotIn("오류", out, user)
+            self.assertEqual(len(self.removed), 1, user)
+
+
+class NavigateTests(unittest.TestCase):
+    def setUp(self):
+        C.reset_actions()
+
+    def test_same_screen_navigate_is_not_emitted(self):
+        C.set_screen("cart")
+        out = T.navigate("cart")
+        self.assertEqual(C.get_actions(), [])
+        self.assertIn("이미", out)
+
+    def test_other_screen_navigate_is_emitted(self):
+        C.set_screen("menu")
+        T.navigate("cart")
+        self.assertEqual(C.get_actions(), [{"type": "navigate", "screen": "cart"}])
+
+
+class NoiseRepromptTests(unittest.TestCase):
+    def test_short_utterance_on_waiting_screen_is_reprompted(self):
+        from core.llm_service import _should_reprompt_noise
+        self.assertTrue(_should_reprompt_noise("갑자기 왜 이게 떠?", "cart"))
+        self.assertTrue(_should_reprompt_noise("철제.", "orderType"))
+
+    def test_start_screen_long_or_empty_stay_silent(self):
+        from core.llm_service import _should_reprompt_noise
+        self.assertFalse(_should_reprompt_noise("철제.", "start"))
+        self.assertFalse(_should_reprompt_noise("", "cart"))
+        self.assertFalse(_should_reprompt_noise("그래서 내가 어제 말했잖아 그 친구가 그러는데 진짜 웃기더라", "menu"))
+        self.assertFalse(_should_reprompt_noise("철제.", None))
+
+
+class CompleteMissingOrderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_checkout_utterance_does_not_add_item(self):
+        """2026-10-13: 세트를 담은 뒤 "아니, 그냥 결제해줘"에 비건 버거 단품이 또 담겼다(15,600원)."""
+        from core import llm_service
+        C.reset_actions()
+        C.reset_guards()
+        C.set_last_bot_text("비건버거 세트, 사이드 치즈스틱, 음료 콜라로 담았습니다. 다른 메뉴를 더 주문하시겠어요?")
+        C.set_recent_user_text("비건버거 하나 해줘 ¦ 세트로 해줘 ¦ 치즈스틱 ¦ 콜라")
+        for text in ["아니, 그냥 결제해줘.", "그냥 결제할게요"]:
+            with self.subTest(text=text):
+                self.assertIsNone(await llm_service._complete_missing_order(text, "담긴 메뉴는 비건 버거 세트 1개입니다."))
+        self.assertEqual(C.get_actions(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

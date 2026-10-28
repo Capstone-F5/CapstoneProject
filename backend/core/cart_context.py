@@ -180,6 +180,47 @@ def is_cart_status_query(text: str) -> bool:
     return has_question and has_cart_topic
 
 
+_KO_COUNT = {1: "하나", 2: "두 개", 3: "세 개", 4: "네 개", 5: "다섯 개", 6: "여섯 개", 7: "일곱 개", 8: "여덟 개", 9: "아홉 개", 10: "열 개"}
+_KO_ORDINAL = {1: "첫 번째", 2: "두 번째", 3: "세 번째", 4: "네 번째", 5: "다섯 번째"}
+
+
+def _spoken_cart_reply_ko(cart: list[dict], amount: str) -> str:
+    """장바구니 안내를 TTS로 읽었을 때 자연스러운 말투로 만든다. "x1"·괄호·"~담겨 있습니다" 나열은 글을 그대로 읽는
+    느낌이라 수량은 "하나/두 개"로, 항목은 문장 단위로 끊고, 사이드·음료·제외는 "사이드는 ~, 음료는 ~"로 풀어 말한다."""
+    sentences = []
+    for item in cart:
+        name = item.get("name") or item.get("name_ko") or f"메뉴 {item.get('menu_id', '')}".strip()
+        quantity = int(item.get("quantity", 1) or 1)
+        kind = "세트" if item.get("item_type") == "set" else "단품"
+        count = _KO_COUNT.get(quantity, f"{quantity}개")
+        details = []
+        if item.get("side"):
+            details.append(f"사이드는 {item['side']}")
+        if item.get("drink"):
+            details.append(f"음료는 {item['drink']}")
+        exclusions = item.get("exclusions") or item.get("exclusion") or []
+        if isinstance(exclusions, str):
+            exclusions = [] if exclusions in {"", "없음", "none"} else [exclusions]
+        for ex in exclusions:
+            ex = re.sub(r"\s*제외$", "", str(ex)).strip()   # "양파 제외" → "양파 빼고"
+            if ex:
+                details.append(f"{ex} 빼고")
+        if item.get("special_note"):
+            details.append(f"요청사항은 {item['special_note']}")
+        sentences.append((f"{name} {kind} {count}", ", ".join(details)))
+
+    if len(sentences) == 1:
+        head, detail = sentences[0]
+        text = f"현재 장바구니에는 {head}가 담겨 있어요."
+        if detail:
+            text += f" {detail}."
+    else:
+        text = f"현재 장바구니에는 {len(sentences)}가지 메뉴가 담겨 있어요."
+        for idx, (head, detail) in enumerate(sentences, 1):
+            text += f" {_KO_ORDINAL.get(idx, f'{idx}번째')}, {head}." + (f" {detail}." if detail else "")
+    return f"{text} 합계는 {amount}원이에요."
+
+
 def format_cart_status_reply(
     cart: list[dict], language: str | None = None, user_input: str | None = None
 ) -> str:
@@ -236,8 +277,7 @@ def format_cart_status_reply(
 
     amount = f"{int(round(total)):,}"
     if lang == "ko":
-        joined = ", ".join(item_lines)
-        return f"현재 장바구니에는 {joined} 담겨 있습니다. 합계는 {amount}원입니다."
+        return _spoken_cart_reply_ko(cart, amount)
     if lang == "zh":
         return f"当前购物车有：{'，'.join(item_lines)}。合计 {amount} 韩元。"
     if lang == "ja":

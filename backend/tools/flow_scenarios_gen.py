@@ -8,6 +8,10 @@
     python tools/flow_scenarios_gen.py --build-fixed                 # 고정 100개를 flow_scenarios_fixed.json으로 저장
     python tools/flow_scenarios_gen.py --preview 5 --seed 3          # 랜덤 5개를 LLM 없이 출력
     python tools/voice_scenario_suite.py --random 10 --seed 7        # 랜덤 10개를 만들어 실행
+    python tools/voice_scenario_suite.py --random 10 --seed 7 --tier 사람처럼 --human 2 --dry-run
+                                                                     # 사람처럼 티어(마음 바꾸기·소음·알레르기·결제 실수) + 군말/STT 오인식
+    python tools/voice_scenario_suite.py --category 회귀             # 대화 로그에서 나온 실제 실패 사례 9개
+    python tools/persona_sim.py --count 6                            # LLM 손님이 직접 주문(탐색용, 비결정적)
     python tools/voice_scenario_suite.py --category 대량흐름          # 고정 100개 실행
     python tools/voice_scenario_suite.py --category 대량흐름 --dry-run # 발화와 기대 장바구니만 출력(비용 0)
 """
@@ -52,6 +56,40 @@ def _phone_text(rng: random.Random) -> tuple[str, str]:
     return digits, ko
 
 
+# ── 사람다운 말투 변형(층 A) ────────────────────────────────────────────────────
+# 의미를 바꾸지 않는다: 기대 장바구니는 그대로고, 숫자·메뉴 이름은 건드리지 않는다. level 0이면 변형 없음.
+_FILLERS = ["음 ", "어 ", "저기 ", "아 그 ", "그럼 ", "자 "]
+_TRAILERS = ["~", "!"]
+# 서버가 교정하는 것이 확인된 STT 오인식만 넣는다(guards._STT_FIXES와 별개 목록 — test_flow_gen이 교정되는지 검증한다).
+# (원문 정규식, 오인식 치환). 교정 규칙의 lookahead 조건을 만족하는 위치에서만 일어난다.
+_ASR_ERRORS = [
+    (re.compile(r"단품(?=으로)"), "단풍"),
+    (re.compile(r"결제(?=할게)"), "결재"),
+]
+
+
+def humanize(text: str, rng: random.Random, level: int) -> str:
+    """level 1: 군말·말끝, level 2: 거기에 서버가 교정하는 STT 오인식과 반말/존댓말 혼용."""
+    if level <= 0 or not text:
+        return text
+    out = text
+    if rng.random() < 0.30 and not out.startswith(tuple(f.strip() for f in _FILLERS)):
+        out = rng.choice(_FILLERS) + out
+    if level >= 2:
+        if rng.random() < 0.5:
+            out = out.replace("주세요", "줘") if rng.random() < 0.5 else out.replace(" 줘", " 주세요")
+        for pat, wrong in _ASR_ERRORS:
+            if not re.search(r"\d", out) and rng.random() < 0.25:
+                out = pat.sub(wrong, out, count=1)
+    if rng.random() < 0.15 and out.endswith(("줘", "주세요")):
+        out += rng.choice(_TRAILERS) if out.endswith("주세요") else ""
+    return out
+
+
+# 층 B 소음 턴 — 매장 안 주변 대화·혼잣말. 장바구니·화면이 바뀌면 실패다.
+_AMBIENT = ["어제 걔가 그래서 내가 그랬잖아", "오늘 날씨 진짜 좋다", "엄마 나 이거 먹어도 돼", "야 빨리 와 늦겠다", "아니 근데 그게 말이 돼?"]
+
+
 # ── 메뉴 ─────────────────────────────────────────────────────────────────────
 class MenuData:
     """/api/menu 응답에서 생성에 필요한 것만 뽑아 둔다."""
@@ -69,6 +107,8 @@ class MenuData:
                 "drinks": [o["name_ko"] for o in opts if o["option_group"] == "SET_DRINK"],
                 # 괄호가 들어 있는 재료("양배추(또는 양상추)")는 말하기 모호해서 제외
                 "excls": [o["name_ko"] for o in opts if o["option_group"] == "EXCLUDE" and "(" not in o["name_ko"]],
+                # 알레르기 성분 {code: name_ko} — /api/menu가 DB에서 내려준 값. 없으면 알레르기 조작은 후보에서 빠진다
+                "allergens": {a["code"]: a["name_ko"] for a in b.get("allergens", []) if a.get("code") and a.get("name_ko")},
             })
         # 단품 사이드·음료 풀: 서로의 부분 문자열이 되는 이름(감자튀김 ⊂ 양념감자튀김, 콜라 ⊂ 제로콜라)은
         # 기본 풀에서 빼고 어려운 풀(hard)에만 넣는다
@@ -144,8 +184,13 @@ def _plain_line(name, kind, qty=1):
 
 # ── 생성 문맥 ────────────────────────────────────────────────────────────────
 class Ctx:
-    def __init__(self, rng: random.Random, menu: MenuData, hard: bool):
-        self.rng, self.menu, self.hard = rng, menu, hard
+    def __init__(self, rng: random.Random, menu: MenuData, hard: bool, human: int = 0):
+        self.rng, self.menu, self.hard, self.human = rng, menu, hard, human
+        # 말투 변형 전용 난수: 기본 난수열을 소비하지 않고 같은 시드에서 파생시켜, human 값이 달라도 시나리오의 뼈대(조작·메뉴·기대값)는 같다
+        self.hrng = random.Random(repr(rng.getstate()[1][:8]))
+        # 사람처럼 티어에서만 켠다(기존 시드의 시나리오가 바뀌지 않게): 이미 단품이 담긴 버거에 "세트로 하나 줘"라고 하는 것처럼
+        # 사람도 해석이 갈리는 말은 만들지 않는다 — "세트로 바꿔 달라"로 읽혀 기존 줄이 세트가 돼도 서버 오류가 아니다(음성 검증 R50).
+        self.safe_ask = False
         self.cart = RefCart()
         self.steps: list[dict] = []
         self.ops: list[str] = []
@@ -164,14 +209,17 @@ class Ctx:
 
     # 스텝 기록 -------------------------------------------------------------
     def say(self, text, op, lang="ko", **checks):
+        if lang == "ko" and op != "intro":
+            text = humanize(text, self.hrng, self.human)
         self.steps.append({"kind": "say", "text": text, "lang": lang, "checks": checks, "op": op})
 
     def say_cart(self, text, op, **checks):
         """발화 한 턴 + 이 턴 뒤 장바구니가 참조 장바구니와 정확히 같아야 한다."""
         self.say(text, op, cart_exact=self.cart.expected(), **checks)
 
-    def say_unchanged(self, text, op):
-        self.say(text, op, cart_exact=self.cart.expected(), no_actions=["add_item"])
+    def say_unchanged(self, text, op, **extra):
+        checks = {"cart_exact": self.cart.expected(), "no_actions": ["add_item"], **extra}
+        self.say(text, op, **checks)
 
     def rec(self, kind, spec):
         self.steps.append({"kind": kind, **spec})
@@ -243,6 +291,10 @@ def op_add_set_oneshot(c: Ctx):
 
 def op_add_set_ask(c: Ctx):
     b = c.pick_burger()
+    if c.safe_ask and c.cart.find(b, False) and not c.cart.find(b, True):
+        alternatives = [x for x in c.burgers if not c.cart.find(x)]
+        if alternatives:
+            b = c.rng.choice(alternatives)
     info = c.menu.burger(b)
     side, drink = c.rng.choice(info["sides"]), c.rng.choice(info["drinks"])
     c.say_unchanged(f"{_spoken(b)} 세트로 하나 줘", "add_set_ask")
@@ -412,6 +464,67 @@ def op_touch_remove(c: Ctx):
     c.rec("touch_remove", {"name": l["name"], "op": "touch_remove"})
 
 
+# ── 층 B: 사람의 행동 패턴 ───────────────────────────────────────────────────
+def op_noise_turn(c: Ctx):
+    """주변 대화·혼잣말이 말로 인식된 경우. 장바구니는 그대로여야 하고 담기 액션이 없어야 한다."""
+    c.say_unchanged(c.rng.choice(_AMBIENT), "noise_turn", no_actions=["add_item", "start_checkout", "order_type"])
+
+
+def op_ask_mid_order(c: Ctx):
+    """주문 도중 가격·추천·알레르기 질문. 답만 하고 장바구니는 건드리지 않아야 한다."""
+    b = c.pick_burger()
+    qs = [f"{_spoken(b)} 얼마예요?", "제일 인기 많은 버거가 뭐예요?", "음료는 뭐 있어요?", f"{_spoken(b)}에 뭐 들어가요?"]
+    allergens = sorted({n for x in c.menu.burgers for n in x["allergens"].values()})
+    if allergens:
+        qs.append(f"{c.rng.choice(allergens)} 알레르기 있는 사람이 못 먹는 메뉴가 뭐예요?")
+    c.say_unchanged(c.rng.choice(qs), "ask_mid_order", no_actions=["add_item", "start_checkout"])
+
+
+def op_change_mind(c: Ctx):
+    """담은 단품 버거를 "아니 그거 말고 다른 걸로" 바꾼다. 기대: 그 줄의 메뉴만 바뀌고 나머지는 그대로."""
+    l = c.rng.choice(_lines(c, lambda x: x["kind"] == "burger" and not x["set"] and x["qty"] == 1))
+    others = [n for n in c.burgers if n != l["name"] and not c.cart.find(n)]
+    new = c.rng.choice(others)
+    old_label = c.label(l)
+    l["name"] = new
+    l["excl"] = []
+    c.say_cart(c.rng.choice([f"아니 {old_label} 말고 {_spoken(new)} 단품으로 바꿔줘", f"아 {old_label} 취소하고 {_spoken(new)} 단품으로 줘"]), "change_mind")
+
+
+def _allergy_pick(c: Ctx, need_safe: bool, need_unsafe: bool):
+    """(성분 이름, 안전한 버거, 그 성분이 든 버거). 이 시나리오의 버거 후보 안에서 둘 다 있는 성분만 쓴다."""
+    names = sorted({n for b in c.burgers for n in c.menu.burger(b)["allergens"].values()})
+    c.rng.shuffle(names)
+    for n in names:
+        has = [b for b in c.burgers if n in c.menu.burger(b)["allergens"].values()]
+        safe = [b for b in c.burgers if b not in has]
+        if (safe or not need_safe) and (has or not need_unsafe):
+            return n, (c.rng.choice(safe) if safe else None), (c.rng.choice(has) if has else None)
+    return None
+
+
+def _can_allergy(c: Ctx) -> bool:
+    return _allergy_pick(c, True, True) is not None
+
+
+def op_allergy_have(c: Ctx):
+    """알레르기가 있다고 말한 뒤 그 성분이 없는 버거를 주문한다. 알레르기 말 자체로는 장바구니가 바뀌면 안 된다."""
+    n, safe, _ = _allergy_pick(c, True, True)
+    c.say_unchanged(c.rng.choice([f"{n} 알레르기가 있어요", f"저 {n} 알레르기 있는데요"]), "allergy_have", no_actions=["add_item", "start_checkout"])
+    c.cart.snapshot()
+    c.cart.add(_burger_line(safe, 1))
+    c.say_cart(f"{_spoken(safe)} 단품 하나 줘", "allergy_have")
+
+
+def op_allergy_none(c: Ctx):
+    """알레르기가 "없다"고 말한 뒤 그 성분이 든 버거를 주문해도 담겨야 한다(없다는 말을 있다로 읽어 막던 버그의 회귀)."""
+    n, _, unsafe = _allergy_pick(c, True, True)
+    c.say_unchanged(c.rng.choice([f"{n} 알레르기는 없어요", f"{n} 알레르기 없어요"]), "allergy_none", no_actions=["add_item", "start_checkout"])
+    c.cart.snapshot()
+    c.cart.add(_burger_line(unsafe, 1))
+    c.say_cart(f"{_spoken(unsafe)} 단품 하나 주세요", "allergy_none")
+
+
 # 가능 여부(현재 장바구니 상태에서 이 조작이 말이 되는가)
 def _has(c, pred):
     return bool(_lines(c, pred))
@@ -441,6 +554,13 @@ OPS = {
     "remove_exclusion": (lambda c: _has(c, lambda x: x["kind"] == "burger" and x["qty"] == 1 and x["excl"]), op_remove_exclusion),
     "add_second_set":   (lambda c: _has(c, lambda x: x["kind"] == "burger" and x["set"] and x["qty"] == 1), op_add_second_set),
     "query":            (lambda c: bool(c.cart.lines), op_query),
+    "noise_turn":       (lambda c: True, op_noise_turn),
+    "ask_mid_order":    (lambda c: True, op_ask_mid_order),
+    "change_mind":      (lambda c: _has(c, lambda x: x["kind"] == "burger" and not x["set"] and x["qty"] == 1)
+                         and any(n != l["name"] and not c.cart.find(n) for l in _lines(c, lambda x: x["kind"] == "burger" and not x["set"] and x["qty"] == 1)
+                                 for n in c.burgers), op_change_mind),
+    "allergy_have":     (_can_allergy, op_allergy_have),
+    "allergy_none":     (_can_allergy, op_allergy_none),
     "touch_add":        (lambda c: True, op_touch_add),
     "touch_remove":     (lambda c: len(c.cart.lines) >= 2 and _has(c, lambda x: len(c.cart.find(x["name"])) == 1), op_touch_remove),
 }
@@ -449,19 +569,24 @@ _UNDOABLE = {"add_single", "add_burger_ask", "add_set_oneshot", "add_set_ask", "
 # "방금 거 취소"는 한 번에 한 줄만 담긴 직전 조작에서만 쓴다(여러 줄을 담은 add_multi는 되돌릴 대상이 모호)
 _UNDOABLE -= {"add_multi", "touch_add"}
 
+_HUMAN_ONLY = ["noise_turn", "ask_mid_order", "change_mind", "allergy_have", "allergy_none"]
 TIERS = {
     "기본 다품목": (["add_single", "add_multi", "add_burger_ask", "set_qty", "add_more", "query"], (2, 4), False),
     "편집": (["add_single", "add_multi", "add_burger_ask", "remove_line", "reduce_qty", "undo_last",
               "readd_removed", "add_more", "set_qty", "query"], (4, 7), False),
     "세트 옵션": (["add_set_oneshot", "add_set_ask", "add_single", "change_side", "change_drink", "change_both",
                  "convert_to_set", "convert_to_single", "add_exclusion", "remove_exclusion", "add_second_set"], (3, 6), False),
-    "종합": (list(OPS), (5, 8), True),
+    "종합": ([o for o in OPS if o not in _HUMAN_ONLY], (5, 8), True),
+    # 사람처럼: 기본 담기·편집 조작에 마음 바꾸기·질문 끼워 넣기·주변 소음·알레르기 말을 섞는다
+    "사람처럼": (["add_single", "add_multi", "add_burger_ask", "add_set_oneshot", "add_set_ask", "remove_line", "set_qty",
+               "undo_last", "change_side", "convert_to_set", "query", *_HUMAN_ONLY], (5, 8), False),
 }
 # 편집·세트 옵션 조작이 반드시 들어가도록 가중치를 주는 조작
 _MUST = {
     "편집": ["remove_line", "undo_last", "reduce_qty", "readd_removed"],
     "세트 옵션": ["change_side", "change_drink", "change_both", "convert_to_set", "convert_to_single", "add_exclusion", "add_second_set"],
     "종합": ["remove_line", "undo_last", "change_side", "convert_to_set", "convert_to_single", "touch_add"],
+    "사람처럼": ["noise_turn", "change_mind", "ask_mid_order", "allergy_have"],
 }
 
 
@@ -505,10 +630,27 @@ def _method(c: Ctx) -> str:
     return c.rng.choice(["카드로 할게요", "현금으로 낼게요", "카카오페이로 할게요", "삼성페이로 할게요", "간편결제로 할게요"])
 
 
-def payment(c: Ctx) -> str:
-    kind = c.rng.choice(["no_points", "no_points", "points_phone", "points_inline", "method_change", "back_to_menu"])
+def payment(c: Ctx, accidents: bool = False) -> str:
+    kinds = ["no_points", "no_points", "points_phone", "points_inline", "method_change", "back_to_menu"]
+    if accidents:   # 사람이 결제 단계에서 흔히 하는 실수 — 기존 고정 세트의 난수열을 바꾸지 않도록 이 티어에서만 후보에 넣는다
+        kinds += ["method_early", "page_nav", "phone_skipped"]
+    kind = c.rng.choice(kinds)
     c.say("결제할게요", "pay_start", cart_exact=c.cart.expected(), actions=["start_checkout"])
-    if kind == "no_points":
+    if kind == "method_early":   # 포인트 질문 전에 결제 수단부터 말함 → 수단은 보류하고 포인트를 먼저 물어야 한다
+        c.say("카드로 할게요", "pay_accident", no_actions=["payment_method"])
+        c.say("적립 안 할게요", "pay_points", actions=["points"])
+        c.say(_method(c), "pay_method", actions=["payment_method"])
+    elif kind == "page_nav":   # 이미 결제 화면인데 "결제페이지 이동해줘" → 수단 오인식·화면 이동 없이 포인트 질문 유지
+        c.say("결제페이지 이동해줘", "pay_accident", no_actions=["payment_method", "navigate"])
+        c.say("적립 안 할게요", "pay_points", actions=["points"])
+        c.say(_method(c), "pay_method", actions=["payment_method"])
+    elif kind == "phone_skipped":   # 적립하겠다고 해놓고 전화번호 없이 결제 수단을 말함 → 번호부터 받아야 한다
+        digits, spoken = _phone_text(c.rng)
+        c.say("포인트 적립할게요", "pay_points", actions=["points"])
+        c.say("카드로 할게요", "pay_accident", no_actions=["payment_method"])
+        c.say(spoken, "pay_phone", actions=["points_phone"])
+        c.say(_method(c), "pay_method", actions=["payment_method"])
+    elif kind == "no_points":
         c.say("적립 안 할게요", "pay_points", actions=["points"])
         c.say(_method(c), "pay_method", actions=["payment_method"])
     elif kind == "points_phone":
@@ -535,9 +677,10 @@ def payment(c: Ctx) -> str:
 
 
 # ── 시나리오 조립 ────────────────────────────────────────────────────────────
-def build_one(rng: random.Random, menu: MenuData, tier: str, sid: str, category: str):
+def build_one(rng: random.Random, menu: MenuData, tier: str, sid: str, category: str, human: int = 0):
     ops_list, (lo, hi), hard = TIERS[tier]
-    c = Ctx(rng, menu, hard)
+    c = Ctx(rng, menu, hard, human)
+    c.safe_ask = tier == "사람처럼"
     c.last_op = None
     intro_kind = intro(c)
     n = rng.randint(lo, hi)
@@ -560,8 +703,8 @@ def build_one(rng: random.Random, menu: MenuData, tier: str, sid: str, category:
     if not c.cart.lines:
         op_add_single(c)
         c.ops.append("add_single")
-    pay_kind = payment(c)
-    title = f"[{tier}] {intro_kind} · {'>'.join(c.ops)} · {pay_kind}"
+    pay_kind = payment(c, accidents=(tier == "사람처럼"))
+    title = f"[{tier}] {intro_kind} · {'>'.join(c.ops)} · {pay_kind}" + (f" · H{human}" if human else "")
     # 순수 딕셔너리로 돌려준다(voice_scenario_suite의 Scenario로 바꾸는 일은 실행기가 한다 — 순환 임포트 방지)
     return {"id": sid, "category": category, "title": title, "steps": c.steps}
 
@@ -585,14 +728,15 @@ def generate_fixed(menu: MenuData):
     return out
 
 
-def generate_random(menu: MenuData, count: int, seed: int):
+def generate_random(menu: MenuData, count: int, seed: int, human: int = 0, tiers: list[str] | None = None):
     out = []
     rng0 = random.Random(f"rand-{seed}")
-    tiers = list(TIERS)
+    # 기본(tiers 없음)은 예전과 같은 4개 티어에서 뽑는다 — 같은 시드의 기존 시나리오가 바뀌지 않게 "사람처럼"은 지정할 때만 쓴다
+    tiers = tiers or [t for t in TIERS if t != "사람처럼"]
     for i in range(1, count + 1):
         tier = rng0.choice(tiers)
         rng = random.Random(f"{seed}-{i}")
-        out.append(build_one(rng, menu, tier, f"R{seed}-{i:02d}", "랜덤흐름"))
+        out.append(build_one(rng, menu, tier, f"R{seed}-{i:02d}", "랜덤흐름", human))
     return out
 
 
@@ -624,6 +768,8 @@ def main() -> int:
     ap.add_argument("--build-fixed", action="store_true")
     ap.add_argument("--preview", type=int, default=0)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--human", type=int, default=0, choices=[0, 1, 2], help="말투 변형 강도(0=없음, 1=군말, 2=오인식·말투 혼용)")
+    ap.add_argument("--tier", nargs="*", choices=list(TIERS), help="미리보기에 쓸 티어(기본: 사람처럼 제외 4개)")
     a = ap.parse_args()
     menu = fetch_menu(a.url)
     if a.build_fixed:
@@ -631,7 +777,7 @@ def main() -> int:
         FIXED_PATH.write_text(json.dumps(scs, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"{len(scs)}개 시나리오를 {FIXED_PATH} 에 저장")
     if a.preview:
-        for s in generate_random(menu, a.preview, a.seed):
+        for s in generate_random(menu, a.preview, a.seed, a.human, a.tier):
             print(describe(s), "\n")
     return 0
 

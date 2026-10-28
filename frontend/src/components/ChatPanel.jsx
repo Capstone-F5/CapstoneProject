@@ -6,6 +6,7 @@ import { getCachedAudio } from '../utils/ttsCache'
 import { stopTTS } from '../utils/tts'
 import { isBargeInEnabled, useBargeInEnabled, startBargeWatch, tapOutput } from '../utils/bargeIn'
 import { classifyQuickReply } from '../utils/quickReply'
+import { applySpeed, resetTtsSpeed, subscribeTtsSpeed } from '../utils/ttsSpeed'
 import { AudioEnergyGate, installMicAgcGuard, loadGateOverrides } from '../utils/audioGate'
 
 // MicVAD 초기화 전에 브라우저 자동 이득 제어(AGC)가 원거리 소음·음악을 증폭하지 못하도록 가드 설치
@@ -24,7 +25,7 @@ function reportVoiceTurn(turn, reason) {
   const summary = {
     kind: 'turn',
     reason,                                  // audio | quick | timeout
-    path: turn.quick ? 'quick' : 'llm',
+    path: turn.quick ? 'quick' : (turn.serverPath || 'llm'),   // 서버가 done에 실어 준 경로(noise/allergy/cart_query/direct/checkout/error)
     speechMs: turn.speechMs,
     textLen: turn.textLen ?? null,
     sttMs: d('tSend', 'tStt'),               // 업로드 + 전사
@@ -105,7 +106,7 @@ function quickReplyNote(handled, quick, screen) {
     case 'points_no':
       return '알겠습니다. 포인트 적립 없이 진행하겠습니다. 포인트 질문은 끝났고, 이제 결제 수단을 고르실 차례입니다. 결제 수단은 카드, 현금, 간편결제 중 무엇으로 하시겠어요?'
     case 'points_yes':
-      return '포인트를 적립하겠습니다. 전화번호를 말씀해 주세요.'
+      return '포인트를 적립하겠습니다. 음성으로 번호를 불러주세요. (화면이 번호 입력창을 열고 이 안내를 음성으로 말했습니다)'
     case 'order_type_confirm':
       return '식사 장소를 확인했습니다. 포인트 적립하시겠어요?'
     case 'order_type_cancel':
@@ -444,6 +445,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     const cached = await getCachedAudio(text)
     if (cached && activeRef.current) {
       audioRef.current = cached
+      applySpeed(cached)  // 대화 음성 배속(관리자 설정 + 손님이 고른 값)
       tapOutput(cached)   // 끼어들기 ON이면 재생 소리의 크기를 분석기에 연결한다(꺼져 있으면 아무것도 안 함)
       await new Promise(resolve => {
         cached.onended = resolve
@@ -475,6 +477,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         const url   = URL.createObjectURL(blob)
         const audio = new Audio(url)
         audioRef.current = audio
+        applySpeed(audio)
         tapOutput(audio)
         await new Promise(resolve => {
           audio.onended = resolve
@@ -492,6 +495,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     audioRef.current  = audio
     const objectUrl   = URL.createObjectURL(mediaSource)
     audio.src         = objectUrl
+    applySpeed(audio)
     tapOutput(audio)
 
     await new Promise((resolve) => {
@@ -684,6 +688,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
             if (data.done && data.output) {
               ensureStartNavigation()
               if (turn) {
+                if (data.path) turn.serverPath = data.path
                 turn.tLlmDone = performance.now()
                 // 오디오가 끝내 안 나오는 경우(TTS 실패 등)에도 기록이 남도록 5초 뒤 강제 보고
                 setTimeout(() => { if (_activeTurn === turn) { _activeTurn = null; reportVoiceTurn(turn, 'timeout') } }, 5000)
@@ -838,6 +843,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
       isProcessingRef.current = false
       pendingTextRef.current = null
       clearTtsQueue()
+      resetTtsSpeed()   // 앞 손님이 고른 배속이 다음 손님에게 남지 않게 기본 배속으로
       // 새 ID를 먼저 저장해 이후 장바구니 요청과 즉시 같은 세션을 바라보게 한다.
       sessionIdRef.current = newSessionId()
       greetedRef.current = false   // 새 세션이므로 다음에 열 때 인사말을 다시 한다
@@ -853,6 +859,9 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
     window.addEventListener('kiosk-session-reset', handleReset)
     return () => window.removeEventListener('kiosk-session-reset', handleReset)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 음성 배속이 바뀌면(손님 조작·관리자 설정 변경) 지금 읽는 중인 문장에도 바로 적용한다. 다음 문장부터는 playTts가 적용한다.
+  useEffect(() => subscribeTtsSpeed(() => { if (audioRef.current) applySpeed(audioRef.current) }), [])
 
   // ─── 렌더 ─────────────────────────────────────────────────────────────────────
 
@@ -920,7 +929,7 @@ export default function ChatPanel({ onClose, isOpen = true, cart = [], screen = 
         )}
       </div>
 
-      {/* 음성 인식 상태 표시 */}
+      {/* 음성 인식 상태 표시 (음성 배속 조절은 화면 하단 컨트롤 바에 있다 — App.jsx) */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '8px 12px 12px', gap: 10, flexShrink: 0,

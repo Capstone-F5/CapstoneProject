@@ -21,6 +21,7 @@ from contextvars import ContextVar
 
 _cart: ContextVar[list] = ContextVar("kiosk_cart", default=[])
 _actions: ContextVar[list] = ContextVar("kiosk_actions", default=[])
+_screen: ContextVar[str] = ContextVar("kiosk_screen", default="")
 _user_input: ContextVar[str] = ContextVar("kiosk_user_input", default="")
 _checkout_snapshot: ContextVar[frozenset] = ContextVar("kiosk_checkout_snapshot", default=frozenset())
 _last_bot_text: ContextVar[str] = ContextVar("kiosk_last_bot_text", default="")
@@ -34,6 +35,15 @@ _added_keys: ContextVar[set] = ContextVar("kiosk_added_keys", default=set())
 
 def set_cart(cart: list) -> None:
     _cart.set(cart)
+
+
+def set_screen(screen: str | None) -> None:
+    _screen.set(screen or "")
+
+
+def get_screen() -> str:
+    """이번 요청을 보낸 화면(start/orderType/menu/cart/payment). 모르면 빈 문자열."""
+    return _screen.get()
 
 
 def get_cart() -> list:

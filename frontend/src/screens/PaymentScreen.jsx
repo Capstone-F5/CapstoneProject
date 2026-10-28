@@ -1,3 +1,4 @@
+import Glyph from '../components/Glyph'
 export default function PaymentScreen({ total, nav }) {
   return (
     <div style={{
@@ -26,7 +27,7 @@ export default function PaymentScreen({ total, nav }) {
         }}>
           <div style={{ fontSize: 12, color: '#888', fontWeight: 600 }}>신용카드/삼성페이</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff">💳</PayBadge>
+            <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff"><Glyph ch="💳" /></PayBadge>
             <PayBadge bg="#1428A0" color="#fff" small>
               <span style={{ fontSize: 8, fontWeight: 900, display: 'block', lineHeight: 1 }}>SAMSUNG</span>
               <span style={{ fontSize: 11, fontWeight: 900 }}>Pay</span>
@@ -41,7 +42,7 @@ export default function PaymentScreen({ total, nav }) {
           cursor: 'pointer',
         }}>
           <div style={{ fontSize: 12, color: '#888', fontWeight: 600 }}>현금</div>
-          <PayBadge bg="#E8F5E9" color="#333">💵</PayBadge>
+          <PayBadge bg="#E8F5E9" color="#333"><Glyph ch="💵" /></PayBadge>
         </button>
       </div>
 

@@ -9,6 +9,8 @@
   - "X 세트 사이드는 A 음료는 B로 바꿔줘"             (세트 옵션 변경)
   - "X 단품 하나만 빼줘 / 한 개 줄여줘"               (수량 1 감소)
   - "X 단품 전부 빼줘 / 지워줘 / 취소해줘"            (줄 삭제)
+  - "X 말고 Y 단품으로 바꿔줘 / X 취소하고 Y 줘"       (교체: X 줄을 지우고 Y를 같은 수량으로 담음)
+  - "X 세트 5개로 바꿔줘"                              (수량을 그 값으로)
 개입은 가드 기록(record_guard "direct_command")으로 남는다. 판정에 LLM을 쓰지 않아 추가 비용이 없다.
 """
 from __future__ import annotations
@@ -33,6 +35,12 @@ _KEEP_N = re.compile(r"(?:하나|한\s*개|\d+\s*개|[두세네]\s*개)\s*만\s*
 _REMOVE_VERB = re.compile(r"(?:빼|지워|취소|삭제)(?:해)?(?:줘|주세요)?요?")
 _REMOVE_NOT_LINE = re.compile(r"빼고|제외|없이|방금|아까|다시")
 _REMOVE_FILLER = re.compile(r"단품|세트|전부|모두|다|을|를|은|는|도|만|좀|[.,!?~]")
+# 교체: 앞(바뀔 메뉴) 구분어 뒤(새 메뉴) — 한 번만 나오고 양쪽에 메뉴 이름이 하나씩 있을 때만. 빼고는 "양파 빼고"와 겹쳐 새 메뉴가 메뉴 이름일 때만 인정한다.
+_REPLACE_SPLIT = re.compile(r"말고|취소하고|취소하고서|대신|아니고|빼고")
+_REPLACE_ASK = re.compile(r"바꿔|바꾸|변경|줘|주세요|주라|담아|해\s*줘|해줘|할게|할래")
+_REPLACE_BLOCK = re.compile(r"사이드|음료|제외|옵션")   # "세트 말고 단품으로"는 새 메뉴 이름이 없어 교체로 잡히지 않는다(to_single)
+_CHANGE_ASK = re.compile(r"바꿔|바꾸|변경")
+_SET_QTY = re.compile(r"(?:\d+\s*(?:개|잔)|[한두세네]\s*(?:개|잔)|다섯|여섯|일곱|여덟|아홉|열\s*(?:개|잔)|하나|둘|셋|넷)(?:로|으로)\s*(?:바꿔|바꾸|변경|해\s*줘|해줘|수정)")
 
 
 def _compact(text: str) -> str:
@@ -83,6 +91,9 @@ def parse_command(text: str, menu: list[dict]) -> dict | None:
     burger = _one_named(text, burgers)
     side_w, drink_w = _spoken_options(text)
 
+    replace = _parse_replace(text, menu)
+    if replace:
+        return replace
     if burger and _TO_SINGLE.search(text):
         return {"kind": "to_single", "item": burger}
     if burger and _TO_SET.search(text) and side_w and drink_w:
@@ -117,7 +128,54 @@ def parse_command(text: str, menu: list[dict]) -> dict | None:
         if target:
             return {"kind": "reduce_one", "item": target,
                     "is_set": True if guards.mentions_set(text) else (False if guards.mentions_single(text) else None)}
+    if _SET_QTY.search(text) and not _NO_QTY_CONTEXT.search(text):
+        # "치즈스틱 5개로 바꿔줘" — 수량을 그 값으로 정한다("하나 더"는 더하는 말이라 여기 해당하지 않는다)
+        target, n = _one_named(text, menu), guards.quantity_in(text)
+        if target and n and 1 <= n <= 20:
+            return {"kind": "set_qty", "item": target, "n": n,
+                    "is_set": True if guards.mentions_set(text) else (False if guards.mentions_single(text) else None)}
+    return _parse_replace_implicit(text, menu)
+
+
+# 세트 옵션 변경·교체·재료 제외 문장은 수량 변경이 아니다
+_NO_QTY_CONTEXT = re.compile(r"사이드|음료|제외|말고|대신|아니고|빼고|세트로|단품으로")
+
+
+def _new_type(text: str) -> str | None:
+    if guards.mentions_set(text):
+        return "set"
+    if guards.mentions_single(text):
+        return "single"
     return None
+
+
+def _parse_replace(text: str, menu: list[dict]) -> dict | None:
+    """"A 말고 B 단품으로 바꿔줘", "A 세트 말고 B 세트로 바꿔줘", "A 취소하고 B 줘" — A(장바구니의 메뉴)를 지우고 B를 담는 교체 명령.
+    구분어가 한 번만 나오고 양쪽에 메뉴 이름이 하나씩 있을 때만 확정한다. B에 단품/세트를 말하지 않았으면 A의 형태를 따른다
+    (A가 세트면 사이드·음료를 그대로 옮기고, 옮길 수 없으면 LLM이 되묻는다)."""
+    parts = _REPLACE_SPLIT.split(text)
+    if len(parts) != 2 or _REPLACE_BLOCK.search(text) or not _REPLACE_ASK.search(parts[1]):
+        return None
+    old, new = _one_named(parts[0], menu), _one_named(parts[1], menu)
+    if not old or not new or old["id"] == new["id"]:
+        return None
+    if _is_burger(old) and guards.mentions_set(parts[0]):
+        old_is_set = True
+    else:
+        old_is_set = False if guards.mentions_single(parts[0]) else None
+    return {"kind": "replace", "item": old, "new": new, "old_is_set": old_is_set,
+            "new_type": _new_type(parts[1]) if _is_burger(new) else None, "qty": guards.quantity_in(parts[1])}
+
+
+def _parse_replace_implicit(text: str, menu: list[dict]) -> dict | None:
+    """"그것만 비건버거 세트로 바꿔달라니까" — 바뀔 메뉴를 말하지 않고 새 버거만 말한 경우. 장바구니에 버거 줄이 정확히 하나일 때만
+    실행 단계가 대상을 정한다(그렇지 않으면 None → LLM이 되묻는다). 세트 옵션·재료 이야기가 섞였거나 구분어가 있으면 해당 없음."""
+    if not _CHANGE_ASK.search(text) or _REPLACE_BLOCK.search(text) or _REPLACE_SPLIT.search(text):
+        return None
+    new = _one_named(text, [i for i in menu if _is_burger(i)])
+    if not new:
+        return None
+    return {"kind": "replace", "item": None, "new": new, "old_is_set": None, "new_type": _new_type(text), "qty": None}
 
 
 def _is_set_line(line: dict, item: dict) -> bool:
@@ -155,6 +213,64 @@ async def _reduce_total(session_id: str, lines: list[dict], by: int) -> None:
         else:
             await api_client.patch_cart_item(session_id, line["cart_item_id"], {"quantity": qty - take})
             push_action({"type": "update_item", "cart_item_id": line["cart_item_id"], "quantity": qty - take})
+
+
+async def _execute_replace(session_id: str, cmd: dict, cart: dict, menu: list[dict]) -> str | None:
+    """바뀔 줄을 지우고 새 버거/메뉴를 같은 수량으로 담는다. 세트는 사이드·음료를 같은 이름으로 옮긴다.
+    새 메뉴를 먼저 담고 나서 지우므로 담기가 실패하면 장바구니는 그대로다. 대상이 하나로 정해지지 않거나
+    옮길 수 없는 옵션(재료 제외, 새 버거에 없는 사이드·음료, 단품→세트)이 있으면 None → LLM이 손님에게 되묻는다."""
+    new_item = await api_client.fetch_menu_item_by_id(cmd["new"]["id"])
+    if not new_item or not new_item.get("is_available", True):
+        return None
+    if cmd["item"] is not None:
+        old_item = await api_client.fetch_menu_item_by_id(cmd["item"]["id"])
+        lines = _lines_of(cart, old_item, cmd["old_is_set"]) if old_item else []
+    else:
+        burger_ids = {i["id"] for i in menu if _is_burger(i)}
+        lines = [l for l in cart.get("items", []) if l.get("menu_item_id") in burger_ids]
+        if len(lines) != 1:
+            return None
+        old_item = await api_client.fetch_menu_item_by_id(lines[0]["menu_item_id"])
+    if not old_item or old_item["id"] == new_item["id"] or not lines or not _same_options(lines):
+        return None
+    old_is_set = _is_set_line(lines[0], old_item)
+    group_of = {o["id"]: o.get("option_group") for o in old_item.get("options") or []}
+    name_of = {o["id"]: o.get("name_ko") for o in old_item.get("options") or []}
+    chosen = {group_of.get(s["option_id"]): s.get("name") or name_of.get(s["option_id"]) for s in lines[0].get("selected_options", [])}
+    if "EXCLUDE" in chosen:
+        return None   # 빼 달라던 재료가 새 메뉴에도 맞는지 알 수 없다
+    target_set = (cmd["new_type"] == "set") if cmd["new_type"] else old_is_set
+    selected: list[dict] = []
+    side = drink = None
+    if target_set:
+        set_opt = next((o for o in new_item.get("options") or [] if o.get("option_group") == "SET_UPGRADE"), None)
+        if not old_is_set or not set_opt:
+            return None   # 단품 → 세트는 사이드·음료를 정해야 한다
+        side = _pick_option(new_item, "SET_SIDE", chosen.get("SET_SIDE") or "")
+        drink = _pick_option(new_item, "SET_DRINK", chosen.get("SET_DRINK") or "")
+        if not side or not drink:
+            return None
+        selected = [{"option_id": o["id"], "name": o["name_ko"]} for o in (set_opt, side, drink)]
+    qty = cmd.get("qty") or sum(int(l.get("quantity", 1)) for l in lines)
+    old_name, new_name = old_item["name_ko"], new_item["name_ko"]
+    res = await api_client.add_cart_item(session_id, {
+        "menu_item_id": new_item["id"], "quantity": qty, "selected_options": selected, "special_note": None})
+    try:
+        for line in lines:
+            cart_history.record_removed(session_id, line)
+            await api_client.remove_cart_item(session_id, line["cart_item_id"])
+            push_action({"type": "remove_item", "cart_item_id": line["cart_item_id"]})
+    except Exception:
+        if res.get("cart_item_id"):
+            await api_client.remove_cart_item(session_id, res["cart_item_id"])
+        raise
+    cart_history.record_added(session_id, res.get("cart_item_id"), new_name, qty)
+    push_action({"type": "add_item", "menu_item_id": new_item["id"], "name": new_name, "quantity": qty,
+                 "upgrade_to_set": bool(target_set), "side": side["name_ko"] if side else None,
+                 "drink": drink["name_ko"] if drink else None, "exclusions": [], "cart_item_id": res.get("cart_item_id")})
+    kind_word = " 세트" if target_set else (" 단품" if _is_burger(new_item) else "")
+    tail = f" 사이드는 {side['name_ko']}, 음료는 {drink['name_ko']} 그대로예요." if target_set else ""
+    return f"{old_name}{' 세트' if old_is_set else ''} 대신 {new_name}{kind_word} {qty}개를 담았습니다.{tail} 다른 메뉴를 더 주문하시겠어요?"
 
 
 async def execute(session_id: str, cmd: dict, menu: list[dict]) -> str | None:
@@ -203,10 +319,30 @@ async def execute(session_id: str, cmd: dict, menu: list[dict]) -> str | None:
         cart_history.pop_removed(session_id)
         return f"{', '.join(done)}를 다시 담았습니다. 다른 메뉴를 더 주문하시겠어요?"
 
+    if kind == "replace":
+        return await _execute_replace(session_id, cmd, cart, menu)
+
     item = await api_client.fetch_menu_item_by_id(cmd["item"]["id"])
     if not item or not item.get("is_available", True):
         return None
     name = item["name_ko"]
+
+    if kind == "set_qty":
+        lines = _lines_of(cart, item, cmd["is_set"])
+        if not lines or not _same_options(lines):
+            return None   # 줄이 없거나 단품·세트 줄이 함께 있어 어느 것인지 모호하면 LLM이 되묻는다
+        total, n = sum(int(l.get("quantity", 1)) for l in lines), cmd["n"]
+        label = f"{name} 세트" if _is_set_line(lines[0], item) else name
+        if n == total:
+            return f"{label} 수량은 이미 {n}개예요. 다른 메뉴를 더 주문하시겠어요?"
+        if n < total:
+            await _reduce_total(session_id, lines, total - n)
+        else:
+            last = lines[-1]
+            new_qty = int(last.get("quantity", 1)) + (n - total)
+            await api_client.patch_cart_item(session_id, last["cart_item_id"], {"quantity": new_qty})
+            push_action({"type": "update_item", "cart_item_id": last["cart_item_id"], "quantity": new_qty})
+        return f"{label} 수량을 {n}개로 변경했습니다. 다른 메뉴를 더 주문하시겠어요?"
 
     if kind in ("set_order", "to_set", "set_options"):
         set_opt = next((o for o in item["options"] if o.get("option_group") == "SET_UPGRADE"), None)

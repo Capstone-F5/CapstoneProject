@@ -36,6 +36,8 @@ export const COMMON_PHRASES = {
   '주문하실 메뉴를 선택해 주세요':           'select_menu_order.mp3',
   '식사 장소를 확인해 주세요':               'confirm_order_type.mp3',
   '포인트를 적립하시겠습니까':               'ask_points.mp3',
+  // 포인트 적립 "예" 뒤 번호 입력창이 열릴 때(음성 모드) — CartScreen PHONE_GUIDE_TTS
+  '음성으로 번호를 불러주세요':             'say_phone.mp3',
   '결제 수단을 선택해 주세요':               'select_payment.mp3',
 }
 

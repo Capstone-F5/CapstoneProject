@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Glyph from '../components/Glyph'
 import Logo from '../components/Logo'
 import { registerCustomer } from '../services/pointsService'
 import IdleOverlay from '../components/IdleOverlay'
@@ -77,7 +78,7 @@ export default function SignupScreen({ nav }) {
             width: '100%', maxWidth: 420, background: '#fff', borderRadius: 18,
             padding: '40px 28px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
           }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>{result.alreadyMember ? 'ℹ️' : '🎉'}</div>
+            <div style={{ fontSize: 48, marginBottom: 16 }}><Glyph ch={result.alreadyMember ? 'ℹ️' : '🎉'} /></div>
             <p style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>
               {result.alreadyMember ? '이미 가입된 회원입니다' : '회원가입이 완료되었습니다'}
             </p>

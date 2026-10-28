@@ -45,13 +45,30 @@ class ParseCommands(unittest.TestCase):
             "치즈버거 세트로 하나, 사이드는 너겟 음료는 오렌지주스": "set_order",   # 짧은 사이드 이름("너겟" ← 치킨너겟)
             "치즈버거 단품 전부 지워줘": "remove_line",
             "코울슬로 취소해줘": "remove_line",
+            # 교체 / 절대 수량 변경(음성 검증 50개에서 가장 많이 틀린 조작)
+            "아니 치즈버거 단품 말고 데리버거 단품으로 바꿔줘": "replace",
+            "아 불고기버거 단품 취소하고 새우버거 단품으로 줘": "replace",
+            "치즈버거 단품 대신 불고기버거 단품 두 개로 줘": "replace",
+            # 2026-10-26 사용자 세션: 세트 버거를 다른 버거 세트로 — 모델이 같은 줄을 같은 옵션으로 수정하고 "변경했습니다"라고 거짓 안내
+            "불고기버거 세트 말고 새우버거 세트로 바꿔줘": "replace",
+            "불고기버거 세트 말고 새우버거로 바꿔줘": "replace",
+            "그것만 새우버거 세트로 바꿔달라니까.": "replace",
+            "새우버거 세트로 바꿔줘": "replace",
+            "치즈버거 세트 5개로 바꿔줘": "set_qty",
+            "치즈스틱 5개로 바꿔줘": "set_qty",
+            "불고기버거 단품 3개로 바꿔줘": "set_qty",
         }
         for text, want in cases.items():
             self.assertEqual(kind(text), want, text)
 
     def test_not_commands(self):
         for text in ["치즈버거 세트로 하나 줘", "사이드는 치킨너겟", "치즈버거 양파 빼줘", "치즈버거 단품 빼고 결제할게요", "콜라는 얼마예요?",
-                     "결제할게요", "치즈버거 단품으로 줘", "치즈버거 세트 사이드는 치즈스틱 음료는 콜라가 뭐예요?"]:
+                     "결제할게요", "치즈버거 단품으로 줘", "치즈버거 세트 사이드는 치즈스틱 음료는 콜라가 뭐예요?",
+                     # 교체·수량 변경으로 오인하면 안 되는 말
+                     "양파 빼고 치즈버거 단품 줘", "치즈버거 단품 말고 세트로 바꿔줘", "치즈버거 하나 더 줘", "치즈버거 단품 말고 얼마예요?",
+                     "치즈버거 말고 데리버거 말고 새우버거 단품으로 줘",
+                     "치즈버거 단품 말고 데리버거 세트 사이드는 치즈스틱 음료는 콜라로 줘",
+                     "햄버거만 다른 걸로 바꿔줘", "새우버거 세트에 감자튀김 콜라로 하나 줘", "새우버거 세트 사이드를 콜라로 바꿔줘 말고"]:
             self.assertIsNone(kind(text), text)
 
     def test_all_fixed_scenarios_have_no_false_positive(self):
@@ -59,7 +76,7 @@ class ParseCommands(unittest.TestCase):
         grammar = {"undo_last": "undo", "readd_removed": "readd", "add_set_oneshot": "set_order",
                    "add_second_set": "set_order", "convert_to_set": "to_set", "convert_to_single": "to_single",
                    "change_side": "set_options", "change_drink": "set_options", "change_both": "set_options",
-                   "reduce_qty": "reduce_one", "remove_line": "remove_line"}
+                   "reduce_qty": "reduce_one", "remove_line": "remove_line", "set_qty": "set_qty"}
         for sc in gen.load_fixed():
             for st in sc["steps"]:
                 if st["kind"] == "say":
@@ -69,6 +86,176 @@ class ParseCommands(unittest.TestCase):
                         self.assertIn(got, (None, grammar[st["op"]]), f"{sc['id']} {st['text']}")
                     else:
                         self.assertIsNone(got, f"{sc['id']} {st['text']}")
+
+
+class FakeApi:
+    """cart_commands가 쓰는 api_client 함수를 메모리 장바구니로 대신한다."""
+
+    def __init__(self, lines, fail_add=False):
+        self.lines, self.fail_add, self.next_id, self.calls = lines, fail_add, 100, []
+
+    async def get_cart(self, session_id):
+        return {"items": [dict(l) for l in self.lines]}
+
+    async def fetch_menu_item_by_id(self, item_id):
+        return next((dict(i, is_available=True) for i in MENU2 if i["id"] == item_id), None)
+
+    async def add_cart_item(self, session_id, payload):
+        self.calls.append(("add", payload["menu_item_id"], payload["quantity"]))
+        if self.fail_add:
+            raise RuntimeError("add failed")
+        self.next_id += 1
+        item = next(i for i in MENU2 if i["id"] == payload["menu_item_id"])
+        line = {"cart_item_id": f"c{self.next_id}", "menu_item_id": item["id"], "name_ko": item["name_ko"],
+                "quantity": payload["quantity"], "selected_options": payload["selected_options"]}
+        self.lines.append(line)
+        return {"cart_item_id": line["cart_item_id"]}
+
+    async def remove_cart_item(self, session_id, cart_item_id):
+        self.calls.append(("remove", cart_item_id))
+        self.lines[:] = [l for l in self.lines if l["cart_item_id"] != cart_item_id]
+
+    async def patch_cart_item(self, session_id, cart_item_id, payload):
+        self.calls.append(("patch", cart_item_id, payload))
+        for l in self.lines:
+            if l["cart_item_id"] == cart_item_id:
+                l.update(payload)
+
+
+def mitem(name):
+    return next(i for i in MENU2 if i["name_ko"] == name)
+
+
+def line(cid, name, qty=1, set_=False):
+    item = mitem(name)
+    opts = [{"option_id": "u", "name": "세트 업그레이드"}, {"option_id": "s0", "name": "감자튀김"}] if set_ else []
+    return {"cart_item_id": cid, "menu_item_id": item["id"], "name_ko": name, "quantity": qty, "selected_options": opts}
+
+
+class ExecuteCommands(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from ai_modules.llm import action_context
+        action_context.reset_actions()
+        self.ctx = action_context
+        self._saved = {n: getattr(C.api_client, n) for n in ("get_cart", "fetch_menu_item_by_id", "add_cart_item",
+                                                              "remove_cart_item", "patch_cart_item")}
+
+    def tearDown(self):
+        for n, f in self._saved.items():
+            setattr(C.api_client, n, f)
+
+    def use(self, api):
+        for n in self._saved:
+            setattr(C.api_client, n, getattr(api, n))
+
+    async def run_cmd(self, api, text):
+        self.use(api)
+        cmd = C.parse_command(text, MENU2)
+        self.assertIsNotNone(cmd, text)
+        return await C.execute("t-exec", cmd, MENU2)
+
+    async def test_replace_swaps_line_and_keeps_quantity(self):
+        api = FakeApi([line("c1", "데리버거", 2), line("c2", "콜라(M)", 1)])
+        out = await self.run_cmd(api, "아니 데리버거 단품 말고 새우버거 단품으로 바꿔줘")
+        self.assertIn("데리버거 대신 새우 버거 단품 2개", out)
+        self.assertEqual(sorted((l["name_ko"], l["quantity"]) for l in api.lines), [("새우 버거", 2), ("콜라(M)", 1)])
+        self.assertEqual([a["type"] for a in self.ctx.get_actions()], ["remove_item", "add_item"])
+
+    @staticmethod
+    def set_line(cid, name, side="감자튀김", drink="콜라"):
+        item = mitem(name)
+        opts = [{"option_id": o["id"], "name": o["name_ko"]} for o in item["options"]
+                if (o["option_group"] == "SET_UPGRADE") or (o["option_group"] == "SET_SIDE" and o["name_ko"] == side)
+                or (o["option_group"] == "SET_DRINK" and o["name_ko"] == drink)]
+        return {"cart_item_id": cid, "menu_item_id": item["id"], "name_ko": name, "quantity": 1, "selected_options": opts}
+
+    async def test_set_to_set_replace_carries_side_and_drink(self):
+        """사용자 세션 11:28~11:31: 그릴드 비프 버거 세트를 비건 버거 세트로 — 사이드·음료는 그대로 옮기고 새 줄로 바꾼다."""
+        api = FakeApi([self.set_line("c1", "불고기 버거", "치즈스틱", "생수")])
+        out = await self.run_cmd(api, "불고기버거 세트 말고 새우버거 세트로 바꿔줘")
+        self.assertIn("불고기 버거 세트 대신 새우 버거 세트 1개", out)
+        self.assertIn("사이드는 치즈스틱, 음료는 생수 그대로", out)
+        self.assertEqual([l["name_ko"] for l in api.lines], ["새우 버거"])
+        names = sorted(o["name"] for o in api.lines[0]["selected_options"])
+        self.assertEqual(names, sorted(["세트 업그레이드", "치즈스틱", "생수"]))
+        self.assertEqual([a["type"] for a in self.ctx.get_actions()], ["remove_item", "add_item"])
+        self.assertTrue(self.ctx.get_actions()[-1]["upgrade_to_set"])
+
+    async def test_implicit_target_uses_the_only_burger_line(self):
+        api = FakeApi([self.set_line("c1", "불고기 버거"), line("c2", "콜라(M)", 2)])
+        out = await self.run_cmd(api, "그것만 새우버거 세트로 바꿔달라니까.")
+        self.assertIn("새우 버거 세트 1개", out)
+        self.assertEqual(sorted(l["name_ko"] for l in api.lines), ["새우 버거", "콜라(M)"])
+        self.assertEqual(next(l for l in api.lines if l["name_ko"] == "콜라(M)")["quantity"], 2)   # 다른 줄은 그대로
+
+    async def test_implicit_target_needs_exactly_one_burger_line(self):
+        api = FakeApi([self.set_line("c1", "불고기 버거"), line("c2", "데리버거", 1)])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))
+        self.assertEqual(api.calls, [])
+
+    async def test_same_burger_or_unmovable_options_go_to_llm(self):
+        api = FakeApi([self.set_line("c1", "새우 버거")])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 같은 버거(단품→세트 변경 요청 등)
+        api = FakeApi([line("c1", "불고기 버거", 1)])
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 단품 → 세트는 사이드·음료를 정해야 한다
+        api = FakeApi([self.set_line("c1", "불고기 버거")])
+        api.lines[0]["selected_options"].append({"option_id": "x", "name": "양파 제외"})
+        orig = api.fetch_menu_item_by_id
+
+        async def with_exclude(item_id):   # 시험용 메뉴에는 재료 제외 옵션이 없어서 하나 붙여 준다
+            item = dict(await orig(item_id))
+            item["options"] = item["options"] + [{"id": "x", "option_group": "EXCLUDE", "name_ko": "양파 제외"}]
+            return item
+        api.fetch_menu_item_by_id = with_exclude
+        self.assertIsNone(await self.run_cmd(api, "새우버거 세트로 바꿔줘"))                 # 재료 제외가 있으면 되묻는다
+        self.assertEqual(api.calls, [])
+
+    async def test_replace_quantity_spoken_wins(self):
+        api = FakeApi([line("c1", "치즈 버거", 1)])
+        await self.run_cmd(api, "치즈버거 단품 대신 불고기버거 단품 두 개로 줘")
+        self.assertEqual([(l["name_ko"], l["quantity"]) for l in api.lines], [("불고기 버거", 2)])
+
+    async def test_replace_without_target_line_does_nothing(self):
+        api = FakeApi([line("c1", "콜라(M)", 1)])
+        self.assertIsNone(await self.run_cmd(api, "아니 데리버거 단품 말고 새우버거 단품으로 바꿔줘"))
+        self.assertEqual(api.calls, [])
+
+    async def test_replace_ambiguous_single_and_set_lines_goes_to_llm(self):
+        api = FakeApi([line("c1", "데리버거", 1), line("c2", "데리버거", 1, set_=True)])
+        self.assertIsNone(await self.run_cmd(api, "데리버거 말고 새우버거 단품으로 바꿔줘"))
+        self.assertEqual(api.calls, [])
+
+    async def test_replace_add_failure_leaves_cart_untouched(self):
+        api = FakeApi([line("c1", "데리버거", 1)], fail_add=True)
+        with self.assertRaises(RuntimeError):
+            await self.run_cmd(api, "데리버거 단품 말고 새우버거 단품으로 바꿔줘")
+        self.assertEqual([l["name_ko"] for l in api.lines], ["데리버거"])
+        self.assertNotIn("remove", [c[0] for c in api.calls])
+
+    async def test_set_qty_increase_decrease_same(self):
+        api = FakeApi([line("c1", "치즈스틱(2개)", 1)] if any(i["name_ko"] == "치즈스틱(2개)" for i in MENU2) else [line("c1", "콜라(M)", 1)])
+        name = api.lines[0]["name_ko"]
+        spoken = "치즈스틱" if name.startswith("치즈스틱") else "콜라"
+        await self.run_cmd(api, f"{spoken} 5개로 바꿔줘")
+        self.assertEqual(api.lines[0]["quantity"], 5)
+        out = await self.run_cmd(api, f"{spoken} 2개로 바꿔줘")
+        self.assertEqual(sum(l["quantity"] for l in api.lines), 2)
+        out = await self.run_cmd(api, f"{spoken} 2개로 바꿔줘")
+        self.assertIn("이미 2개", out)
+
+    async def test_set_qty_keeps_set_options_and_targets_only_that_line(self):
+        api = FakeApi([line("c1", "데리버거", 1, set_=True), line("c2", "새우 버거", 1)])
+        out = await self.run_cmd(api, "데리버거 세트 4개로 바꿔줘")
+        self.assertIn("데리버거 세트 수량을 4개로", out)
+        d = next(l for l in api.lines if l["cart_item_id"] == "c1")
+        self.assertEqual((d["quantity"], len(d["selected_options"])), (4, 2))   # 세트 옵션 유지
+        self.assertEqual(next(l for l in api.lines if l["cart_item_id"] == "c2")["quantity"], 1)
+        self.assertNotIn("remove", [c[0] for c in api.calls])
+
+    async def test_set_qty_ambiguous_goes_to_llm(self):
+        api = FakeApi([line("c1", "데리버거", 1), line("c2", "데리버거", 1, set_=True)])
+        self.assertIsNone(await self.run_cmd(api, "데리버거 3개로 바꿔줘"))
+        self.assertEqual(api.calls, [])
 
 
 class SetFollowup(unittest.TestCase):

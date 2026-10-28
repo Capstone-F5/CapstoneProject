@@ -1,4 +1,5 @@
 import { PaymentWaitScreen } from './CardPaymentScreen'
+import Glyph from '../components/Glyph'
 
 function BarcodeIllustration() {
   return (
@@ -23,7 +24,7 @@ function BarcodeIllustration() {
             height: 1.5, background: '#f00', opacity: 0.8,
           }} />
         </div>
-        <div style={{ textAlign: 'center', fontSize: 30, marginTop: -4 }}>✊</div>
+        <div style={{ textAlign: 'center', fontSize: 30, marginTop: -4 }}><Glyph ch="✊" /></div>
       </div>
 
       <div style={{

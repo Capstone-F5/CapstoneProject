@@ -89,7 +89,7 @@ def _order_type_from(text: str) -> str | None:
 
 
 def _method_from(text: str) -> str | None:
-    lowered = text.lower()
+    lowered = text.lower().replace("페이지", "").replace("payment", "")   # "결제페이지"의 "페이"는 간편결제가 아니다
     hits = [name for name, kws in _EXPLICIT_METHOD if any(kw.lower() in lowered for kw in kws)]
     if not hits and any(g in lowered for g in _GENERIC_PAY):
         hits = ["pay"]
@@ -131,7 +131,8 @@ def ensure_actions(
 
     # 3) 결제 수단 — 포인트 질문이 이전 턴에 끝난 뒤에만(서버의 순서 규칙을 우회하지 않는다)
     if (screen == "cart" and not _has(actions, "payment_method")
-            and "start_checkout" in snapshot_before and "points" in snapshot_before):
+            and "start_checkout" in snapshot_before and "points" in snapshot_before
+            and not checkout_progress.awaiting_points_phone(snapshot_before, _has(actions, "points_phone"))):
         method = _method_from(text)
         if method:
             added.append({"type": "payment_method", "value": method})
@@ -146,6 +147,19 @@ def ensure_actions(
         elif _POINTS_YES.search(text):
             added.append({"type": "points", "value": "yes"})
             checkout_progress.mark_done(session_id, "points")
+            checkout_progress.mark_done(session_id, "points_yes")
+
+    # 3-3) 전화번호 — 적립하겠다고 했는데 번호를 말한 턴에 모델이 points_phone을 안 보낸 경우(말로는 "확인했습니다"라며 액션을 빼먹음).
+    # 손님이 이번 말에서 010으로 시작하는 10~11자리를 실제로 말했을 때만 직접 보낸다(번호를 지어내지 않는다).
+    said_yes = ("points_yes" in snapshot_before or any(a.get("type") == "points" and a.get("value") == "yes" for a in added))
+    if (screen == "cart" and said_yes and "points_phone" not in snapshot_before
+            and not _has(actions, "points_phone") and not _has(actions, "payment_method")):
+        from ai_modules.llm.action_tools import _spoken_digits
+        digits = _spoken_digits(text)
+        if len(digits) in (10, 11) and digits.startswith("01"):
+            added.append({"type": "points_phone", "phone": digits})
+            checkout_progress.mark_done(session_id, "points")
+            checkout_progress.mark_done(session_id, "points_phone")
 
     # 4) 장바구니 열기 — "장바구니 보여줘"에 모델이 화면 설명만 하고 navigate를 빼먹는 경우
     if (screen not in ("cart", "payment") and cart and not _has(actions, "navigate")

@@ -27,6 +27,17 @@ def mark_done(session_id: str, step: str) -> None:
     _done.setdefault(session_id, set()).add(step)
 
 
+def unmark(session_id: str, step: str) -> None:
+    """기록한 단계를 지운다(예: 포인트 적립 yes를 no로 번복)."""
+    _done.get(session_id, set()).discard(step)
+
+
+def awaiting_points_phone(before_turn: frozenset[str], phone_given_this_turn: bool = False) -> bool:
+    """포인트 적립을 하겠다고 했는데(points_yes) 전화번호 입력(points_phone)이 아직 안 끝났으면 True.
+    이 상태에서 결제 수단으로 넘어가면 전화번호 없이 적립이 선택된 채 결제된다(2026-10-13 로그)."""
+    return "points_yes" in before_turn and "points_phone" not in before_turn and not phone_given_this_turn
+
+
 def was_done_before_this_turn(before_turn: frozenset[str], step: str) -> bool:
     return step in before_turn
 
@@ -34,3 +45,5 @@ def was_done_before_this_turn(before_turn: frozenset[str], step: str) -> bool:
 def reset(session_id: str) -> None:
     """새 주문이 시작될 때(장바구니 비우기 등) 이전 주문의 결제 진행 상태를 지운다."""
     _done.pop(session_id, None)
+    from . import allergy
+    allergy.reset(session_id)

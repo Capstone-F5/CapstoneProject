@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 import re
 from .action_context import (
     push_action, get_actions, get_user_input, get_checkout_snapshot, get_last_bot_text, get_recent_user_text,
-    add_seen_this_turn, get_recent_turns,
+    add_seen_this_turn, get_recent_turns, get_screen,
 )
 from . import guards
 from .order_parser import menu_key as _menu_key, named_menus as _named_menus
@@ -333,6 +333,20 @@ def _check_add_item(item: dict, quantity: int, upgrade_to_set: bool, side: str |
     except Exception:  # noqa: BLE001 - 가드 때문에 주문이 막히면 안 된다
         menu = None
 
+    # 0-0) 손님이 알레르기가 있다고 밝혔고 이 메뉴에 그 성분이 들어 있으면 담지 않는다(2026-10-06: 대두 알레르기 손님에게 F 버거 안내)
+    # 손님이 알면서도 이 메뉴를 고집하는 경우를 위해 이번 발화에 메뉴 이름이 직접 나오면(예: "그래도 F버거 줘") 막지 않는다.
+    from . import allergy
+    try:
+        _codes = allergy.recall(get_session_id())
+    except RuntimeError:   # 세션 ID가 없으면 기억된 알레르기도 없다 — 가드 때문에 주문이 막히면 안 된다
+        _codes = set()
+    if _codes and guards.has_hangul(user):
+        msg = allergy.warning_for_add(item, _codes)
+        if msg and not _named_menus(re.sub(r"\s+", "", user), [name]):
+            msg = guards.block("allergy_conflict", f"알레르기({','.join(sorted(_codes))}) 손님이 {name} 담기 시도", msg)
+            if msg:
+                return msg, item, quantity
+
     # 0) 거절·종료 답변("아니", "아니요", "없어요", "됐어요")에서는 절대 담지 않는다 (2026-10-23 실제 로그:
     # "그릴드 비프 버거 세트를 담았습니다. 다른 메뉴를 추가하시겠어요?" → "아니."에 직전 세트를 한 번 더 담은 사고)
     if guards.has_hangul(user) and guards.is_refusal_only(user):
@@ -638,10 +652,25 @@ def remove_item(cart_item_id: str | None = None) -> str:
         cart_item_id = cart_item["cart_item_id"]
         user = get_user_input()
         if guards.has_hangul(user):
-            if not guards.has_remove_intent(user):
+            # "바꿔줘/변경"은 삭제 의사가 아니다 — "F버거 세트 5개로 바꿔줘"에 모델이 무관한 줄을 지운 사고(음성 검증 R15).
+            # 교체("A 말고 B로")는 삭제 후 담기이므로 말고/대신이 있으면 허용한다.
+            if not guards.has_remove_intent(user) or (not guards.has_pure_remove_intent(user) and not guards.has_replace_words(user)):
                 msg = guards.block(
                     "remove_no_intent", f"「{user[:30]}」 삭제 의사 없이 {cart_item.get('name_ko')} 삭제 시도",
-                    "오류: 손님이 삭제·취소를 말하지 않았습니다. 장바구니에서 지우지 말고 손님이 원하는 것을 다시 확인하세요.")
+                    "오류: 손님이 삭제·취소를 말하지 않았습니다. 장바구니에서 지우지 말고 손님이 원하는 것을 다시 확인하세요. "
+                    "수량을 바꾸라는 말이면 update_item_options(quantity=...)를 쓰세요.")
+                if msg:
+                    return msg
+            try:
+                menu = _run(api_client.fetch_menu_items())
+            except Exception:  # noqa: BLE001 - 가드 때문에 삭제가 막히면 안 된다
+                menu = None
+            wrong = _target_mismatch(user, cart_item.get("name_ko", ""), menu)
+            if wrong:
+                msg = guards.block(
+                    "remove_wrong_target", f"「{user[:30]}」 말한 메뉴={wrong} / 삭제 대상={cart_item.get('name_ko')}",
+                    f"오류: 손님이 말한 메뉴는 '{wrong}'인데 삭제하려는 줄은 '{cart_item.get('name_ko')}'입니다. "
+                    f"다른 줄을 지우지 말고, 장바구니에서 '{wrong}'의 cart_item_id를 찾아 다시 호출하세요.")
                 if msg:
                     return msg
             elif cart_item.get("quantity", 1) > 1 and guards.wants_reduce_one(user):
@@ -829,6 +858,20 @@ def update_item_options(
 
         payload["selected_options"] = kept + new_selected
 
+    # 바뀌는 내용이 없는 수정은 거절한다. 메뉴(버거 종류) 자체는 이 도구로 바꿀 수 없는데, 모델이 "비건 버거 세트로 바꿔줘"에
+    # 같은 줄을 같은 옵션으로 반복 수정하고 "변경했습니다"라고 거짓 안내를 했다(2026-10-26 11:28~11:31 실제 대화).
+    current_ids = sorted(s["option_id"] for s in cart_item.get("selected_options", []))
+    new_ids = sorted(s["option_id"] for s in payload["selected_options"]) if "selected_options" in payload else current_ids
+    if (new_ids == current_ids and payload.get("quantity") in (None, cart_item.get("quantity"))
+            and ("special_note" not in payload or payload["special_note"] == cart_item.get("special_note"))):
+        msg = guards.block(
+            "update_noop", f"{cart_item.get('name_ko')} 줄을 같은 옵션·수량으로 수정하려는 호출",
+            f"오류: '{cart_item.get('name_ko')}' 줄은 바뀌는 내용이 없습니다(옵션·수량이 이미 같음). 메뉴(버거 종류) 자체는 "
+            "update_item_options로 바꿀 수 없습니다. 다른 메뉴로 바꾸려면 remove_item으로 지운 뒤 add_item으로 새 메뉴를 "
+            "담으세요(세트면 사이드·음료도 함께). 바뀐 것이 없다면 변경했다고 말하지 마세요.")
+        if msg:
+            return msg
+
     try:
         _run(api_client.patch_cart_item(session_id, cart_item_id, payload))
     except Exception as e:
@@ -921,6 +964,7 @@ def check_user_points(phone: str) -> str:
     if len(digits) == 11:
         push_action({"type": "points_phone", "phone": digits})
         checkout_progress.mark_done(get_session_id(), "points")
+        checkout_progress.mark_done(get_session_id(), "points_phone")
 
     if data is None:
         return "등록된 회원 정보가 없습니다. 주문 후 포인트 적립이 가능합니다."
@@ -934,6 +978,9 @@ def check_user_points(phone: str) -> str:
 @tool
 def navigate(screen: str) -> str:
     """화면을 이동한다. Args: screen: 'menu' | 'cart' | 'payment'"""
+    if screen and screen == get_screen():
+        # 이미 그 화면이다 — 이동 액션을 또 보내지 않는다("결제페이지 이동해줘"를 cart 화면에서 말한 경우, 2026-10-26 로그)
+        return f"이미 {screen} 화면입니다. 이동하지 말고 다음 단계만 진행하세요."
     push_action({"type": "navigate", "screen": screen})
     return f"{screen} 화면으로 이동"
 
@@ -973,7 +1020,8 @@ _PAYMENT_METHOD_KEYWORDS: dict[str, list[str]] = {
 
 
 def _payment_method_supported_by_input(value: str) -> bool:
-    text = get_user_input().lower()
+    # "결제페이지 이동해줘"의 "페이", "payment page"의 "pay"를 간편결제 언급으로 읽지 않는다(2026-10-26 로그)
+    text = get_user_input().lower().replace("페이지", "").replace("payment", "")
     keywords = _PAYMENT_METHOD_KEYWORDS.get(value, [])
     return any(kw.lower() in text for kw in keywords)
 
@@ -1049,8 +1097,14 @@ def ui_action(
         # 전화번호는 10~11자리여야 한다. 모자란 번호를 그대로 화면에 보내면 잘못된 번호로 조회·적립된다.
         phone_digits = "".join(ch for ch in (value or "") if ch.isdigit())
         # 모델이 들은 자릿수가 모자랄 때 번호를 지어내 채우는 일이 재현되므로, 손님 발화에서 읽힌 숫자와도 맞춰 본다.
-        heard = _spoken_digits(get_user_input())
-        if heard and heard != phone_digits:
+        heard = _spoken_digits(get_user_input()) or _spoken_digits(get_recent_user_text())
+        if not heard:
+            # 손님이 번호를 말한 적이 없는데 모델이 번호를 지어낸 경우(검증 실행 R40: "카드로 할게요"에 11자리를 채워 결제 수단까지 진행)
+            return (
+                "오류: 손님이 전화번호를 말하지 않았습니다. 번호를 지어내지 말고 액션을 보내지 말고, "
+                "'전화번호를 말씀해 주세요'라고 안내하세요."
+            )
+        if heard != phone_digits:
             phone_digits = heard
         if len(phone_digits) not in (10, 11):
             return (
@@ -1090,6 +1144,12 @@ def ui_action(
                 "오류: 포인트 적립 여부를 먼저 물어야 합니다. 결제수단을 언급했더라도, 이번 턴에는 "
                 "결제수단을 정하지 말고 '포인트 적립하시겠어요?'를 먼저 물어보세요."
             )
+        if checkout_progress.awaiting_points_phone(
+                get_checkout_snapshot(), any(x.get("type") == "points_phone" for x in get_actions())):
+            return (
+                "오류: 포인트 적립을 선택했지만 전화번호를 아직 받지 못했습니다. 결제수단을 정하지 말고 "
+                "'전화번호를 말씀해 주세요'라고 다시 안내하세요. 고객이 적립을 원하지 않는다고 하면 points(no)를 호출하세요."
+            )
         if not _payment_method_supported_by_input(value):
             return (
                 "오류: 이번 발화에 결제수단이 실제로 언급되지 않았습니다. 카드/현금/간편결제 중 "
@@ -1119,7 +1179,14 @@ def ui_action(
     push_action(payload)
     if action in ("start_checkout", "points"):
         checkout_progress.mark_done(get_session_id(), action)
+        if action == "points":
+            # 적립하겠다고 하면 전화번호를 받을 때까지 결제 수단 단계로 넘어가지 않는다(payment_method 검증 참고)
+            if value == "yes":
+                checkout_progress.mark_done(get_session_id(), "points_yes")
+            else:
+                checkout_progress.unmark(get_session_id(), "points_yes")
     elif action == "points_phone":
+        checkout_progress.mark_done(get_session_id(), "points_phone")
         # points_phone은 고객이 "적립할게"라고 답한 뒤에만 도달하는 단계다. 중간의 points(yes)
         # 툴 호출 자체가 가끔 생략돼도(재현되는 신뢰도 문제) 여기 도달했다는 사실 자체가 포인트
         # 질문에 실제로 답했다는 증거이므로, points 완료로도 함께 기록해 결제수단 단계가

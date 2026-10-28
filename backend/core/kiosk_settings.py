@@ -37,6 +37,11 @@ DEFAULT_KIOSK_SETTINGS: dict[str, Any] = {
         "domain_guard_enabled": True,          # Stage 3: 노래 가사·주변 일상 대화 도메인 필터 활성화
         "barge_in_enabled": False,             # TTS 안내 재생 중 사용자 음성 끼어들기(Barge-in) 허용
     },
+    "tts": {
+        "default_speed": 1.0,                  # LLM 대화 음성의 기본 배속 (min_speed ~ max_speed 안). 새 손님은 이 값으로 시작
+        "min_speed": 0.7,                      # 하단 컨트롤 바에서 손님이 낮출 수 있는 최저 배속 (0.5 ~ 1.0)
+        "max_speed": 1.5,                      # 하단 컨트롤 바에서 손님이 올릴 수 있는 최고 배속 (1.0 ~ 2.0)
+    },
     "approach": {
         "preset": "standard",                  # near | standard | far | custom
         "enabled": True,                       # 대기 화면 접근 감지 활성화 여부
@@ -87,6 +92,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def _clamp_float(value: Any, lo: float, hi: float, fallback: float) -> float:
+    """숫자가 아니거나 NaN/무한대이면 fallback(범위 안으로 자름), 아니면 [lo, hi]로 자른다."""
+    try:
+        v = float(value)
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError
+    except (TypeError, ValueError):
+        v = fallback
+    return max(lo, min(hi, v))
+
+
 def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
     s = _deep_merge(DEFAULT_KIOSK_SETTINGS, settings)
     s["debug_mode"] = bool(s.get("debug_mode", False))
@@ -106,6 +122,13 @@ def _sanitize(settings: dict[str, Any]) -> dict[str, Any]:
     m["compression_threshold"] = round(max(1.4, min(5.0, float(m.get("compression_threshold", 2.4)))), 2)
     m["domain_guard_enabled"] = bool(m.get("domain_guard_enabled", True))
     m["barge_in_enabled"] = bool(m.get("barge_in_enabled", False))
+
+    if not isinstance(s.get("tts"), dict):   # 잘못된 타입이 들어오면 기본값으로
+        s["tts"] = copy.deepcopy(DEFAULT_KIOSK_SETTINGS["tts"])
+    t = s["tts"]
+    t["min_speed"] = round(_clamp_float(t.get("min_speed"), 0.5, 1.0, 0.7), 2)
+    t["max_speed"] = round(_clamp_float(t.get("max_speed"), 1.0, 2.0, 1.5), 2)
+    t["default_speed"] = round(_clamp_float(t.get("default_speed"), t["min_speed"], t["max_speed"], 1.0), 2)
 
     a = s["approach"]
     a["enabled"] = bool(a.get("enabled", True))

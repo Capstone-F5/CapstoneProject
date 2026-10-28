@@ -45,6 +45,10 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from suite_metrics import (counts_from_cart, counts_from_expected, diff, format_summary, is_soft_replace,   # noqa: E402
+                           new_discrepancy, scenario_status, summarize)
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -813,6 +817,106 @@ FLOW_SCENARIOS: list[Scenario] = [
 SCENARIOS += FLOW_SCENARIOS
 
 
+# ── 회귀: 실제 대화 로그(logs/conversations)에서 나온 실패 사례 ──────────────────────
+# 각 시나리오는 로그의 날짜와 증상을 제목에 적었다. 고친 뒤 다시 깨지지 않는지 본다.
+REGRESSION_SCENARIOS: list[Scenario] = [
+    Scenario("G01", "회귀", "10-13 '그냥 결제해줘'에 단품이 또 담김(세트 담은 직후)", [
+        state(M, D),
+        say("비건버거 하나 해줘", no_actions=["add_item"]),
+        say("세트로 해줘", no_actions=["add_item"]),
+        say("치즈스틱", no_actions=["add_item"]),
+        say("콜라", cart=[line("비건 버거", 1, set=True)], lines=1),
+        say("아니, 그냥 결제해줘.", actions=["start_checkout"], cart=[line("비건 버거", 1, set=True)], lines=1),
+    ]),
+    Scenario("G02", "회귀", "10-13 '정립할게'(적립 오인식) 뒤 전화번호 없이 결제 수단으로 넘어감", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("정립할게.", actions=["points"]),
+        say("카드로 결제할게.", no_actions=["payment_method"]),
+        say("공일공 일이삼사 오육칠팔", actions=["points_phone"]),
+        say("카드로 할게요", actions=["payment_method"]),
+    ]),
+    Scenario("G03", "회귀", "10-26 '대전에서 먹을게'(매장 오인식)가 무응답으로 끝남", [
+        state("start", None),
+        say("안녕하세요", no_actions=["add_item"], out_any=["매장", "포장"]),
+        say("대전에서 먹을게.", actions=["order_type"]),
+    ]),
+    Scenario("G04", "회귀", "10-26 시작 화면에서 '좋은 시작!'에 결제 안내가 나옴", [
+        state("start", None),
+        say("좋은 시작!", no_actions=["start_checkout", "payment_method"], out_none=["결제", "장바구니"]),
+    ]),
+    Scenario("G05", "회귀", "10-26 결제 화면에서 '철제.'(취소 오인식)가 무응답으로 끝남", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("철제.", no_actions=["payment_method", "add_item"], out_any=["다시"]),
+    ]),
+    Scenario("G06", "회귀", "10-26 이미 결제 화면인데 '결제페이지 이동해줘'가 간편결제로 읽힘", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("결제페이지 이동해줘", no_actions=["payment_method", "navigate"]),
+    ]),
+    Scenario("G07", "회귀", "알레르기 '없다'를 있다로 읽어 새우 버거 주문을 막음", [
+        state(M, D),
+        say("갑각류 알레르기 없어요", no_actions=["add_item"], unchanged=True),
+        say("새우버거 단품 하나 줘", actions=["add_item"], cart=[line("새우 버거", 1)], lines=1),
+    ]),
+    Scenario("G08", "회귀", "10-06 갑각류 알레르기 질의에 '갑각류 버거는 없다'고 틀리게 답함", [
+        state(M, D),
+        say("갑각류 알레르기 있으면 먹으면 안되는 햄버거가 있어?", out_any=["새우"], out_none=["없습니다"], unchanged=True),
+    ]),
+    Scenario("G09", "회귀", "장바구니 안내가 글을 읽는 말투('x1', 괄호)로 나옴", [
+        state(M, D),
+        say("치즈버거 세트로 하나 줘. 사이드는 감자튀김 음료는 콜라", cart=[line("치즈 버거", 1, set=True)]),
+        say("지금 장바구니에 뭐 있어?", unchanged=True, out_none=["x1", "(", ")"], out_any=["하나"]),
+        say("지금 뭐 담겼어?", unchanged=True, out_none=["잘 못 들었어요"], out_any=["치즈"]),
+    ]),
+    # ── 음성 검증 50개(seed 20261026)에서 나온 약점 ──
+    Scenario("G10", "회귀", "교체 '아니 A 말고 B 단품으로 바꿔줘' — A만 지우고 되묻거나 중복 담기던 문제", [
+        state(M, D),
+        say("데리버거 단품 하나 줘", cart=[line("데리버거", 1)]),
+        say("아니 데리버거 단품 말고 새우버거 단품으로 바꿔줘", cart=[line("새우 버거", 1)], lines=1),
+    ]),
+    Scenario("G11", "회귀", "교체 'A 취소하고 B 단품으로 줘' + 다른 줄은 그대로", [
+        state(M, D),
+        say("불고기버거 단품 두 개 줘", cart=[line("불고기 버거", 2)]),
+        say("콜라 한 잔 줘", cart=[line("불고기 버거", 2), line("콜라", 1)]),
+        say("아 불고기버거 단품 취소하고 치즈버거 단품으로 줘", cart=[line("치즈 버거", 2), line("콜라", 1)], lines=2),
+    ]),
+    Scenario("G12", "회귀", "'F버거 5개로 바꿔줘'에 무관한 줄이 삭제됨(데이터 손실)", [
+        state(M, D),
+        say("새우버거 단품 하나 줘", cart=[line("새우 버거", 1)]),
+        say("F버거 단품 하나 줘", cart=[line("새우 버거", 1), line("F 버거", 1)]),
+        say("F버거 5개로 바꿔줘", cart=[line("새우 버거", 1), line("F 버거", 5)], lines=2),
+    ]),
+    Scenario("G14", "회귀", "10-26 사용자 세션: 세트 버거를 다른 버거 세트로 — 같은 줄을 수정만 하고 '변경했습니다'라고 거짓 안내", [
+        state(M, D),
+        say("그릴드비프버거 하나 줘", no_actions=["add_item"]),
+        say("세트로 줘. 감자튀김에 콜라.", cart=[line("그릴드 비프 버거", 1, set=True, has=["감자튀김", "콜라"])]),
+        say("그것만 비건버거 세트로 바꿔달라니까.",
+            cart=[line("비건 버거", 1, set=True, has=["감자튀김", "콜라"])], lines=1),
+    ]),
+    Scenario("G15", "회귀", "세트→세트 교체(대상을 말한 형태) + 다른 줄 유지", [
+        state(M, D),
+        say("불고기버거 세트 하나, 사이드는 치즈스틱 음료는 생수로 줘", cart=[line("불고기 버거", 1, set=True)]),
+        say("콜라 한 잔 줘", cart=[line("불고기 버거", 1, set=True), line("콜라", 1)]),
+        say("불고기버거 세트 말고 비건버거 세트로 바꿔줘",
+            cart=[line("비건 버거", 1, set=True, has=["치즈스틱", "생수"]), line("콜라", 1)], lines=2),
+    ]),
+    Scenario("G13", "회귀", "번호를 말했는데 points_phone 액션이 빠짐", [
+        *_begin(),
+        say("치즈버거 단품 하나 주세요", cart=[line("치즈 버거", 1)]),
+        say("결제할게요", actions=["start_checkout"]),
+        say("포인트 적립할게요", actions=["points"]),
+        say("음 공일공 일이삼사 오육칠팔", actions=["points_phone"]),
+        say("카드로 할게요", actions=["payment_method"]),
+    ]),
+]
+SCENARIOS += REGRESSION_SCENARIOS
+
+
 # ── 실행기 ──────────────────────────────────────────────────────────────────
 def norm(s: str) -> str:
     return re.sub(r"[\s()（）]", "", s or "").lower()
@@ -846,6 +950,7 @@ class Menu:
 class Result:
     scenario: Scenario
     ok: bool = True
+    status: str = "PASS"   # 이어가기 판정: PASS / SOFT / FAIL (suite_metrics 참고) — ok는 예전 엄격 판정
     turns: list = field(default_factory=list)   # [{text, output, actions, fails, ms}]
     error: str | None = None
     elapsed: float = 0.0
@@ -943,6 +1048,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
     res = Result(sc)
     sid = f"vt-{sc.id.lower()}-{uuid.uuid4().hex[:6]}"
     st = {"screen": M, "order_type": None, "modal": None}
+    d_prev: dict = {}   # 앞 턴까지 쌓인 (실제 − 기대) 장바구니 불일치. 새로 생긴 불일치만 이번 턴의 실패로 센다
     t_start = time.time()
     try:
         for step in sc.steps:
@@ -1019,10 +1125,11 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                 for t in c.get("no_actions", []):
                     if t in types:
                         turn["fails"].append(f"금지 액션 {t} 발생")
+                cart_msg = None
                 if c.get("cart_exact") is not None:
-                    f = cart_exact_fail(after, c["cart_exact"])
-                    if f:
-                        turn["fails"].append(f)
+                    cart_msg = cart_exact_fail(after, c["cart_exact"])
+                    if cart_msg:
+                        turn["fails"].append(cart_msg)
                 for exp in c.get("cart", []):
                     f = cart_expect_fail(after, exp)
                     if f:
@@ -1044,6 +1151,17 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
                     turn["fails"].append(f"응답 언어가 {c['lang_only']} 단일이 아님")
                 if c.get("reply_lang") and not reply_lang_is(out, c["reply_lang"]):
                     turn["fails"].append(f"응답 문장 언어가 {c['reply_lang']}이(가) 아님: {out[:60]!r}")
+                other = [x for x in turn["fails"] if x != cart_msg]
+                new_err = soft = False
+                if c.get("cart_exact") is not None:
+                    got = counts_from_cart(after)
+                    d_new = diff(got, counts_from_expected(c["cart_exact"]))
+                    new_err = new_discrepancy(d_new, d_prev) if cart_msg else False
+                    soft = new_err and step.get("op") == "change_mind" and is_soft_replace(
+                        counts_from_cart(before), got, types, out)
+                    d_prev = d_new
+                turn["real_fail"] = bool(other) or (new_err and not soft)
+                turn["soft_fail"] = (not other) and new_err and soft
                 if turn["fails"]:
                     res.ok = False
     except Exception as e:  # noqa: BLE001
@@ -1056,6 +1174,7 @@ def run_scenario(base: str, menu: Menu, sc: Scenario) -> Result:
         except Exception:  # noqa: BLE001
             pass
     res.elapsed = time.time() - t_start
+    res.status = "FAIL" if res.error else scenario_status(res.turns)
     return res
 
 
@@ -1093,6 +1212,8 @@ def main() -> int:
     ap.add_argument("--json", default=None)
     ap.add_argument("--random", type=int, default=0, help="랜덤 전체 흐름 시나리오 N개를 만들어 실행")
     ap.add_argument("--seed", type=int, default=1, help="--random의 시드(같은 시드는 같은 시나리오)")
+    ap.add_argument("--human", type=int, default=0, choices=[0, 1, 2], help="--random의 말투 변형 강도(0=없음, 1=군말, 2=오인식·말투 혼용)")
+    ap.add_argument("--tier", nargs="*", help="--random에 쓸 티어(예: 사람처럼). 기본은 사람처럼을 뺀 4개")
     ap.add_argument("--dry-run", action="store_true", help="LLM을 부르지 않고 발화와 기대 장바구니만 출력")
     ap.add_argument("--save-failed", default=None, help="실패한 랜덤 시나리오를 이 JSON 파일에 저장(고정 세트에 추가용)")
     args = ap.parse_args()
@@ -1102,7 +1223,7 @@ def main() -> int:
     generated: dict[str, dict] = {}
     pool = list(SCENARIOS)
     if args.random:
-        for d in gen.generate_random(gen.fetch_menu(args.url), args.random, args.seed):
+        for d in gen.generate_random(gen.fetch_menu(args.url), args.random, args.seed, args.human, args.tier):
             generated[d["id"]] = d
         pool = [Scenario(d["id"], d["category"], d["title"], d["steps"]) for d in generated.values()]
     else:
@@ -1123,7 +1244,8 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         results = list(ex.map(lambda s: run_scenario(args.url, menu, s), scs))
     for r in results:
-        print(f"{'PASS' if r.ok else 'FAIL'} {r.scenario.id} {r.scenario.title} ({r.elapsed:.1f}s)")
+        label = "PASS" if r.ok else ("SOFT" if r.status == "SOFT" else ("FAIL" if r.status == "FAIL" else "연쇄"))
+        print(f"{label} {r.scenario.id} {r.scenario.title} ({r.elapsed:.1f}s)")
         if not r.ok:
             if r.error:
                 print(f"   ! {r.error}")
@@ -1132,6 +1254,7 @@ def main() -> int:
                     print(f"   - 「{t['text'][:40]}」 {f}")
     ok = sum(r.ok for r in results)
     print(f"\n통과 {ok}/{len(results)}  ({time.time() - t0:.0f}s)")
+    print("\n" + format_summary(summarize([{"ok": r.ok, "status": r.status, "turns": r.turns} for r in results])))
     # 전체 흐름 시나리오는 어떤 조작에서 자주 틀리는지 보여 준다
     per_op: dict[str, list[int]] = {}
     for r in results:
@@ -1170,7 +1293,7 @@ def main() -> int:
         write_report(results, Path(args.report), args.url)
     if args.json:
         Path(args.json).write_text(json.dumps([{
-            "id": r.scenario.id, "ok": r.ok, "error": r.error, "turns": r.turns} for r in results],
+            "id": r.scenario.id, "ok": r.ok, "status": r.status, "error": r.error, "turns": r.turns} for r in results],
             ensure_ascii=False, indent=1), encoding="utf-8")
     return 0 if ok == len(results) else 1
 

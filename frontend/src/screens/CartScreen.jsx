@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import Glyph from '../components/Glyph'
 import Logo from '../components/Logo'
 import { playTTS } from '../utils/tts'
 import { markCheckoutSteps } from '../services/checkoutService'
@@ -38,6 +39,10 @@ const PAYMENT_IMAGES = {
   cashWait: null, // 현금 결제 대기 화면
   payWait:  null, // 간편결제 대기 화면
 }
+
+// 포인트 적립 "예" 뒤 번호 입력창이 열릴 때 음성 모드에서 하는 안내(ttsCache.js COMMON_PHRASES와 같은 문장 — 사전 녹음 say_phone.mp3).
+// 빠른 응답("네")은 LLM을 거치지 않아 아무도 말하지 않아서 입력창만 뜨고 묵음이었다.
+const PHONE_GUIDE_TTS = '음성으로 번호를 불러주세요'
 
 const LIST_PX   = 16
 const CARD_PX   = 16
@@ -221,7 +226,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
           // 답변되지 않은 줄 알고 결제 수단을 말할 때마다 포인트를 다시 묻는다(무한 반복).
           if (pointPromptOpenRef.current) {
             setShowPointPrompt(false)
-            if (a.value === 'yes') { setShowPointsPopup(true); return 'points_yes' }
+            if (a.value === 'yes') { setShowPointsPopup(true); playTTS(PHONE_GUIDE_TTS); return 'points_yes' }
             openPayment(); playTTS('결제 수단을 선택해 주세요')
             return 'points_no'
           }
@@ -502,7 +507,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
             <ModalBtn label={t('no')} color="#d4d4d4" textColor="#555"
               onClick={() => { setShowPointPrompt(false); openPayment() }} />
             <ModalBtn label={t('yes')} color="#F5B800" textColor="#1a1a1a"
-              onClick={() => { setShowPointPrompt(false); setShowPointsPopup(true) }} />
+              onClick={() => { setShowPointPrompt(false); setShowPointsPopup(true); if (chatOpen) playTTS(PHONE_GUIDE_TTS) }} />
           </div>
         </ModalBase>
       )}
@@ -624,7 +629,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               background: '#fafafa', color: '#744032', cursor: 'pointer', marginBottom: 6,
             }}
           >
-            📷 {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
+            <Glyph ch="📷" /> {couponChecking ? '쿠폰 확인 중…' : couponCode ? `쿠폰 "${couponCode}" 적용됨 · 다시 스캔` : '쿠폰 QR·바코드 스캔 / 직접 입력'}
           </button>
           {couponInfo && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 0, marginBottom: 18 }}>
@@ -652,7 +657,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
                 ? <img src={PAYMENT_IMAGES.card} alt="신용카드 / 삼성페이"
                     style={{ width: 96, height: 60, objectFit: 'contain' }} />
                 : <div style={{ display: 'flex', gap: 6 }}>
-                    <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff">💳</PayBadge>
+                    <PayBadge bg="linear-gradient(135deg,#1565C0,#42A5F5)" color="#fff"><Glyph ch="💳" /></PayBadge>
                     <PayBadge bg="#1428A0" color="#fff" small>
                       <span style={{ fontSize: 8, fontWeight: 900, display: 'block', lineHeight: 1 }}>SAMSUNG</span>
                       <span style={{ fontSize: 11, fontWeight: 900 }}>Pay</span>
@@ -669,7 +674,7 @@ export default function CartScreen({ cart, total, updateQty, clearCart, nav, set
               {PAYMENT_IMAGES.cash
                 ? <img src={PAYMENT_IMAGES.cash} alt="현금"
                     style={{ width: 96, height: 60, objectFit: 'contain' }} />
-                : <PayBadge bg="#E8F5E9" color="#2e7d32">💵</PayBadge>
+                : <PayBadge bg="#E8F5E9" color="#2e7d32"><Glyph ch="💵" /></PayBadge>
               }
               <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>{t('cash')}</span>
             </button>
@@ -898,7 +903,7 @@ function CardIllustration() {
             {[0,1,2,3].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.5)' }} />)}
           </div>
         </div>
-        <div style={{ fontSize: 40, marginLeft: -4 }}>✋</div>
+        <div style={{ fontSize: 40, marginLeft: -4 }}><Glyph ch="✋" /></div>
       </div>
     </div>
   )
@@ -927,7 +932,7 @@ function CashIllustration() {
           }}>
             {[0,1].map(i => <div key={i} style={{ width: 14, height: 14, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.5)' }} />)}
           </div>
-          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}>✋</div>
+          <div style={{ fontSize: 28, textAlign: 'center', marginTop: 2 }}><Glyph ch="✋" /></div>
         </div>
       </div>
     </div>
@@ -968,7 +973,7 @@ function CartItem({ item, onUpdateQty, discountedUnitPrice }) {
         }}>
           {item.image
             ? <img src={item.image} alt={item.name} style={{ width: IMG_SIZE, height: IMG_SIZE, borderRadius: 10, objectFit: 'cover', display: 'block' }} />
-            : <span style={{ fontSize: 44 }}>🍔</span>
+            : <span style={{ fontSize: 44 }}><Glyph ch="🍔" /></span>
           }
           <span style={{ fontSize: 14, fontWeight: 700, color: '#333', wordBreak: 'keep-all', textAlign: 'center', width: IMG_SIZE }}>
             {item.name}{item.type === 'set' ? ` ${t('set')}` : ''}

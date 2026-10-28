@@ -11,6 +11,7 @@ import io
 import logging
 import os
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -190,6 +191,7 @@ def _filter_segments(
     no_speech_threshold: float = NO_SPEECH_DROP,
     logprob_threshold: float = LOGPROB_DROP,
     compression_threshold: float = COMPRESSION_DROP,
+    short_word_logprob_threshold: float = SHORT_WORD_LOGPROB_DROP,
 ) -> dict[str, Any]:
     """구간별 no_speech_prob · avg_logprob · compression_ratio 3중 신뢰도 필터.
 
@@ -213,6 +215,7 @@ def _filter_segments(
     kept: list[str] = []
     drop_reasons: list[str] = []
     dropped = False
+    short_pass = False   # 짧은 단답 완화 기준 덕분에 통과한 구간이 있는가(임계값 튜닝용 로그)
 
     for seg in segments or []:
         seg_text = (_seg_attr(seg, "text") or "").strip()
@@ -243,7 +246,7 @@ def _filter_segments(
         if p_lp is not None:
             compact_seg = re.sub(r"[\s.,!?~]+", "", seg_text.lower())
             eff_lp_thresh = (
-                min(logprob_threshold, SHORT_WORD_LOGPROB_DROP)
+                min(logprob_threshold, short_word_logprob_threshold)
                 if compact_seg in _SHORT_CORE_WORDS
                 else logprob_threshold
             )
@@ -251,6 +254,8 @@ def _filter_segments(
                 dropped = True
                 drop_reasons.append("low_logprob")
                 continue
+            if float(p_lp) < logprob_threshold:
+                short_pass = True
 
         kept.append(seg_text)
 
@@ -260,6 +265,7 @@ def _filter_segments(
         "min_logprob": min(logprobs) if logprobs else None,
         "max_compression": max(compressions) if compressions else None,
         "drop_reasons": drop_reasons,
+        "short_pass": short_pass,
     }
 
 
@@ -341,7 +347,12 @@ def _get_client() -> AsyncOpenAI:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.")
-        _client = AsyncOpenAI(api_key=api_key)
+        # 기본 timeout(10분)·재시도(2회)면 API가 멈출 때 손님이 몇 분을 기다린다(2026-10-13: 2.4초 발화의 sttMs=55초).
+        _client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=float(os.getenv("OPENAI_STT_TIMEOUT", "15")),
+            max_retries=int(os.getenv("OPENAI_STT_MAX_RETRIES", "1")),
+        )
     return _client
 
 
@@ -385,6 +396,7 @@ def _postprocess_transcription(
                 no_speech_threshold=float(_mcfg.get("no_speech_threshold", NO_SPEECH_DROP)),
                 logprob_threshold=float(_mcfg.get("logprob_threshold", LOGPROB_DROP)),
                 compression_threshold=float(_mcfg.get("compression_threshold", COMPRESSION_DROP)),
+                short_word_logprob_threshold=float(_mcfg.get("short_word_logprob_threshold", SHORT_WORD_LOGPROB_DROP)),
             )
         except Exception:
             seg_res = _filter_segments(segments)
@@ -399,6 +411,8 @@ def _postprocess_transcription(
             )
             text = seg_res["kept_text"]
             filtered = True
+        elif seg_res.get("short_pass"):
+            drop_reason = "short_pass"   # 걸러지지 않았지만 완화 기준으로 통과 — stt_quality.log에서 몇 건인지 센다
 
     # whisper-1 자동 언어 감지에서 키오스크 지원 언어(한/영/일/중) 외의 언어가 나오면 잡음/음악 환각으로 차단
     if use_verbose and text and _is_unsupported_language(raw_language):
@@ -523,7 +537,11 @@ async def transcribe_bytes(
         # 엉뚱한(주로 한국어로) 언어로 튀는 것을 방지하고 정확도도 올라간다.
         kwargs["language"] = lang
 
+    _t_api = time.perf_counter()
     resp = await client.audio.transcriptions.create(**kwargs)
+    _api_s = time.perf_counter() - _t_api
+    if _api_s > 8.0:
+        logger.warning("STT API 응답이 느림: %.1fs (model=%s, 오디오 %d바이트)", _api_s, model, len(audio_bytes))
     raw_text = (getattr(resp, "text", None) or "").strip()
 
     post = _postprocess_transcription(

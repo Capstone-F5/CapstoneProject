@@ -130,11 +130,22 @@ class CartContextTests(unittest.TestCase):
             }],
             "ko",
         )
-        self.assertIn("F버거 세트 x1", reply)
-        self.assertIn("제외: 양파 제외", reply)
-        self.assertIn("사이드: 치킨너겟", reply)
-        self.assertIn("음료: 제로사이다", reply)
-        self.assertIn("6,650원", reply)
+        self.assertEqual(
+            reply,
+            "현재 장바구니에는 F버거 세트 하나가 담겨 있어요. 사이드는 치킨너겟, 음료는 제로사이다, 양파 빼고. 합계는 6,650원이에요.",
+        )
+        self.assertNotIn("x1", reply)    # TTS가 "엑스 일"로 읽는다
+        self.assertNotIn("(", reply)
+        two = format_cart_status_reply(
+            [{"name": "F버거", "item_type": "set", "quantity": 1, "unit_price": 9500, "side": "감자튀김", "drink": "콜라"},
+             {"name": "콜라", "item_type": "single", "quantity": 2, "unit_price": 1800}],
+            "ko",
+        )
+        self.assertEqual(
+            two,
+            "현재 장바구니에는 2가지 메뉴가 담겨 있어요. 첫 번째, F버거 세트 하나. 사이드는 감자튀김, 음료는 콜라. "
+            "두 번째, 콜라 단품 두 개. 합계는 13,100원이에요.",
+        )
         self.assertEqual(format_cart_status_reply([], "ko"), "현재 장바구니가 비어 있습니다.")
         self.assertTrue(
             format_cart_status_reply([], "en", "장바구니 비었어?").startswith("현재 장바구니")

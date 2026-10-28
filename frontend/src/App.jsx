@@ -14,6 +14,7 @@ import CardPaymentScreen from './screens/CardPaymentScreen'
 import PayPaymentScreen from './screens/PayPaymentScreen'
 import CashPaymentScreen from './screens/CashPaymentScreen'
 import ChatPanel from './components/ChatPanel'
+import SpeedControl from './components/SpeedControl'
 import { useMenuData } from './hooks/useMenuData'
 import { useApproachDetector } from './hooks/useApproachDetector'
 import { playTTS, stopTTS } from './utils/tts'
@@ -1366,6 +1367,7 @@ function AppContent() {
             ko={`음성인식 ${chatOpen ? 'ON' : 'OFF'}`}
             en={`Voice ${chatOpen ? 'ON' : 'OFF'}`}
           />
+          {chatOpen && <SpeedControl variant="bar" />}   {/* 음성 배속 — 음성인식이 켜져 있을 때만 */}
           <ControlText
             onClick={handleGestureToggle}
             on={gestureControlOn}
